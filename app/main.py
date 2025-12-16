@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from .routes.workflows import router as workflow_router
 
 load_dotenv()
-DEFAULT_ALLOWED_ORIGINS = ["https://dev.sbp.test.biocommons.org.au", "http://localhost:4200"]
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -27,10 +26,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
 
     allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
-    if allowed_origins_env:
-        allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
-    else:
-        allowed_origins = DEFAULT_ALLOWED_ORIGINS
+    if not allowed_origins_env:
+        raise RuntimeError("ALLOWED_ORIGINS environment variable is required but not set")
+
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
 
     app.add_middleware(
         CORSMiddleware,
