@@ -47,6 +47,7 @@ jobs:
           aws lambda invoke \
             --function-name "$DEPLOY_LAMBDA_NAME" \
             --cli-binary-format raw-in-base64-out \
+            --cli-read-timeout 0 \
             --payload "{\"tag\":\"$IMAGE_TAG\"}" \
             /tmp/response.json
           cat /tmp/response.json
