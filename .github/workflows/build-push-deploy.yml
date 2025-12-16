@@ -43,6 +43,8 @@ jobs:
 
       - name: Deploy to ECS via Lambda
         run: |
+          export AWS_MAX_ATTEMPTS=1
+          
           set -euo pipefail
           aws lambda invoke \
             --function-name "$DEPLOY_LAMBDA_NAME" \
