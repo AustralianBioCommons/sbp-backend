@@ -1,0 +1,52 @@
+name: Build, Push, and Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: sbp-backend-dev
+  DEPLOY_LAMBDA_NAME: SbpBackendDevReleaseDeployer
+  IMAGE_TAG: latest
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::456789093900:role/sbp-backend-github-actions-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to ECS via Lambda
+        run: |
+          set -euo pipefail
+          aws lambda invoke \
+            --function-name "$DEPLOY_LAMBDA_NAME" \
+            --cli-binary-format raw-in-base64-out \
+            --payload "{\"tag\":\"$IMAGE_TAG\"}" \
+            /tmp/response.json
+          cat /tmp/response.json
