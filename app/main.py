@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from .routes.workflows import router as workflow_router
 
 load_dotenv()
+DEFAULT_ALLOWED_ORIGINS = ["https://dev.sbp.test.biocommons.org.au"]
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -25,9 +26,15 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
 
+    allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+    if allowed_origins_env:
+        allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    else:
+        allowed_origins = DEFAULT_ALLOWED_ORIGINS
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

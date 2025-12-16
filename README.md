@@ -50,6 +50,7 @@ Required entries in `.env`:
 - `COMPUTE_ID` — Default compute environment ID
 - `WORK_DIR` — Default work directory
 - `WORK_SPACE` — Seqera workspace identifier
+- `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
 
