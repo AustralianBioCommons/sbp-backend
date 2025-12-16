@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from .routes.workflows import router as workflow_router
 
 load_dotenv()
-DEFAULT_ALLOWED_ORIGINS = ["https://dev.sbp.test.biocommons.org.au"]
+DEFAULT_ALLOWED_ORIGINS = ["https://dev.sbp.test.biocommons.org.au", "http://localhost:4200"]
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
