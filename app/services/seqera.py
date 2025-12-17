@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -25,7 +25,7 @@ class SeqeraServiceError(RuntimeError):
 class SeqeraLaunchResult:
     workflow_id: str
     status: str
-    message: str | None = None
+    message: Optional[str] = None
 
 
 def _get_required_env(key: str) -> str:
@@ -38,7 +38,7 @@ def _get_required_env(key: str) -> str:
 
 
 async def launch_seqera_workflow(
-    form: WorkflowLaunchForm, dataset_id: str | None = None
+    form: WorkflowLaunchForm, dataset_id: Optional[str] = None
 ) -> SeqeraLaunchResult:
     """Launch a workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -47,6 +47,40 @@ async def launch_seqera_workflow(
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
 
+    # Build default external parameters
+    default_params = [
+        "use_dgxa100: false",
+        "validate_params: true",
+        "help_full: false",
+        'custom_config_base: "https://raw.githubusercontent.com/nf-core/configs/master"',
+        "show_hidden: false",
+        "plaintext_email: false",
+        'project: "za08"',
+        "monochrome_logs: false",
+        'error_strategy: "terminate"',
+        "version: false",
+        'custom_config_version: "master"',
+        'outdir: "/g/data/za08/seqera-work/ui-jobs/"',
+        "quote_char: '\"'",
+        'bindcraft_container: "australianbiocommons/freebindcraft:1.0.3"',
+        'publish_dir_mode: "copy"',
+        'pipelines_testdata_base_path: "https://raw.githubusercontent.com/nf-core/test-datasets/"',
+        "batches: 1",
+        "help: false",
+    ]
+    
+    # Start with default parameters
+    params_text = "\n".join(default_params)
+    
+    # Add custom paramsText from frontend if provided
+    if form.paramsText and form.paramsText.strip():
+        params_text = f"{params_text}\n{form.paramsText.rstrip()}"
+    
+    # Add dataset input URL if dataset_id is provided
+    if dataset_id:
+        dataset_url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
+        params_text = f"{params_text}\ninput: {dataset_url}"
+
     launch_payload: Dict[str, Any] = {
         "launch": {
             "computeEnvId": compute_env_id,
@@ -54,9 +88,9 @@ async def launch_seqera_workflow(
             "pipeline": form.pipeline or "https://github.com/nextflow-io/hello",
             "workDir": work_dir,
             "workspaceId": workspace_id,
-            "revision": form.revision or "main",
-            "paramsText": form.paramsText or "",
-            "configProfiles": form.configProfiles or [],
+            "revision": form.revision or "dev",
+            "paramsText": params_text,
+            "configProfiles": form.configProfiles or ["singularity"],
             "preRunScript": "module load nextflow",
             "resume": False,
         }
@@ -66,6 +100,18 @@ async def launch_seqera_workflow(
         launch_payload["launch"]["datasetIds"] = [dataset_id]
 
     url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
+    
+    # Log the complete params being sent
+    logger.info(
+        "Launch payload paramsText",
+        extra={"paramsText": params_text}
+    )
+    
+    logger.info(
+        "Full launch payload",
+        extra={"payload": launch_payload}
+    )
+    
     logger.info(
         "Launching workflow via Seqera API",
         extra={

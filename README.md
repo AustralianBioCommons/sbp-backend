@@ -40,6 +40,11 @@ FastAPI backend for handling Seqera Platform workflow launches.
 
 - `GET /health` — Lightweight health probe
 - `POST /api/workflows/launch` — Launch a Seqera workflow (send the same payload previously expected by the Express server)
+- `POST /api/workflows/{runId}/cancel` — Placeholder response for cancelling a run
+- `GET /api/workflows/runs` — Placeholder list endpoint mirroring the previous Node API
+- `GET /api/workflows/{runId}/logs` — Placeholder log endpoint
+- `GET /api/workflows/{runId}/details` — Placeholder details endpoint
+- `POST /api/workflows/datasets/upload` — Create a Seqera dataset and upload submitted form data as a CSV
 
 ## Environment Variables
 
