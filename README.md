@@ -79,6 +79,7 @@ View HTML coverage report:
 ```bash
 open htmlcov/index.html  # macOS
 xdg-open htmlcov/index.html  # Linux
+start htmlcov/index.html  # Windows (Command Prompt / PowerShell)
 ```
 
 ## Linting and Code Quality
