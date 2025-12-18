@@ -1,4 +1,5 @@
 """Tests for Seqera service."""
+
 from __future__ import annotations
 
 import os
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.schemas.workflows import WorkflowLaunchForm
 from app.services.seqera import (
     SeqeraConfigurationError,
     SeqeraLaunchResult,
@@ -13,7 +15,6 @@ from app.services.seqera import (
     _get_required_env,
     launch_seqera_workflow,
 )
-from app.schemas.workflows import WorkflowLaunchForm
 
 
 class TestGetRequiredEnv:
@@ -43,26 +44,26 @@ class TestLaunchSeqeraWorkflow:
             "workflowId": "wf_test_123",
         }
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         # Create form
         form = WorkflowLaunchForm(
             pipeline="https://github.com/test/repo",
         )
-        
+
         # Execute
         result = await launch_seqera_workflow(form)
-        
+
         # Verify
         assert isinstance(result, SeqeraLaunchResult)
         assert result.workflow_id == "wf_test_123"
         assert result.status == "submitted"
-        
+
         # Verify API call
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
@@ -77,13 +78,13 @@ class TestLaunchSeqeraWorkflow:
             "workflowId": "wf_full_456",
         }
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(
             pipeline="https://github.com/test/repo",
             revision="main",
@@ -91,11 +92,11 @@ class TestLaunchSeqeraWorkflow:
             configProfiles=["docker", "test"],
             paramsText="custom_param: value",
         )
-        
+
         result = await launch_seqera_workflow(form, dataset_id="dataset_789")
-        
+
         assert result.workflow_id == "wf_full_456"
-        
+
         # Verify the payload includes dataset
         call_args = mock_client.post.call_args
         payload = call_args[1]["json"]
@@ -109,24 +110,24 @@ class TestLaunchSeqeraWorkflow:
         mock_response.is_error = False
         mock_response.json.return_value = {"workflowId": "wf_123"}
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         await launch_seqera_workflow(form)
-        
+
         call_args = mock_client.post.call_args
         payload = call_args[1]["json"]
         params_text = payload["launch"]["paramsText"]
-        
+
         # Check default params are included
         assert "use_dgxa100: false" in params_text
-        assert "project: \"za08\"" in params_text
+        assert 'project: "za08"' in params_text
         assert "outdir:" in params_text
 
     @patch("app.services.seqera.httpx.AsyncClient")
@@ -136,21 +137,21 @@ class TestLaunchSeqeraWorkflow:
         mock_response.is_error = False
         mock_response.json.return_value = {"workflowId": "wf_dataset_999"}
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         await launch_seqera_workflow(form, dataset_id="ds_abc")
-        
+
         call_args = mock_client.post.call_args
         payload = call_args[1]["json"]
         params_text = payload["launch"]["paramsText"]
-        
+
         assert "input:" in params_text
         assert "ds_abc" in params_text
         assert "samplesheet.csv" in params_text
@@ -163,15 +164,15 @@ class TestLaunchSeqeraWorkflow:
         mock_response.status_code = 400
         mock_response.text = "Invalid request"
         mock_response.reason_phrase = "Bad Request"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         with pytest.raises(SeqeraServiceError, match="400"):
             await launch_seqera_workflow(form)
 
@@ -182,26 +183,27 @@ class TestLaunchSeqeraWorkflow:
         mock_response.is_error = False
         mock_response.json.return_value = {"status": "success"}
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         with pytest.raises(SeqeraServiceError, match="workflowId"):
             await launch_seqera_workflow(form)
 
     def test_launch_missing_env_vars(self):
         """Test that missing environment variables raise error."""
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(SeqeraConfigurationError):
                 # This will fail synchronously when trying to get env vars
                 import asyncio
+
                 asyncio.run(launch_seqera_workflow(form))
 
     @patch("app.services.seqera.httpx.AsyncClient")
@@ -211,24 +213,24 @@ class TestLaunchSeqeraWorkflow:
         mock_response.is_error = False
         mock_response.json.return_value = {"workflowId": "wf_params_xyz"}
         mock_response.reason_phrase = "OK"
-        
+
         mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form = WorkflowLaunchForm(
             pipeline="https://github.com/test/repo",
-            paramsText="my_custom_param: 42\nanother_param: test"
+            paramsText="my_custom_param: 42\nanother_param: test",
         )
-        
+
         await launch_seqera_workflow(form)
-        
+
         call_args = mock_client.post.call_args
         payload = call_args[1]["json"]
         params_text = payload["launch"]["paramsText"]
-        
+
         # Should contain both default and custom params
         assert "use_dgxa100: false" in params_text  # default
         assert "my_custom_param: 42" in params_text  # custom

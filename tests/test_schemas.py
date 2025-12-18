@@ -1,4 +1,5 @@
 """Tests for Pydantic schemas."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -24,7 +25,7 @@ class TestWorkflowLaunchForm:
     def test_valid_minimal_form(self):
         """Test WorkflowLaunchForm with minimal valid data."""
         form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
-        
+
         assert form.pipeline == "https://github.com/test/repo"
         assert form.revision is None
         assert form.configProfiles == []
@@ -40,7 +41,7 @@ class TestWorkflowLaunchForm:
             runName="my-test-run",
             paramsText="param1: value1\nparam2: value2",
         )
-        
+
         assert form.pipeline == "https://github.com/test/repo"
         assert form.revision == "main"
         assert form.configProfiles == ["docker", "test"]
@@ -51,7 +52,7 @@ class TestWorkflowLaunchForm:
         """Test that pipeline field is required."""
         with pytest.raises(ValidationError) as exc_info:
             WorkflowLaunchForm()
-        
+
         errors = exc_info.value.errors()
         assert any(error["loc"] == ("pipeline",) for error in errors)
 
@@ -68,10 +69,7 @@ class TestWorkflowLaunchForm:
     def test_extra_fields_forbidden(self):
         """Test that extra fields are not allowed."""
         with pytest.raises(ValidationError):
-            WorkflowLaunchForm(
-                pipeline="https://github.com/test/repo",
-                extraField="not allowed"
-            )
+            WorkflowLaunchForm(pipeline="https://github.com/test/repo", extraField="not allowed")
 
 
 class TestWorkflowLaunchPayload:
@@ -79,10 +77,8 @@ class TestWorkflowLaunchPayload:
 
     def test_valid_payload_with_launch_only(self):
         """Test payload with only launch data."""
-        payload = WorkflowLaunchPayload(
-            launch={"pipeline": "https://github.com/test/repo"}
-        )
-        
+        payload = WorkflowLaunchPayload(launch={"pipeline": "https://github.com/test/repo"})
+
         assert payload.launch.pipeline == "https://github.com/test/repo"
         assert payload.datasetId is None
         assert payload.formData is None
@@ -93,7 +89,7 @@ class TestWorkflowLaunchPayload:
             launch={"pipeline": "https://github.com/test/repo"},
             datasetId="dataset_123",
         )
-        
+
         assert payload.datasetId == "dataset_123"
 
     def test_valid_payload_with_form_data(self):
@@ -107,15 +103,14 @@ class TestWorkflowLaunchPayload:
             launch={"pipeline": "https://github.com/test/repo"},
             formData=form_data,
         )
-        
+
         assert payload.formData == form_data
 
     def test_extra_fields_forbidden(self):
         """Test that extra fields are not allowed."""
         with pytest.raises(ValidationError):
             WorkflowLaunchPayload(
-                launch={"pipeline": "https://github.com/test/repo"},
-                unknownField="value"
+                launch={"pipeline": "https://github.com/test/repo"}, unknownField="value"
             )
 
 
@@ -130,7 +125,7 @@ class TestWorkflowLaunchResponse:
             status="submitted",
             submitTime=datetime(2024, 1, 1, 12, 0, 0),
         )
-        
+
         assert response.message == "Workflow launched"
         assert response.runId == "run_123"
         assert response.status == "submitted"
@@ -147,7 +142,7 @@ class TestCancelWorkflowResponse:
             runId="run_123",
             status="cancelled",
         )
-        
+
         assert response.message == "Cancelled"
         assert response.runId == "run_123"
         assert response.status == "cancelled"
@@ -166,7 +161,7 @@ class TestRunInfo:
             date="2024-01-01",
             cancel="false",
         )
-        
+
         assert run_info.id == "run_123"
         assert run_info.status == "running"
 
@@ -182,7 +177,7 @@ class TestListRunsResponse:
             limit=50,
             offset=0,
         )
-        
+
         assert response.runs == []
         assert response.total == 0
 
@@ -202,7 +197,7 @@ class TestListRunsResponse:
             limit=50,
             offset=0,
         )
-        
+
         assert len(response.runs) == 1
         assert response.total == 1
 
@@ -220,7 +215,7 @@ class TestLaunchLogs:
             pending=False,
             message="Logs retrieved",
         )
-        
+
         assert len(logs.entries) == 2
         assert logs.truncated is False
 
@@ -256,6 +251,6 @@ class TestLaunchDetails:
             configFiles=["nextflow.config"],
             params={"test": "value"},
         )
-        
+
         assert details.status == "completed"
         assert details.ownerId == 123

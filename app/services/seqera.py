@@ -1,10 +1,11 @@
 """Seqera Platform integration helpers."""
+
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -25,20 +26,18 @@ class SeqeraServiceError(RuntimeError):
 class SeqeraLaunchResult:
     workflow_id: str
     status: str
-    message: Optional[str] = None
+    message: str | None = None
 
 
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise SeqeraConfigurationError(
-            f"Missing required environment variable: {key}"
-        )
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
 async def launch_seqera_workflow(
-    form: WorkflowLaunchForm, dataset_id: Optional[str] = None
+    form: WorkflowLaunchForm, dataset_id: str | None = None
 ) -> SeqeraLaunchResult:
     """Launch a workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -68,20 +67,20 @@ async def launch_seqera_workflow(
         "batches: 1",
         "help: false",
     ]
-    
+
     # Start with default parameters
     params_text = "\n".join(default_params)
-    
+
     # Add custom paramsText from frontend if provided
     if form.paramsText and form.paramsText.strip():
         params_text = f"{params_text}\n{form.paramsText.rstrip()}"
-    
+
     # Add dataset input URL if dataset_id is provided
     if dataset_id:
         dataset_url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
         params_text = f"{params_text}\ninput: {dataset_url}"
 
-    launch_payload: Dict[str, Any] = {
+    launch_payload: dict[str, Any] = {
         "launch": {
             "computeEnvId": compute_env_id,
             "runName": form.runName or "hello-from-ui",
@@ -100,18 +99,12 @@ async def launch_seqera_workflow(
         launch_payload["launch"]["datasetIds"] = [dataset_id]
 
     url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
-    
+
     # Log the complete params being sent
-    logger.info(
-        "Launch payload paramsText",
-        extra={"paramsText": params_text}
-    )
-    
-    logger.info(
-        "Full launch payload",
-        extra={"payload": launch_payload}
-    )
-    
+    logger.info("Launch payload paramsText", extra={"paramsText": params_text})
+
+    logger.info("Full launch payload", extra={"payload": launch_payload})
+
     logger.info(
         "Launching workflow via Seqera API",
         extra={
@@ -142,18 +135,14 @@ async def launch_seqera_workflow(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(
-            f"Seqera workflow launch failed: {response.status_code} {body}"
-        )
+        raise SeqeraServiceError(f"Seqera workflow launch failed: {response.status_code} {body}")
 
     data = response.json()
     workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
     status = data.get("status", "submitted")
 
     if not workflow_id:
-        raise SeqeraServiceError(
-            "Seqera workflow launch succeeded but did not return a workflowId"
-        )
+        raise SeqeraServiceError("Seqera workflow launch succeeded but did not return a workflowId")
 
     return SeqeraLaunchResult(
         workflow_id=workflow_id,

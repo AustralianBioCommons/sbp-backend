@@ -1,4 +1,5 @@
 """Tests for dataset service."""
+
 from __future__ import annotations
 
 import json
@@ -9,9 +10,7 @@ import pytest
 from app.services.datasets import (
     DatasetCreationResult,
     DatasetUploadResult,
-    SeqeraConfigurationError,
     SeqeraServiceError,
-    _get_required_env,
     _stringify_field,
     convert_form_data_to_csv,
     create_seqera_dataset,
@@ -66,9 +65,9 @@ class TestConvertFormDataToCsv:
             "value": "123",
             "flag": "true",
         }
-        
+
         csv_output = convert_form_data_to_csv(form_data)
-        
+
         lines = csv_output.strip().split("\n")
         assert len(lines) == 2  # header + 1 data row
         assert "name" in lines[0]
@@ -84,9 +83,9 @@ class TestConvertFormDataToCsv:
             "count": 42,
             "ratio": 3.14,
         }
-        
+
         csv_output = convert_form_data_to_csv(form_data)
-        
+
         assert "42" in csv_output
         assert "3.14" in csv_output
 
@@ -96,9 +95,9 @@ class TestConvertFormDataToCsv:
             "sample": "test",
             "files": ["file1.txt", "file2.txt"],
         }
-        
+
         csv_output = convert_form_data_to_csv(form_data)
-        
+
         assert "file1.txt;file2.txt" in csv_output
 
     def test_convert_with_dict(self):
@@ -107,9 +106,9 @@ class TestConvertFormDataToCsv:
             "sample": "test",
             "metadata": {"type": "experiment", "id": 1},
         }
-        
+
         csv_output = convert_form_data_to_csv(form_data)
-        
+
         assert "metadata" in csv_output
         assert "type" in csv_output or "experiment" in csv_output
 
@@ -124,9 +123,9 @@ class TestConvertFormDataToCsv:
             "sample": "test",
             "optional_field": None,
         }
-        
+
         csv_output = convert_form_data_to_csv(form_data)
-        
+
         lines = csv_output.strip().split("\n")
         assert len(lines) == 2
 
@@ -147,18 +146,15 @@ class TestCreateSeqeraDataset:
         }
         mock_response.status_code = 200
         mock_response.text = ""
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
-        result = await create_seqera_dataset(
-            name="test-dataset",
-            description="Test description"
-        )
-        
+
+        result = await create_seqera_dataset(name="test-dataset", description="Test description")
+
         assert isinstance(result, DatasetCreationResult)
         assert result.dataset_id == "dataset_123"
         assert result.raw_response["dataset"]["name"] == "test-dataset"
@@ -176,15 +172,15 @@ class TestCreateSeqeraDataset:
         }
         mock_response.status_code = 200
         mock_response.text = ""
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         result = await create_seqera_dataset()
-        
+
         assert result.dataset_id == "dataset_456"
         # Verify a name was generated
         mock_client.post.assert_called_once()
@@ -196,13 +192,13 @@ class TestCreateSeqeraDataset:
         mock_response.is_error = True
         mock_response.status_code = 400
         mock_response.text = "Bad request"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         with pytest.raises(SeqeraServiceError, match="400"):
             await create_seqera_dataset(name="test")
 
@@ -219,13 +215,13 @@ class TestCreateSeqeraDataset:
         }
         mock_response.status_code = 200
         mock_response.text = "{}"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         with pytest.raises(SeqeraServiceError, match="response lacked dataset id"):
             await create_seqera_dataset(name="test")
 
@@ -241,28 +237,23 @@ class TestUploadDatasetToSeqera:
         mock_response.status_code = 200
         mock_response.text = ""
         mock_response.json.return_value = {
-            "version": {
-                "datasetId": "dataset_789"
-            },
-            "message": "Upload successful"
+            "version": {"datasetId": "dataset_789"},
+            "message": "Upload successful",
         }
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form_data = {
             "sample": "test_sample",
             "input": "/path/file.txt",
         }
-        
-        result = await upload_dataset_to_seqera(
-            dataset_id="dataset_789",
-            form_data=form_data
-        )
-        
+
+        result = await upload_dataset_to_seqera(dataset_id="dataset_789", form_data=form_data)
+
         assert isinstance(result, DatasetUploadResult)
         assert result.success is True
         assert result.dataset_id == "dataset_789"
@@ -274,20 +265,20 @@ class TestUploadDatasetToSeqera:
         mock_response.is_error = False
         mock_response.status_code = 200
         mock_response.text = ""
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form_data = {
             "col1": "value1",
             "col2": "value2",
         }
-        
+
         await upload_dataset_to_seqera("dataset_123", form_data)
-        
+
         # Verify POST was called with files
         call_args = mock_client.post.call_args
         assert "files" in call_args[1]
@@ -299,15 +290,15 @@ class TestUploadDatasetToSeqera:
         mock_response.is_error = True
         mock_response.status_code = 500
         mock_response.text = "Server error"
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form_data = {"sample": "test"}
-        
+
         with pytest.raises(SeqeraServiceError, match="500"):
             await upload_dataset_to_seqera("dataset_123", form_data)
 
@@ -318,20 +309,20 @@ class TestUploadDatasetToSeqera:
         mock_response.is_error = False
         mock_response.status_code = 200
         mock_response.text = ""
-        
+
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
-        
+
         form_data = {
             "sample": "test",
             "files": ["file1.txt", "file2.txt"],
             "count": 42,
             "metadata": {"type": "test"},
         }
-        
+
         result = await upload_dataset_to_seqera("dataset_123", form_data)
-        
+
         assert result.success is True

@@ -1,4 +1,5 @@
 """FastAPI application entry point for the SBP Portal backend."""
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,9 @@ def create_app() -> FastAPI:
     if not allowed_origins_env:
         raise RuntimeError("ALLOWED_ORIGINS environment variable is required but not set")
 
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    allowed_origins = [
+        origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+    ]
 
     app.add_middleware(
         CORSMiddleware,

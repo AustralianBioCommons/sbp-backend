@@ -1,8 +1,9 @@
 """Shared test fixtures and configuration."""
+
 from __future__ import annotations
 
 import os
-from typing import AsyncGenerator, Dict, Generator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -43,9 +44,10 @@ async def async_client(app) -> AsyncGenerator[AsyncClient, None]:
 @pytest.fixture
 def mock_httpx_response():
     """Create a mock httpx Response."""
+
     def _create_response(
         status_code: int = 200,
-        json_data: Dict | None = None,
+        json_data: dict | None = None,
         text: str = "",
         is_error: bool = False,
     ):
@@ -56,6 +58,7 @@ def mock_httpx_response():
         if json_data:
             response.json.return_value = json_data
         return response
+
     return _create_response
 
 

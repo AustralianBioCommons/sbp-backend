@@ -1,4 +1,5 @@
 """Dataset helpers for interacting with the Seqera Platform."""
+
 from __future__ import annotations
 
 import csv
@@ -8,7 +9,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -20,9 +21,7 @@ logger = logging.getLogger(__name__)
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise SeqeraConfigurationError(
-            f"Missing required environment variable: {key}"
-        )
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -36,7 +35,7 @@ def _stringify_field(value: Any) -> str:
     return str(value)
 
 
-def convert_form_data_to_csv(form_data: Dict[str, Any]) -> str:
+def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
     """Convert a record of form data into a single-row CSV string."""
     if not form_data:
         raise ValueError("formData cannot be empty")
@@ -54,7 +53,7 @@ def convert_form_data_to_csv(form_data: Dict[str, Any]) -> str:
 @dataclass
 class DatasetCreationResult:
     dataset_id: str
-    raw_response: Dict[str, Any]
+    raw_response: dict[str, Any]
 
 
 @dataclass
@@ -62,11 +61,11 @@ class DatasetUploadResult:
     success: bool
     dataset_id: str
     message: str
-    raw_response: Optional[Dict[str, Any]] = None
+    raw_response: dict[str, Any] | None = None
 
 
 async def create_seqera_dataset(
-    name: Optional[str] = None, description: Optional[str] = None
+    name: str | None = None, description: str | None = None
 ) -> DatasetCreationResult:
     """Create a dataset on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -103,23 +102,19 @@ async def create_seqera_dataset(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(
-            f"Seqera dataset creation failed: {response.status_code} {body}"
-        )
+        raise SeqeraServiceError(f"Seqera dataset creation failed: {response.status_code} {body}")
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
     if not dataset_id:
-        raise SeqeraServiceError(
-            "Seqera dataset creation succeeded but response lacked dataset id"
-        )
+        raise SeqeraServiceError("Seqera dataset creation succeeded but response lacked dataset id")
 
     logger.info("Seqera dataset created", extra={"datasetId": dataset_id})
     return DatasetCreationResult(dataset_id=dataset_id, raw_response=data)
 
 
 async def upload_dataset_to_seqera(
-    dataset_id: str, form_data: Dict[str, Any]
+    dataset_id: str, form_data: dict[str, Any]
 ) -> DatasetUploadResult:
     """Upload CSV-encoded form data to an existing Seqera dataset."""
     if not dataset_id:
@@ -160,14 +155,10 @@ async def upload_dataset_to_seqera(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(
-            f"Seqera dataset upload failed: {response.status_code} {body}"
-        )
+        raise SeqeraServiceError(f"Seqera dataset upload failed: {response.status_code} {body}")
 
     data = response.json()
-    returned_dataset_id = (
-        data.get("version", {}).get("datasetId") or dataset_id
-    )
+    returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
     message = data.get("message") or "Upload successful"
 
     logger.info(
