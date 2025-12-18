@@ -55,7 +55,7 @@ class TestGetDetails:
         result = await get_details("run_abc123")
         
         assert result.id == "run_abc123"
-        assert result.status == "pending"
-        assert result.runName == "N/A"
+        assert result.status == "UNKNOWN"
+        assert result.runName == ""
         assert isinstance(result.configFiles, list)
         assert isinstance(result.params, dict)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -37,7 +37,7 @@ class TestLaunchSeqeraWorkflow:
     async def test_launch_success_minimal(self, mock_client_class):
         """Test successful workflow launch with minimal parameters."""
         # Setup mock
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {
             "workflowId": "wf_test_123",
@@ -71,7 +71,7 @@ class TestLaunchSeqeraWorkflow:
     @patch("app.services.seqera.httpx.AsyncClient")
     async def test_launch_success_with_all_params(self, mock_client_class):
         """Test successful launch with all parameters."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {
             "workflowId": "wf_full_456",
@@ -105,12 +105,12 @@ class TestLaunchSeqeraWorkflow:
     @patch("app.services.seqera.httpx.AsyncClient")
     async def test_launch_includes_default_params(self, mock_client_class):
         """Test that default parameters are included."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {"workflowId": "wf_123"}
         mock_response.reason_phrase = "OK"
         
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -131,13 +131,13 @@ class TestLaunchSeqeraWorkflow:
 
     @patch("app.services.seqera.httpx.AsyncClient")
     async def test_launch_with_dataset_adds_input_url(self, mock_client_class):
-        """Test that dataset ID adds input URL to params."""
-        mock_response = AsyncMock()
+        """Test that providing a dataset ID adds it to launch payload."""
+        mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.json.return_value = {"workflowId": "wf_123"}
+        mock_response.json.return_value = {"workflowId": "wf_dataset_999"}
         mock_response.reason_phrase = "OK"
         
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -177,13 +177,13 @@ class TestLaunchSeqeraWorkflow:
 
     @patch("app.services.seqera.httpx.AsyncClient")
     async def test_launch_missing_workflow_id_in_response(self, mock_client_class):
-        """Test handling when response is missing workflowId."""
-        mock_response = AsyncMock()
+        """Test error handling when API response lacks workflowId."""
+        mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.json.return_value = {}  # No workflowId
+        mock_response.json.return_value = {"status": "success"}
         mock_response.reason_phrase = "OK"
         
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -206,13 +206,13 @@ class TestLaunchSeqeraWorkflow:
 
     @patch("app.services.seqera.httpx.AsyncClient")
     async def test_launch_with_custom_params_text(self, mock_client_class):
-        """Test that custom paramsText is appended to defaults."""
-        mock_response = AsyncMock()
+        """Test launch with custom paramsText."""
+        mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.json.return_value = {"workflowId": "wf_123"}
+        mock_response.json.return_value = {"workflowId": "wf_params_xyz"}
         mock_response.reason_phrase = "OK"
         
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)

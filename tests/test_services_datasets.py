@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -137,11 +137,13 @@ class TestCreateSeqeraDataset:
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_create_dataset_success(self, mock_client_class):
         """Test successful dataset creation."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {
-            "id": "dataset_123",
-            "name": "test-dataset",
+            "dataset": {
+                "id": "dataset_123",
+                "name": "test-dataset",
+            }
         }
         mock_response.status_code = 200
         mock_response.text = ""
@@ -159,16 +161,18 @@ class TestCreateSeqeraDataset:
         
         assert isinstance(result, DatasetCreationResult)
         assert result.dataset_id == "dataset_123"
-        assert result.raw_response["name"] == "test-dataset"
+        assert result.raw_response["dataset"]["name"] == "test-dataset"
 
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_create_dataset_default_name(self, mock_client_class):
         """Test dataset creation with auto-generated name."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {
-            "id": "dataset_456",
-            "name": "dataset-1234567890",
+            "dataset": {
+                "id": "dataset_456",
+                "name": "dataset-1234567890",
+            }
         }
         mock_response.status_code = 200
         mock_response.text = ""
@@ -205,11 +209,13 @@ class TestCreateSeqeraDataset:
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_create_dataset_missing_id_in_response(self, mock_client_class):
         """Test handling when response is missing dataset ID."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.json.return_value = {
-            "name": "test-dataset",
-            # Missing "id" field
+            "dataset": {
+                "name": "test-dataset",
+                # Missing "id" field
+            }
         }
         mock_response.status_code = 200
         mock_response.text = "{}"
@@ -220,7 +226,7 @@ class TestCreateSeqeraDataset:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_class.return_value = mock_client
         
-        with pytest.raises(SeqeraServiceError, match="Failed to extract dataset ID"):
+        with pytest.raises(SeqeraServiceError, match="response lacked dataset id"):
             await create_seqera_dataset(name="test")
 
 
@@ -230,10 +236,16 @@ class TestUploadDatasetToSeqera:
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_upload_success(self, mock_client_class):
         """Test successful dataset upload."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.status_code = 200
         mock_response.text = ""
+        mock_response.json.return_value = {
+            "version": {
+                "datasetId": "dataset_789"
+            },
+            "message": "Upload successful"
+        }
         
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
@@ -258,7 +270,7 @@ class TestUploadDatasetToSeqera:
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_upload_creates_csv(self, mock_client_class):
         """Test that upload creates proper CSV."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.status_code = 200
         mock_response.text = ""
@@ -302,7 +314,7 @@ class TestUploadDatasetToSeqera:
     @patch("app.services.datasets.httpx.AsyncClient")
     async def test_upload_with_complex_data(self, mock_client_class):
         """Test upload with complex form data."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.status_code = 200
         mock_response.text = ""

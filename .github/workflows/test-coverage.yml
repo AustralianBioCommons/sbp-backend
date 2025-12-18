@@ -62,10 +62,8 @@ jobs:
           badge: true
           fail_below_min: true
           format: markdown
-          thresholds: '90 95'
-
           hide_branch_rate: false
           hide_complexity: true
           indicators: true
           thresholds: "90 90"
-          output: console
+          output: both
