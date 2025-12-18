@@ -1,10 +1,14 @@
 # SBP Portal Backend Server
 
+![Lint](https://github.com/AustralianBioCommons/sbp-backend/actions/workflows/lint.yml/badge.svg)
+![Coverage](https://github.com/AustralianBioCommons/sbp-backend/actions/workflows/test-coverage.yml/badge.svg)
+[![codecov](https://codecov.io/gh/AustralianBioCommons/sbp-backend/branch/main/graph/badge.svg)](https://codecov.io/gh/AustralianBioCommons/sbp-backend)
+
 FastAPI backend for handling Seqera Platform workflow launches.
 
 ## Prerequisites
 
-- Python 3.9+ (matching the version used by your deployment target)
+- Python 3.10+ (matching the version used by your deployment target)
 - [uvicorn](https://www.uvicorn.org/) and other dependencies listed in `requirements.txt`
 
 ## Setup
@@ -22,7 +26,13 @@ FastAPI backend for handling Seqera Platform workflow launches.
    pip install -r requirements.txt
    ```
 
-3. Configure environment variables:
+3. Install development dependencies (for testing and linting):
+
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
+4. Configure environment variables:
 
    ```bash
    cp .env.example .env
@@ -45,6 +55,51 @@ FastAPI backend for handling Seqera Platform workflow launches.
 - `GET /api/workflows/{runId}/logs` — Placeholder log endpoint
 - `GET /api/workflows/{runId}/details` — Placeholder details endpoint
 - `POST /api/workflows/datasets/upload` — Create a Seqera dataset and upload submitted form data as a CSV
+
+## Testing
+
+Run the test suite with coverage:
+
+```bash
+# Run all tests with coverage report
+pytest --cov=app --cov-report=term-missing --cov-report=html
+
+# Run tests with verbose output
+pytest -v
+
+# Run specific test file
+pytest tests/test_main.py
+
+# Check coverage threshold (90%)
+coverage report --fail-under=90
+```
+
+View HTML coverage report:
+
+```bash
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
+```
+
+## Linting and Code Quality
+
+```bash
+# Run ruff linter
+ruff check app tests
+
+# Run black formatter
+black app tests
+
+# Run type checking with mypy
+mypy app --ignore-missing-imports
+
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+
+# Run pre-commit on all files
+pre-commit run --all-files
+```
 
 ## Environment Variables
 
