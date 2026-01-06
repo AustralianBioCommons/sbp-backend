@@ -21,14 +21,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip"
-          cache-dependency-path: requirements.txt
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -r requirements-dev.txt
+          uv sync --all-extras
 
       - name: Run tests with coverage
         env:
@@ -39,11 +40,11 @@ jobs:
           COMPUTE_ID: compute-123
           WORK_DIR: /tmp/work
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-report=html -v
+          uv run pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-report=html -v
 
       - name: Check coverage threshold (90%)
         run: |
-          coverage report --fail-under=90
+          uv run coverage report --fail-under=90
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

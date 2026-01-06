@@ -17,18 +17,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: requirements.txt
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          uv sync --all-extras
+
       - name: Run Ruff
-        run: ruff check app tests
+        run: uv run ruff check app tests
 
       - name: Run Black
-        run: black --check app tests
+        run: uv run black --check app tests
 
       - name: Run MyPy
-        run: mypy app --ignore-missing-imports
+        run: uv run mypy app --ignore-missing-imports

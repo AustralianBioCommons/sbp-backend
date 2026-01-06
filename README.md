@@ -8,31 +8,28 @@ FastAPI backend for handling Seqera Platform workflow launches.
 
 ## Prerequisites
 
-- Python 3.10+ (matching the version used by your deployment target)
-- [uvicorn](https://www.uvicorn.org/) and other dependencies listed in `requirements.txt`
+- Python 3.10+
+- [UV](https://docs.astral.sh/uv/) package manager
 
 ## Setup
 
-1. Create a virtual environment (recommended):
+1. Install UV (if not already installed):
 
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+   # macOS/Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   
+   # Windows
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
 2. Install dependencies:
 
    ```bash
-   pip install -r requirements.txt
+   uv sync --all-extras
    ```
 
-3. Install development dependencies (for testing and linting):
-
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
-
-4. Configure environment variables:
+3. Configure environment variables:
 
    ```bash
    cp .env.example .env
@@ -42,8 +39,7 @@ FastAPI backend for handling Seqera Platform workflow launches.
 4. Run the API locally:
 
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
-   # or: python -m app.main  (uses PORT/UVICORN_RELOAD variables)
+   uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
    ```
 
 ## API Endpoints
@@ -62,16 +58,16 @@ Run the test suite with coverage:
 
 ```bash
 # Run all tests with coverage report
-pytest --cov=app --cov-report=term-missing --cov-report=html
+uv run pytest --cov=app --cov-report=term-missing --cov-report=html
 
 # Run tests with verbose output
-pytest -v
+uv run pytest -v
 
 # Run specific test file
-pytest tests/test_main.py
+uv run pytest tests/test_main.py
 
 # Check coverage threshold (90%)
-coverage report --fail-under=90
+uv run coverage report --fail-under=90
 ```
 
 View HTML coverage report:
@@ -86,17 +82,16 @@ start htmlcov/index.html  # Windows (Command Prompt / PowerShell)
 
 ```bash
 # Run ruff linter
-ruff check app tests
+uv run ruff check app tests
 
 # Run black formatter
-black app tests
+uv run black app tests
 
 # Run type checking with mypy
-mypy app --ignore-missing-imports
+uv run mypy app --ignore-missing-imports
 
 # Install pre-commit hooks
-pip install pre-commit
-pre-commit install
+uv run pre-commit install
 
 # Run pre-commit on all files
 pre-commit run --all-files
