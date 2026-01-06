@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import respx
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
+from polyfactory.factories.pydantic_factory import ModelFactory
 
 # Set test environment variables before importing app
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000,http://localhost:4200"
@@ -19,6 +20,74 @@ os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 
 from app.main import create_app
+from app.schemas.workflows import (
+    LaunchDetails,
+    LaunchLogs,
+    ListRunsResponse,
+    RunInfo,
+    WorkflowLaunchForm,
+    WorkflowLaunchPayload,
+    WorkflowLaunchResponse,
+)
+
+
+# ============================================================================
+# Polyfactory Factories - Auto-generate test data from Pydantic schemas
+# ============================================================================
+
+
+class WorkflowLaunchFormFactory(ModelFactory[WorkflowLaunchForm]):
+    """Factory for generating WorkflowLaunchForm test data."""
+
+    __model__ = WorkflowLaunchForm
+    __check_model__ = False
+
+
+class WorkflowLaunchPayloadFactory(ModelFactory[WorkflowLaunchPayload]):
+    """Factory for generating WorkflowLaunchPayload test data."""
+
+    __model__ = WorkflowLaunchPayload
+    __check_model__ = False
+
+
+class WorkflowLaunchResponseFactory(ModelFactory[WorkflowLaunchResponse]):
+    """Factory for generating WorkflowLaunchResponse test data."""
+
+    __model__ = WorkflowLaunchResponse
+    __check_model__ = False
+
+
+class RunInfoFactory(ModelFactory[RunInfo]):
+    """Factory for generating RunInfo test data."""
+
+    __model__ = RunInfo
+    __check_model__ = False
+
+
+class ListRunsResponseFactory(ModelFactory[ListRunsResponse]):
+    """Factory for generating ListRunsResponse test data."""
+
+    __model__ = ListRunsResponse
+    __check_model__ = False
+
+
+class LaunchLogsFactory(ModelFactory[LaunchLogs]):
+    """Factory for generating LaunchLogs test data."""
+
+    __model__ = LaunchLogs
+    __check_model__ = False
+
+
+class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
+    """Factory for generating LaunchDetails test data."""
+
+    __model__ = LaunchDetails
+    __check_model__ = False
+
+
+# ============================================================================
+# FastAPI Test Clients
+# ============================================================================
 
 
 @pytest.fixture
@@ -41,41 +110,20 @@ async def async_client(app) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
 
-@pytest.fixture
-def mock_httpx_response():
-    """Create a mock httpx Response."""
-
-    def _create_response(
-        status_code: int = 200,
-        json_data: dict | None = None,
-        text: str = "",
-        is_error: bool = False,
-    ):
-        response = MagicMock()
-        response.status_code = status_code
-        response.is_error = is_error
-        response.text = text
-        if json_data:
-            response.json.return_value = json_data
-        return response
-
-    return _create_response
-
-
-@pytest.fixture
-def mock_async_client(mock_httpx_response):
-    """Create a mock async HTTP client."""
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock()
-    mock_client.get = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock()
-    return mock_client
+# ============================================================================
+# Legacy Fixtures (kept for backward compatibility)
+# Note: Consider using factories directly in tests instead
+# ============================================================================
+# Note: respx is now used for HTTP mocking instead of manual AsyncMock
+# respx automatically handles httpx.AsyncClient mocking
 
 
 @pytest.fixture
 def sample_workflow_launch_form():
-    """Sample workflow launch form data."""
+    """Sample workflow launch form data.
+    
+    NOTE: Consider using WorkflowLaunchFormFactory.build() directly in tests.
+    """
     return {
         "pipeline": "https://github.com/nextflow-io/hello",
         "revision": "main",
