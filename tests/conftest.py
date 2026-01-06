@@ -6,7 +6,6 @@ import os
 from collections.abc import AsyncGenerator, Generator
 
 import pytest
-import respx
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 from polyfactory.factories.pydantic_factory import ModelFactory
@@ -30,10 +29,8 @@ from app.schemas.workflows import (
     WorkflowLaunchResponse,
 )
 
-
 # ============================================================================
-# Polyfactory Factories - Auto-generate test data from Pydantic schemas
-# ============================================================================
+# Auto-generate test data from Pydantic schemas # ============================================================================
 
 
 class WorkflowLaunchFormFactory(ModelFactory[WorkflowLaunchForm]):
@@ -110,18 +107,10 @@ async def async_client(app) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
 
-# ============================================================================
-# Legacy Fixtures (kept for backward compatibility)
-# Note: Consider using factories directly in tests instead
-# ============================================================================
-# Note: respx is now used for HTTP mocking instead of manual AsyncMock
-# respx automatically handles httpx.AsyncClient mocking
-
-
 @pytest.fixture
 def sample_workflow_launch_form():
     """Sample workflow launch form data.
-    
+
     NOTE: Consider using WorkflowLaunchFormFactory.build() directly in tests.
     """
     return {

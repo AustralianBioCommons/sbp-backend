@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import httpx
 import pytest
 import respx
@@ -88,6 +86,7 @@ async def test_launch_success_with_all_params():
     request = route.calls.last.request
     # Read the request body and parse JSON
     import json
+
     payload = json.loads(request.content)
     assert "datasetIds" in payload["launch"]
     assert "dataset_789" in payload["launch"]["datasetIds"]
@@ -108,6 +107,7 @@ async def test_launch_includes_default_params():
     # Check request payload
     request = route.calls.last.request
     import json
+
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
@@ -132,6 +132,7 @@ async def test_launch_with_dataset_adds_input_url():
     # Verify request payload
     request = route.calls.last.request
     import json
+
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
@@ -176,9 +177,10 @@ def test_launch_missing_env_vars():
         mp.delenv("SEQERA_API_URL", raising=False)
         mp.delenv("SEQERA_ACCESS_TOKEN", raising=False)
         mp.delenv("WORK_SPACE", raising=False)
-        
+
         with pytest.raises(SeqeraConfigurationError):
             import asyncio
+
             asyncio.run(launch_seqera_workflow(form))
 
 
@@ -200,6 +202,7 @@ async def test_launch_with_custom_params_text():
     # Verify request payload
     request = route.calls.last.request
     import json
+
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
