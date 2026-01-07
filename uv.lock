@@ -838,17 +838,13 @@ dev = [
     { name = "coverage", extra = ["toml"] },
     { name = "httpx" },
     { name = "mypy" },
+    { name = "polyfactory" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
-    { name = "ruff" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "polyfactory" },
     { name = "respx" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -859,22 +855,18 @@ requires-dist = [
     { name = "httpx", specifier = "~=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "~=0.28" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "~=1.19" },
+    { name = "polyfactory", marker = "extra == 'dev'", specifier = "~=2.16" },
     { name = "pydantic", specifier = "~=2.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "~=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "~=0.23" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = "~=4.1" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = "~=3.12" },
     { name = "python-dotenv", specifier = "~=1.0" },
+    { name = "respx", marker = "extra == 'dev'", specifier = "~=0.21" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.14" },
     { name = "uvicorn", extras = ["standard"], specifier = "~=0.29" },
 ]
 provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "polyfactory", specifier = "~=2.16" },
-    { name = "respx", specifier = "~=0.21" },
-]
 
 [[package]]
 name = "starlette"

@@ -77,7 +77,16 @@ def test_cors_allowed_origins_parsing():
         os.environ, {"ALLOWED_ORIGINS": "http://localhost:3000, http://localhost:4200"}
     ):
         app = create_app()
-        assert app is not None
+
+        cors_options = next(mw.kwargs for mw in app.user_middleware if "CORSMiddleware" in str(mw))
+
+        # Verify the parsed origins are correctly set in the middleware
+        allowed_origins = cors_options["allow_origins"]
+
+        # Check that both origins are present after parsing
+        assert "http://localhost:3000" in allowed_origins
+        assert "http://localhost:4200" in allowed_origins
+        assert len(allowed_origins) == 2
 
 
 def test_cors_allowed_origins_with_empty_values():
@@ -88,4 +97,14 @@ def test_cors_allowed_origins_with_empty_values():
         os.environ, {"ALLOWED_ORIGINS": "http://localhost:3000,,  , http://localhost:4200"}
     ):
         app = create_app()
-        assert app is not None
+
+        cors_options = next(mw.kwargs for mw in app.user_middleware if "CORSMiddleware" in str(mw))
+
+        # Verify empty values and whitespace are filtered out
+        allowed_origins = cors_options["allow_origins"]
+
+        # Should only have 2 valid origins (empty strings filtered out)
+        assert "http://localhost:3000" in allowed_origins
+        assert "http://localhost:4200" in allowed_origins
+        assert len(allowed_origins) == 2
+        assert "" not in allowed_origins

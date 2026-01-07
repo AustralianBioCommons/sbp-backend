@@ -46,18 +46,8 @@ jobs:
         run: |
           uv run coverage report --fail-under=90
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-
       - name: Coverage summary
         uses: irongut/CodeCoverageSummary@v1.3.0
-        if: matrix.python-version == '3.11'
         with:
           filename: coverage.xml
           badge: true
