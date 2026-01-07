@@ -1,9 +1,9 @@
 """Workflow-related HTTP routes."""
+
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -36,26 +36,23 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
     """Launch a workflow on the Seqera Platform."""
     try:
         dataset_id = payload.datasetId
-        
+
         # If formData is provided, create and upload dataset
         if payload.formData:
             dataset_result = await create_seqera_dataset(
                 name=payload.launch.runName or "workflow-dataset"
             )
             dataset_id = dataset_result.dataset_id
-            
-            await upload_dataset_to_seqera(
-                dataset_id=dataset_id,
-                form_data=payload.formData
-            )
-        
-        result: SeqeraLaunchResult = await launch_seqera_workflow(
-            payload.launch, dataset_id
-        )
+
+            await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=payload.formData)
+
+        result: SeqeraLaunchResult = await launch_seqera_workflow(payload.launch, dataset_id)
     except SeqeraConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
     except SeqeraServiceError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return WorkflowLaunchResponse(
         message="Workflow launched successfully",
@@ -77,8 +74,8 @@ async def cancel_workflow(run_id: str) -> CancelWorkflowResponse:
 
 @router.get("/runs", response_model=ListRunsResponse)
 async def list_runs(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    workspace: Optional[str] = Query(None),
+    status_filter: str | None = Query(None, alias="status"),
+    workspace: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> ListRunsResponse:
@@ -143,9 +140,9 @@ async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        )
+        ) from exc
     except SeqeraServiceError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     # Allow Seqera time to finish dataset initialization before uploading
     await asyncio.sleep(2)
@@ -153,13 +150,13 @@ async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse
     try:
         upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        )
+        ) from exc
     except SeqeraServiceError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return DatasetUploadResponse(
         message="Dataset created and uploaded successfully",

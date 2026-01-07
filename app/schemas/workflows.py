@@ -1,8 +1,9 @@
 """Pydantic models shared across workflow endpoints."""
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -11,18 +12,14 @@ class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pipeline: str = Field(..., description="Workflow pipeline repository or URL")
-    revision: Optional[str] = Field(
+    revision: str | None = Field(
         default=None, description="Revision or branch of the pipeline to run"
     )
-    configProfiles: List[str] = Field(
+    configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )
-    runName: Optional[str] = Field(
-        default=None, description="Human-readable workflow run name"
-    )
-    paramsText: Optional[str] = Field(
-        default=None, description="YAML-style parameter overrides"
-    )
+    runName: str | None = Field(default=None, description="Human-readable workflow run name")
+    paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
 
     @field_validator("pipeline")
     @classmethod
@@ -36,11 +33,11 @@ class WorkflowLaunchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     launch: WorkflowLaunchForm
-    datasetId: Optional[str] = Field(
+    datasetId: str | None = Field(
         default=None,
         description="Optional Seqera dataset ID to attach to the workflow",
     )
-    formData: Optional[Dict[str, Any]] = Field(
+    formData: dict[str, Any] | None = Field(
         default=None,
         description="Optional form data to convert to CSV and upload as a dataset",
     )
@@ -69,7 +66,7 @@ class RunInfo(BaseModel):
 
 
 class ListRunsResponse(BaseModel):
-    runs: List[RunInfo]
+    runs: list[RunInfo]
     total: int
     limit: int
     offset: int
@@ -77,12 +74,12 @@ class ListRunsResponse(BaseModel):
 
 class LaunchLogs(BaseModel):
     truncated: bool
-    entries: List[str]
+    entries: list[str]
     rewindToken: str
     forwardToken: str
     pending: bool
     message: str
-    downloads: List[Dict[str, str]] = Field(default_factory=list)
+    downloads: list[dict[str, str]] = Field(default_factory=list)
 
 
 class LaunchDetails(BaseModel):
@@ -108,20 +105,20 @@ class LaunchDetails(BaseModel):
     projectName: str
     scriptName: str
     launchId: str
-    configFiles: List[str]
-    params: Dict[str, str]
+    configFiles: list[str]
+    params: dict[str, str]
 
 
 class DatasetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    formData: Dict[str, Any]
-    datasetName: Optional[str] = Field(default=None)
-    datasetDescription: Optional[str] = Field(default=None)
+    formData: dict[str, Any]
+    datasetName: str | None = Field(default=None)
+    datasetDescription: str | None = Field(default=None)
 
     @field_validator("formData")
     @classmethod
-    def validate_form_data(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_form_data(cls, value: dict[str, Any]) -> dict[str, Any]:
         if not value:
             raise ValueError("formData cannot be empty")
         return value
@@ -131,4 +128,4 @@ class DatasetUploadResponse(BaseModel):
     message: str
     datasetId: str
     success: bool
-    details: Optional[Dict[str, Any]] = None
+    details: dict[str, Any] | None = None
