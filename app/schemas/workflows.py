@@ -143,6 +143,4 @@ class PdbUploadResponse(BaseModel):
     fileId: str = Field(..., description="S3 file key/identifier")
     fileName: str = Field(..., description="Original filename")
     fileUrl: str = Field(..., description="S3 file location")
-    details: dict[str, Any] | None = Field(
-        default=None, description="Additional upload details"
-    )
+    details: dict[str, Any] | None = Field(default=None, description="Additional upload details")

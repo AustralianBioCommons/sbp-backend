@@ -23,7 +23,9 @@ def client():
 @pytest.fixture
 def mock_pdb_file():
     """Create a mock PDB file."""
-    content = b"HEADER    TEST PDB FILE\nATOM      1  CA  ALA A   1       0.000   0.000   0.000\nEND\n"
+    content = (
+        b"HEADER    TEST PDB FILE\nATOM      1  CA  ALA A   1       0.000   0.000   0.000\nEND\n"
+    )
     return BytesIO(content)
 
 
@@ -38,7 +40,9 @@ def mock_s3_upload_result():
     )
 
 
-def test_upload_pdb_file_success(client, mock_pdb_file, mock_s3_upload_result):  # pylint: disable=redefined-outer-name
+def test_upload_pdb_file_success(
+    client, mock_pdb_file, mock_s3_upload_result
+):  # pylint: disable=redefined-outer-name
     """Test successful PDB file upload."""
     with patch("app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload:
         mock_upload.return_value = mock_s3_upload_result
@@ -86,9 +90,7 @@ def test_upload_pdb_file_s3_configuration_error(client, mock_pdb_file):
     """Test upload with S3 configuration error."""
     from app.services.s3 import S3ConfigurationError
 
-    with patch(
-        "app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock
-    ) as mock_upload:
+    with patch("app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload:
         mock_upload.side_effect = S3ConfigurationError("AWS credentials not configured")
 
         response = client.post(
@@ -104,9 +106,7 @@ def test_upload_pdb_file_s3_service_error(client, mock_pdb_file):
     """Test upload with S3 service error."""
     from app.services.s3 import S3ServiceError
 
-    with patch(
-        "app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock
-    ) as mock_upload:
+    with patch("app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload:
         mock_upload.side_effect = S3ServiceError("Upload failed")
 
         response = client.post(

@@ -47,30 +47,35 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
             form_data = payload.formData.copy() if payload.formData else {}
             try:
                 presigned_url = await generate_presigned_url(
-                    file_key=payload.pdbFileKey,
-                    expiration=86400  # 24 hours
+                    file_key=payload.pdbFileKey, expiration=86400  # 24 hours
                 )
                 form_data["pdb_file_url"] = presigned_url
             except (S3ConfigurationError, S3ServiceError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to generate PDB file URL: {str(exc)}"
+                    detail=f"Failed to generate PDB file URL: {str(exc)}",
                 ) from exc
 
-            dataset_name = f"dataset-{payload.launch.runName}" if payload.launch.runName else "workflow-dataset"
+            dataset_name = (
+                f"dataset-{payload.launch.runName}"
+                if payload.launch.runName
+                else "workflow-dataset"
+            )
             dataset_result = await create_seqera_dataset(
-                name=dataset_name,
-                description="Input dataset with PDB files and parameters"
+                name=dataset_name, description="Input dataset with PDB files and parameters"
             )
             dataset_id = dataset_result.dataset_id
             await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=form_data)
 
         elif payload.formData:
             form_data = payload.formData
-            dataset_name = f"dataset-{payload.launch.runName}" if payload.launch.runName else "workflow-dataset"
+            dataset_name = (
+                f"dataset-{payload.launch.runName}"
+                if payload.launch.runName
+                else "workflow-dataset"
+            )
             dataset_result = await create_seqera_dataset(
-                name=dataset_name,
-                description="Input dataset with parameters"
+                name=dataset_name, description="Input dataset with parameters"
             )
             dataset_id = dataset_result.dataset_id
             await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=form_data)
