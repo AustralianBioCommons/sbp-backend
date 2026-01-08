@@ -21,6 +21,11 @@ from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
 )
+from ..services.s3 import (
+    S3ConfigurationError,
+    S3ServiceError,
+    generate_presigned_url,
+)
 from ..services.seqera import (
     SeqeraConfigurationError,
     SeqeraLaunchResult,
@@ -37,14 +42,38 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
     try:
         dataset_id = payload.datasetId
 
-        # If formData is provided, create and upload dataset
-        if payload.formData:
+        # If pdbFileKey is provided, create dataset with pre-signed URL
+        if payload.pdbFileKey:
+            form_data = payload.formData.copy() if payload.formData else {}
+            try:
+                presigned_url = await generate_presigned_url(
+                    file_key=payload.pdbFileKey,
+                    expiration=86400  # 24 hours
+                )
+                form_data["pdb_file_url"] = presigned_url
+            except (S3ConfigurationError, S3ServiceError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to generate PDB file URL: {str(exc)}"
+                ) from exc
+
+            dataset_name = f"dataset-{payload.launch.runName}" if payload.launch.runName else "workflow-dataset"
             dataset_result = await create_seqera_dataset(
-                name=payload.launch.runName or "workflow-dataset"
+                name=dataset_name,
+                description="Input dataset with PDB files and parameters"
             )
             dataset_id = dataset_result.dataset_id
+            await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=form_data)
 
-            await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=payload.formData)
+        elif payload.formData:
+            form_data = payload.formData
+            dataset_name = f"dataset-{payload.launch.runName}" if payload.launch.runName else "workflow-dataset"
+            dataset_result = await create_seqera_dataset(
+                name=dataset_name,
+                description="Input dataset with parameters"
+            )
+            dataset_id = dataset_result.dataset_id
+            await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=form_data)
 
         result: SeqeraLaunchResult = await launch_seqera_workflow(payload.launch, dataset_id)
     except SeqeraConfigurationError as exc:
@@ -85,7 +114,7 @@ async def list_runs(
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
-async def get_logs(run_id: str) -> LaunchLogs:
+async def get_logs() -> LaunchLogs:
     """Retrieve workflow logs (placeholder)."""
     return LaunchLogs(
         truncated=False,

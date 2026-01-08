@@ -41,6 +41,10 @@ class WorkflowLaunchPayload(BaseModel):
         default=None,
         description="Optional form data to convert to CSV and upload as a dataset",
     )
+    pdbFileKey: str | None = Field(
+        default=None,
+        description="Optional S3 file key for PDB file. A pre-signed URL will be generated and added to formData",
+    )
 
 
 class WorkflowLaunchResponse(BaseModel):
@@ -129,3 +133,16 @@ class DatasetUploadResponse(BaseModel):
     datasetId: str
     success: bool
     details: dict[str, Any] | None = None
+
+
+class PdbUploadResponse(BaseModel):
+    """Response model for PDB file upload."""
+
+    message: str
+    success: bool
+    fileId: str = Field(..., description="S3 file key/identifier")
+    fileName: str = Field(..., description="Original filename")
+    fileUrl: str = Field(..., description="S3 file location")
+    details: dict[str, Any] | None = Field(
+        default=None, description="Additional upload details"
+    )
