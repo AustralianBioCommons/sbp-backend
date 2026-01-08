@@ -13,6 +13,8 @@ dependencies = [
     "python-dotenv~=1.0",
     "httpx~=0.27",
     "pydantic~=2.7",
+    "boto3~=1.34",
+    "python-multipart~=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -91,7 +93,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # imported but unused
-"tests/*" = ["B018"]      # useless expression
+"tests/*" = ["B018", "PLR2004"]      # useless expression, magic value comparison
 
 # Black configuration
 [tool.black]
