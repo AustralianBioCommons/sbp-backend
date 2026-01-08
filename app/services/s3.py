@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -138,10 +138,13 @@ async def generate_presigned_url(
 
     try:
         s3_client = get_s3_client()
-        url = s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket_name, "Key": file_key},
-            ExpiresIn=expiration,
+        url = cast(
+            str,
+            s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket_name, "Key": file_key},
+                ExpiresIn=expiration,
+            ),
         )
         return url
 
