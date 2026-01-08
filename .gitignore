@@ -1,8 +1,41 @@
+# Python
 .venv/
+venv/
+env/
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Environment
 .env
-*.log
+.env.local
+.env.*.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE
 .DS_Store
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# UV
+# Note: uv.lock is tracked for reproducibility
+# .python-version is tracked if using specific Python version

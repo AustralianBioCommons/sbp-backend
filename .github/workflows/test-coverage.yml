@@ -1,0 +1,60 @@
+name: Coverage
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras
+
+      - name: Run tests with coverage
+        env:
+          ALLOWED_ORIGINS: http://localhost
+          SEQERA_API_URL: https://example.com/api
+          SEQERA_ACCESS_TOKEN: test-token
+          WORK_SPACE: demo-workspace
+          COMPUTE_ID: compute-123
+          WORK_DIR: /tmp/work
+        run: |
+          uv run pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-report=html -v
+
+      - name: Check coverage threshold (90%)
+        run: |
+          uv run coverage report --fail-under=90
+
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          badge: true
+          fail_below_min: true
+          format: markdown
+          hide_branch_rate: false
+          hide_complexity: true
+          indicators: true
+          thresholds: "90 90"
+          output: both

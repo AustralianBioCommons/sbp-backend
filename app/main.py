@@ -1,4 +1,5 @@
 """FastAPI application entry point for the SBP Portal backend."""
+
 from __future__ import annotations
 
 import logging
@@ -10,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .routes.pdb_upload import router as pdb_router
 from .routes.workflows import router as workflow_router
 
 load_dotenv()
@@ -29,7 +31,9 @@ def create_app() -> FastAPI:
     if not allowed_origins_env:
         raise RuntimeError("ALLOWED_ORIGINS environment variable is required but not set")
 
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    allowed_origins = [
+        origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+    ]
 
     app.add_middleware(
         CORSMiddleware,
@@ -44,6 +48,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     app.include_router(workflow_router, prefix="/api/workflows")
+    app.include_router(pdb_router, prefix="/api/workflows/pdb")
 
     @app.exception_handler(Exception)
     async def handle_exception(request: Request, exc: Exception):  # type: ignore[override]
