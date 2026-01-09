@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -38,21 +38,9 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
     assert "submitTime" in data
 
 
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
 @patch("app.routes.workflows.launch_seqera_workflow")
-async def test_launch_success_with_form_data(
-    mock_launch, mock_create_dataset, mock_upload, client: TestClient
-):
-    """Test successful workflow launch with form data."""
-    # Mock dataset creation
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "dataset_456"
-    mock_create_dataset.return_value = mock_create_result
-
-    # Mock dataset upload
-    mock_upload.return_value = None
-
+async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
+    """Test successful workflow launch with pre-created dataset ID."""
     # Mock workflow launch
     mock_launch.return_value = SeqeraLaunchResult(
         workflow_id="wf_789",
@@ -64,10 +52,7 @@ async def test_launch_success_with_form_data(
             "pipeline": "https://github.com/test/repo",
             "runName": "test-with-data",
         },
-        "formData": {
-            "sample": "test",
-            "input": "/path/file.txt",
-        },
+        "datasetId": "dataset_456",  # Use existing dataset
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -76,9 +61,10 @@ async def test_launch_success_with_form_data(
     data = response.json()
     assert data["runId"] == "wf_789"
 
-    # Verify dataset creation was called
-    mock_create_dataset.assert_called_once()
-    mock_upload.assert_called_once()
+    # Verify workflow was launched with the provided dataset ID
+    mock_launch.assert_called_once()
+    call_args = mock_launch.call_args
+    assert call_args[0][1] == "dataset_456"  # Second argument is dataset_id
 
 
 @patch("app.routes.workflows.launch_seqera_workflow")

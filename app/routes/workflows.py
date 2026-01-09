@@ -37,15 +37,7 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
     try:
         dataset_id = payload.datasetId
 
-        # If formData is provided, create and upload dataset
-        if payload.formData:
-            dataset_result = await create_seqera_dataset(
-                name=payload.launch.runName or "workflow-dataset"
-            )
-            dataset_id = dataset_result.dataset_id
-
-            await upload_dataset_to_seqera(dataset_id=dataset_id, form_data=payload.formData)
-
+        # Use the dataset created from /datasets/upload endpoint
         result: SeqeraLaunchResult = await launch_seqera_workflow(payload.launch, dataset_id)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
@@ -85,7 +77,7 @@ async def list_runs(
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
-async def get_logs(run_id: str) -> LaunchLogs:
+async def get_logs() -> LaunchLogs:
     """Retrieve workflow logs (placeholder)."""
     return LaunchLogs(
         truncated=False,
