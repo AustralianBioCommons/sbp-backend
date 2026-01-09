@@ -134,7 +134,7 @@ async def generate_presigned_url(
     """
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set in env file!")
 
     try:
         s3_client = get_s3_client()
