@@ -149,6 +149,6 @@ async def generate_presigned_url(
         return url
 
     except (BotoCoreError, ClientError) as exc:
-        error_msg = f"Failed to generate pre-signed URL: {str(exc)}"
+        error_msg = f"Failed to generate pre-signed URI: {str(exc)}"
         logger.error(error_msg)
         raise S3ServiceError(error_msg) from exc
