@@ -41,7 +41,7 @@ def get_s3_client():
 
     if not aws_access_key or not aws_secret_key:
         raise S3ConfigurationError(
-            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the .env file."
         )
 
     return boto3.client(
