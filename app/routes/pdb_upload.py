@@ -13,6 +13,9 @@ from ..services.s3 import (
 
 router = APIRouter(tags=["pdb"])
 
+# Maximum file size for PDB uploads (10MB)
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
 
 @router.post("/upload", response_model=PdbUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_pdb_file(
@@ -30,17 +33,23 @@ async def upload_pdb_file(
     Raises:
         HTTPException: If validation fails or upload encounters an error
     """
+    # Validate file is provided
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file provided",
+        )
+
     # Validate file extension
-    if not file.filename or not file.filename.lower().endswith(".pdb"):
+    if not file.filename.lower().endswith(".pdb"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File must have .pdb extension",
         )
 
-    # Validate file size (max 10MB)
-    max_size = 10 * 1024 * 1024  # 10MB
+    # Validate file size
     file_content = await file.read()
-    if len(file_content) > max_size:
+    if len(file_content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File size exceeds 10MB limit",
@@ -80,4 +89,9 @@ async def upload_pdb_file(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"S3 upload failed: {str(exc)}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error during file upload: {str(exc)}",
         ) from exc
