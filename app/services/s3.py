@@ -37,11 +37,11 @@ def get_s3_client():
     """Get configured S3 client."""
     aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
+    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
     if not aws_access_key or not aws_secret_key:
         raise S3ConfigurationError(
-            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the .env file."
         )
 
     return boto3.client(
@@ -138,7 +138,7 @@ async def generate_presigned_url(
     """
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set in env file!")
 
     try:
         s3_client = get_s3_client()
@@ -153,7 +153,7 @@ async def generate_presigned_url(
         return url
 
     except (BotoCoreError, ClientError) as exc:
-        error_msg = f"Failed to generate pre-signed URL: {str(exc)}"
+        error_msg = f"Failed to generate pre-signed URI: {str(exc)}"
         logger.error(error_msg)
         raise S3ServiceError(error_msg) from exc
     except Exception as exc:
