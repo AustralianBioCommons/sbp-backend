@@ -37,7 +37,7 @@ def get_s3_client():
     """Get configured S3 client."""
     aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
+    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
     if not aws_access_key or not aws_secret_key:
         raise S3ConfigurationError(
