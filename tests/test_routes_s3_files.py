@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import patch
 
-import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
