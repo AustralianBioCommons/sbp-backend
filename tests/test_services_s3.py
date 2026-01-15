@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -11,8 +12,11 @@ from botocore.exceptions import ClientError
 from app.services.s3 import (
     S3ConfigurationError,
     S3ServiceError,
+    calculate_csv_column_max,
     generate_presigned_url,
     get_s3_client,
+    list_s3_files,
+    read_csv_from_s3,
     upload_file_to_s3,
 )
 
@@ -144,14 +148,6 @@ async def test_generate_presigned_url_missing_bucket():
 # ============================================================================
 # Tests for new S3 CSV functions
 # ============================================================================
-
-from datetime import datetime, timezone
-
-from app.services.s3 import (
-    calculate_csv_column_max,
-    list_s3_files,
-    read_csv_from_s3,
-)
 
 
 @pytest.mark.asyncio
