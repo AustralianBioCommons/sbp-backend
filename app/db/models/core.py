@@ -4,7 +4,7 @@ from sqlalchemy import BigInteger, ForeignKey, Numeric, PrimaryKeyConstraint, Te
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ..db import Base
+from .. import Base
 
 
 class AppUser(Base):
