@@ -53,6 +53,7 @@ def get_s3_client():
 
     return boto3.client("s3", **client_kwargs)
 
+
 async def upload_file_to_s3(
     file_content: BinaryIO,
     filename: str,
