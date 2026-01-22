@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import os
-import uuid
-from decimal import Decimal
 
-import pytest
 from sqlalchemy import inspect
 
 from app.db import Base, SessionLocal, _get_database_url, engine
@@ -125,7 +122,7 @@ def test_workflow_run_model():
     assert hasattr(WorkflowRun, "outputs")
 
     # Check unique constraints
-    constraints = [c for c in WorkflowRun.__table__.constraints]
+    constraints = list(WorkflowRun.__table__.constraints)
     constraint_names = {c.name for c in constraints}
     assert "workflow_runs_seqera_run_id_unique" in constraint_names
     assert "workflow_runs_work_dir_unique" in constraint_names
@@ -149,7 +146,7 @@ def test_s3_object_model():
     assert hasattr(S3Object, "run_outputs")
 
     # Check unique constraint
-    constraints = [c for c in S3Object.__table__.constraints]
+    constraints = list(S3Object.__table__.constraints)
     constraint_names = {c.name for c in constraints}
     assert "s3_objects_uri_unique" in constraint_names
 
@@ -210,11 +207,23 @@ def test_models_are_importable():
     """Test that all models can be imported from the models package."""
     from app.db.models import (
         AppUser as ImportedAppUser,
+    )
+    from app.db.models import (
         RunInput as ImportedRunInput,
+    )
+    from app.db.models import (
         RunMetric as ImportedRunMetric,
+    )
+    from app.db.models import (
         RunOutput as ImportedRunOutput,
+    )
+    from app.db.models import (
         S3Object as ImportedS3Object,
+    )
+    from app.db.models import (
         Workflow as ImportedWorkflow,
+    )
+    from app.db.models import (
         WorkflowRun as ImportedWorkflowRun,
     )
 
