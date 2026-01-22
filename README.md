@@ -58,10 +58,20 @@ The database schema is managed by SQLAlchemy and Alembic migrations. To visualiz
 
 ```bash
 # Generate an up-to-date schema diagram from SQLAlchemy models
-uv run python generate_schema_diagram.py
+bash generate_db_diagram.sh
 ```
 
-This creates [docs/schema_diagram.png](docs/schema_diagram.png) showing all tables, relationships, and constraints. The diagram is always generated from the actual SQLAlchemy models, ensuring it stays in sync with your database structure.
+This creates [docs/schema_diagram.svg](docs/schema_diagram.svg) showing all tables, relationships, and constraints. The diagram is always generated from the actual SQLAlchemy models, ensuring it stays in sync with your database structure.
+
+### Updating the Database Schema Diagram
+
+When database models are changed (added, removed, or modified), the database schema diagram should be updated to reflect the changes. Run the following command:
+
+```bash
+bash generate_db_diagram.sh
+```
+
+The updated diagram will be saved in `docs/schema_diagram.svg`. Make sure to commit this file along with your model changes.
 
 **Note:** The diagram requires [Graphviz](https://graphviz.org/) to be installed on your system:
 - macOS: `brew install graphviz`
