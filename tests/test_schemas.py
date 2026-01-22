@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.schemas.workflows import (
     CancelWorkflowResponse,
+    DatasetUploadRequest,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
@@ -239,3 +240,25 @@ def test_valid_details():
 
     assert details.status == "completed"
     assert details.ownerId == 123
+
+
+def test_dataset_upload_request_valid():
+    """Test creating valid DatasetUploadRequest."""
+    request = DatasetUploadRequest(
+        formData={"sample": "test", "input": "/path/file"},
+        datasetName="test-dataset",
+        datasetDescription="Test description",
+    )
+
+    assert request.formData == {"sample": "test", "input": "/path/file"}
+    assert request.datasetName == "test-dataset"
+    assert request.datasetDescription == "Test description"
+
+
+def test_dataset_upload_request_empty_form_data():
+    """Test DatasetUploadRequest validator rejects empty formData."""
+    with pytest.raises(ValidationError, match="formData cannot be empty"):
+        DatasetUploadRequest(
+            formData={},
+            datasetName="test-dataset",
+        )

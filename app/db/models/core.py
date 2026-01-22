@@ -11,9 +11,7 @@ class AppUser(Base):
     __tablename__ = "app_users"
 
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    auth0_user_id: Mapped[UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, unique=True
-    )
+    auth0_user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
 
@@ -56,9 +54,7 @@ class WorkflowRun(Base):
 
 class S3Object(Base):
     __tablename__ = "s3_objects"
-    __table_args__ = (
-        UniqueConstraint("URI", name="s3_objects_uri_unique"),
-    )
+    __table_args__ = (UniqueConstraint("URI", name="s3_objects_uri_unique"),)
 
     object_key: Mapped[str] = mapped_column(Text, primary_key=True)
     uri: Mapped[str] = mapped_column("URI", Text, nullable=False)
@@ -71,14 +67,10 @@ class S3Object(Base):
 
 class RunInput(Base):
     __tablename__ = "run_inputs"
-    __table_args__ = (
-        PrimaryKeyConstraint("run_id", "s3_object_id", name="run_inputs_pkey"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id", name="run_inputs_pkey"),)
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
-    s3_object_id: Mapped[str] = mapped_column(
-        ForeignKey("s3_objects.object_key"), nullable=False
-    )
+    s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
 
     run: Mapped[WorkflowRun] = relationship(back_populates="inputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_inputs")
@@ -86,14 +78,10 @@ class RunInput(Base):
 
 class RunOutput(Base):
     __tablename__ = "run_outputs"
-    __table_args__ = (
-        PrimaryKeyConstraint("run_id", "s3_object_id", name="run_outputs_pkey"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id", name="run_outputs_pkey"),)
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
-    s3_object_id: Mapped[str] = mapped_column(
-        ForeignKey("s3_objects.object_key"), nullable=False
-    )
+    s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
 
     run: Mapped[WorkflowRun] = relationship(back_populates="outputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_outputs")
@@ -102,9 +90,7 @@ class RunOutput(Base):
 class RunMetric(Base):
     __tablename__ = "run_metrics"
 
-    run_id: Mapped[UUID] = mapped_column(
-        ForeignKey("workflow_runs.id"), primary_key=True
-    )
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), primary_key=True)
     max_score: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
 
     run: Mapped[WorkflowRun] = relationship(back_populates="metrics")

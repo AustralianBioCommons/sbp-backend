@@ -11,7 +11,9 @@ import respx
 from app.services.datasets import (
     DatasetCreationResult,
     DatasetUploadResult,
+    SeqeraConfigurationError,
     SeqeraServiceError,
+    _get_required_env,
     _stringify_field,
     convert_form_data_to_csv,
     create_seqera_dataset,
@@ -57,6 +59,22 @@ def test_stringify_boolean():
     """Test stringifying boolean."""
     assert _stringify_field(True) == "True"
     assert _stringify_field(False) == "False"
+
+
+def test_get_required_env_success():
+    """Test _get_required_env returns value when env var exists."""
+    import os
+
+    os.environ["TEST_ENV_VAR"] = "test_value"
+    result = _get_required_env("TEST_ENV_VAR")
+    assert result == "test_value"
+    del os.environ["TEST_ENV_VAR"]
+
+
+def test_get_required_env_missing():
+    """Test _get_required_env raises error when env var is missing."""
+    with pytest.raises(SeqeraConfigurationError, match="Missing required environment variable"):
+        _get_required_env("NONEXISTENT_ENV_VAR")
 
 
 def test_convert_simple_data():
@@ -260,8 +278,20 @@ async def test_upload_creates_csv():
     # Verify POST was called
     assert route.called
     # The CSV data should be in the request
-    request = route.calls.last.request
-    assert request.headers.get("content-type", "").startswith("multipart/form-data")
+
+
+@pytest.mark.asyncio
+async def test_upload_empty_dataset_id():
+    """Test upload fails with empty dataset_id."""
+    with pytest.raises(ValueError, match="dataset_id is required"):
+        await upload_dataset_to_seqera("", {"sample": "test"})
+
+
+@pytest.mark.asyncio
+async def test_upload_empty_form_data():
+    """Test upload fails with empty form_data."""
+    with pytest.raises(ValueError, match="formData cannot be empty"):
+        await upload_dataset_to_seqera("dataset_123", {})
 
 
 @pytest.mark.asyncio

@@ -228,6 +228,25 @@ async def test_list_s3_files_client_error(mock_env_vars, mock_s3_client):
 
 
 @pytest.mark.asyncio
+async def test_list_s3_files_generic_exception(mock_env_vars, mock_s3_client):
+    """Test file listing handles generic exceptions."""
+    mock_paginator = MagicMock()
+    mock_paginator.paginate.side_effect = RuntimeError("Unexpected error")
+    mock_s3_client.get_paginator.return_value = mock_paginator
+
+    with pytest.raises(S3ServiceError, match="Unexpected error listing S3 files"):
+        await list_s3_files(prefix="test/")
+
+
+@pytest.mark.asyncio
+async def test_list_s3_files_missing_bucket():
+    """Test file listing fails without bucket configuration."""
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(S3ConfigurationError, match="AWS_S3_BUCKET"):
+            await list_s3_files(prefix="test/")
+
+
+@pytest.mark.asyncio
 async def test_read_csv_from_s3_all_columns(mock_env_vars, mock_s3_client):
     """Test reading CSV with all columns."""
     csv_content = "Design,Average_i_pTM,Rank\ndesign1,0.84,1\ndesign2,0.78,2\n"
@@ -282,6 +301,23 @@ async def test_read_csv_from_s3_file_not_found(mock_env_vars, mock_s3_client):
 
     with pytest.raises(S3ServiceError, match="Failed to read CSV from S3"):
         await read_csv_from_s3("nonexistent/file.csv")
+
+
+@pytest.mark.asyncio
+async def test_read_csv_from_s3_generic_exception(mock_env_vars, mock_s3_client):
+    """Test reading CSV handles generic exceptions."""
+    mock_s3_client.get_object.side_effect = RuntimeError("Unexpected error")
+
+    with pytest.raises(S3ServiceError, match="Unexpected error reading CSV from S3"):
+        await read_csv_from_s3("test.csv")
+
+
+@pytest.mark.asyncio
+async def test_read_csv_from_s3_missing_bucket():
+    """Test reading CSV fails without bucket configuration."""
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(S3ConfigurationError, match="AWS_S3_BUCKET"):
+            await read_csv_from_s3("test.csv")
 
 
 @pytest.mark.asyncio
@@ -352,3 +388,37 @@ async def test_calculate_csv_column_max_missing_bucket():
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(S3ConfigurationError, match="AWS_S3_BUCKET"):
             await calculate_csv_column_max("results/test/file.csv", "Average_i_pTM")
+
+
+@pytest.mark.asyncio
+async def test_upload_file_to_s3_generic_exception(mock_env_vars, mock_s3_client):
+    """Test upload with generic exception."""
+    mock_s3_client.upload_fileobj.side_effect = RuntimeError("Unexpected error")
+
+    file_content = BytesIO(b"test")
+    with pytest.raises(S3ServiceError) as exc_info:
+        await upload_file_to_s3(file_content, "test.pdb")
+    assert "Unexpected error during S3 upload" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_generate_presigned_url_client_error(mock_env_vars, mock_s3_client):
+    """Test pre-signed URL generation with ClientError."""
+    mock_s3_client.generate_presigned_url.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Key not found"}},
+        "generate_presigned_url",
+    )
+
+    with pytest.raises(S3ServiceError) as exc_info:
+        await generate_presigned_url("test-key")
+    assert "Failed to generate pre-signed URI" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_generate_presigned_url_generic_exception(mock_env_vars, mock_s3_client):
+    """Test pre-signed URL generation with generic exception."""
+    mock_s3_client.generate_presigned_url.side_effect = RuntimeError("Unexpected error")
+
+    with pytest.raises(S3ServiceError) as exc_info:
+        await generate_presigned_url("test-key")
+    assert "Unexpected error generating pre-signed URL" in str(exc_info.value)
