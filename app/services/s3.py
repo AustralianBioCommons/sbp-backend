@@ -39,18 +39,19 @@ def get_s3_client():
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
-    if not aws_access_key or not aws_secret_key:
+    if (aws_access_key and not aws_secret_key) or (aws_secret_key and not aws_access_key):
         raise S3ConfigurationError(
-            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the .env file."
+            "AWS credentials are incomplete. Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY or neither."
         )
 
-    return boto3.client(
-        "s3",
-        aws_access_key_id=aws_access_key,
-        aws_secret_access_key=aws_secret_key,
-        region_name=aws_region,
-    )
+    client_kwargs = {}
+    if aws_region:
+        client_kwargs["region_name"] = aws_region
+    if aws_access_key and aws_secret_key:
+        client_kwargs["aws_access_key_id"] = aws_access_key
+        client_kwargs["aws_secret_access_key"] = aws_secret_key
 
+    return boto3.client("s3", **client_kwargs)
 
 async def upload_file_to_s3(
     file_content: BinaryIO,
