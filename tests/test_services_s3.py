@@ -55,9 +55,9 @@ def test_get_s3_client_success(mock_env_vars):
 def test_get_s3_client_missing_credentials():
     """Test S3 client creation with missing credentials."""
     with patch.dict("os.environ", {}, clear=True):
-        with pytest.raises(S3ConfigurationError) as exc_info:
+        with patch("app.services.s3.boto3.client") as mock_boto3:
             get_s3_client()
-        assert "AWS credentials not configured" in str(exc_info.value)
+            mock_boto3.assert_called_once_with("s3", region_name="ap-southeast-2")
 
 
 @pytest.mark.asyncio
