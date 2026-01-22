@@ -33,8 +33,8 @@ class Workflow(Base):
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
     __table_args__ = (
-        UniqueConstraint("seqera_run_id", name="workflow_runs_seqera_run_id_unique"),
-        UniqueConstraint("work_dir", name="workflow_runs_work_dir_unique"),
+        UniqueConstraint("seqera_run_id"),
+        UniqueConstraint("work_dir"),
     )
 
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
@@ -54,7 +54,7 @@ class WorkflowRun(Base):
 
 class S3Object(Base):
     __tablename__ = "s3_objects"
-    __table_args__ = (UniqueConstraint("URI", name="s3_objects_uri_unique"),)
+    __table_args__ = (UniqueConstraint("URI"),)
 
     object_key: Mapped[str] = mapped_column(Text, primary_key=True)
     uri: Mapped[str] = mapped_column("URI", Text, nullable=False)
@@ -67,7 +67,7 @@ class S3Object(Base):
 
 class RunInput(Base):
     __tablename__ = "run_inputs"
-    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id", name="run_inputs_pkey"),)
+    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id"),)
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
@@ -78,7 +78,7 @@ class RunInput(Base):
 
 class RunOutput(Base):
     __tablename__ = "run_outputs"
-    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id", name="run_outputs_pkey"),)
+    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id"),)
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
