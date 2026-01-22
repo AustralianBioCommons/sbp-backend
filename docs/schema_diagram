@@ -1,0 +1,126 @@
+// Interactive Data Models
+digraph {
+	graph [bgcolor="#EEEEEE" rankdir=TB splines=spline]
+	node [fontname=Roboto fontsize=12 shape=none]
+	edge [fontname=Roboto fontsize=10]
+	AppUser [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">AppUser</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">auth0_user_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (Unique)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">name</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">email</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD>
+                         </TR></TABLE>> URL="http://AppUser_details.html"]
+	AppUser -> WorkflowRun [label=workflow_runs color="#1E88E5" style=dashed tooltip="Relation between AppUser and WorkflowRun"]
+	Workflow [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">Workflow</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">name</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">description</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_url</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">default_revision</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR></TABLE>> URL="http://Workflow_details.html"]
+	Workflow -> WorkflowRun [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
+	WorkflowRun [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">WorkflowRun</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">workflow_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">owner_user_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">seqera_dataset_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">seqera_run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">run_name</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">work_dir</TD>
+                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
+                         </TR></TABLE>> URL="http://WorkflowRun_details.html"]
+	WorkflowRun -> AppUser [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
+	WorkflowRun -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]
+	WorkflowRun -> RunMetric [label=metrics color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunMetric"]
+	WorkflowRun -> RunInput [label=inputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunInput"]
+	WorkflowRun -> RunOutput [label=outputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunOutput"]
+	S3Object [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">S3Object</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">object_key</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">URI</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">version_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">size_bytes</TD>
+                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
+                         </TR></TABLE>> URL="http://S3Object_details.html"]
+	S3Object -> RunInput [label=run_inputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunInput"]
+	S3Object -> RunOutput [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunOutput"]
+	RunInput [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunInput</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR></TABLE>> URL="http://RunInput_details.html"]
+	RunInput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunInput and WorkflowRun"]
+	RunInput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunInput and S3Object"]
+	RunOutput [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunOutput</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR></TABLE>> URL="http://RunOutput_details.html"]
+	RunOutput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunOutput and WorkflowRun"]
+	RunOutput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunOutput and S3Object"]
+	RunMetric [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunMetric</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">max_score</TD>
+                         <TD BGCOLOR="#BBDEFB">NUMERIC(8, 2) ()</TD>
+                         </TR></TABLE>> URL="http://RunMetric_details.html"]
+	RunMetric -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
+}

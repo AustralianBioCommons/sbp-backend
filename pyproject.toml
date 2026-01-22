@@ -36,6 +36,7 @@ dev = [
     "mypy~=1.19",
     "polyfactory~=2.16",
     "respx~=0.21",
+    "sqlalchemy-data-model-visualizer~=0.1",
 ]
 
 [tool.pytest.ini_options]
