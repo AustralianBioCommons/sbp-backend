@@ -11,7 +11,7 @@ class AppUser(Base):
     __tablename__ = "app_users"
 
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    auth0_user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
+    auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
 
