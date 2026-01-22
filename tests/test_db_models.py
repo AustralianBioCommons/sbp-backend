@@ -124,8 +124,8 @@ def test_workflow_run_model():
     # Check unique constraints
     constraints = list(WorkflowRun.__table__.constraints)
     constraint_names = {c.name for c in constraints}
-    assert "workflow_runs_seqera_run_id_unique" in constraint_names
-    assert "workflow_runs_work_dir_unique" in constraint_names
+    assert "uq_workflow_runs_seqera_run_id" in constraint_names
+    assert "uq_workflow_runs_work_dir" in constraint_names
 
 
 def test_s3_object_model():
@@ -148,7 +148,7 @@ def test_s3_object_model():
     # Check unique constraint
     constraints = list(S3Object.__table__.constraints)
     constraint_names = {c.name for c in constraints}
-    assert "s3_objects_uri_unique" in constraint_names
+    assert "uq_s3_objects_URI" in constraint_names
 
 
 def test_run_input_model():

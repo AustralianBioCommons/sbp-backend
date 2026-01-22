@@ -11,7 +11,7 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">auth0_user_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (Unique)</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">name</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
