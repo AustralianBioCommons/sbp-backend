@@ -123,3 +123,34 @@ def test_upload_pdb_file_no_file(client):
     response = client.post("/api/workflows/pdb/upload")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_upload_pdb_file_no_filename(client):
+    """Test upload with file that has no filename."""
+    # Create a file object with empty filename - FastAPI will return 422
+    content = BytesIO(b"HEADER TEST\nEND\n")
+    response = client.post(
+        "/api/workflows/pdb/upload",
+        files={"file": ("", content, "chemical/x-pdb")},
+    )
+
+    # FastAPI returns 422 for missing required fields or validation errors
+    # The empty filename fails before reaching our validation
+    assert response.status_code in [
+        status.HTTP_400_BAD_REQUEST,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    ]
+
+
+def test_upload_pdb_file_unexpected_error(client, mock_pdb_file):
+    """Test upload with unexpected error."""
+    with patch("app.routes.pdb_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload:
+        mock_upload.side_effect = RuntimeError("Unexpected error")
+
+        response = client.post(
+            "/api/workflows/pdb/upload",
+            files={"file": ("test.pdb", mock_pdb_file, "chemical/x-pdb")},
+        )
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert "Unexpected error during file upload" in response.json()["detail"]

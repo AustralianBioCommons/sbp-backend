@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from fastapi import HTTPException, status
+
 from app.routes.workflows import get_details, upload_dataset
 from app.schemas.workflows import DatasetUploadRequest
-from app.services.datasets import DatasetUploadResult
+from app.services.datasets import DatasetUploadResult, SeqeraConfigurationError, SeqeraServiceError
 
 
 @patch("app.routes.workflows.upload_dataset_to_seqera")
@@ -52,3 +55,112 @@ async def test_get_details_returns_placeholder():
     assert result.runName == ""
     assert isinstance(result.configFiles, list)
     assert isinstance(result.params, dict)
+
+
+@patch("app.routes.workflows.upload_dataset_to_seqera")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_dataset_create_config_error(mock_create, mock_upload):
+    """Test dataset upload handles SeqeraConfigurationError during creation."""
+    # Mock dataset creation to raise error
+    mock_create.side_effect = SeqeraConfigurationError("Config error")
+
+    request = DatasetUploadRequest(
+        formData={"sample": "test"},
+        datasetName="test-dataset",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(request)
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Config error" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_dataset_to_seqera")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_dataset_create_service_error(mock_create, mock_upload):
+    """Test dataset upload handles SeqeraServiceError during creation."""
+    mock_create.side_effect = SeqeraServiceError("Service error")
+
+    request = DatasetUploadRequest(
+        formData={"sample": "test"},
+        datasetName="test-dataset",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(request)
+
+    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
+    assert "Service error" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_dataset_to_seqera")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_dataset_upload_value_error(mock_create, mock_upload):
+    """Test dataset upload handles ValueError during upload."""
+    # Mock successful creation
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "dataset_123"
+    mock_create.return_value = mock_create_result
+
+    # Mock upload to raise ValueError
+    mock_upload.side_effect = ValueError("Invalid data")
+
+    request = DatasetUploadRequest(
+        formData={"sample": "test"},
+        datasetName="test-dataset",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid data" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_dataset_to_seqera")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
+    """Test dataset upload handles SeqeraConfigurationError during upload."""
+    # Mock successful creation
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "dataset_123"
+    mock_create.return_value = mock_create_result
+
+    # Mock upload to raise error
+    mock_upload.side_effect = SeqeraConfigurationError("Upload config error")
+
+    request = DatasetUploadRequest(
+        formData={"sample": "test"},
+        datasetName="test-dataset",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(request)
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Upload config error" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_dataset_to_seqera")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
+    """Test dataset upload handles SeqeraServiceError during upload."""
+    # Mock successful creation
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "dataset_123"
+    mock_create.return_value = mock_create_result
+
+    # Mock upload to raise error
+    mock_upload.side_effect = SeqeraServiceError("Upload service error")
+
+    request = DatasetUploadRequest(
+        formData={"sample": "test"},
+        datasetName="test-dataset",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(request)
+
+    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
+    assert "Upload service error" in str(exc_info.value.detail)
