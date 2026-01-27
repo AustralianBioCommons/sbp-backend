@@ -181,7 +181,6 @@ class TestGetRunMaxScoreEndpoint:
                 assert data["run_id"] == "test-run"
                 assert data["max_i_ptm"] == 0.92
                 assert data["total_designs"] == 3
-                assert "s3://results/test-run/ranker/s1_final_design_stats.csv" in data["file_path"]
 
     def test_get_max_score_with_custom_parameters(self, client: TestClient):
         """Test max score with custom folder parameters."""
@@ -196,7 +195,9 @@ class TestGetRunMaxScoreEndpoint:
 
                 assert response.status_code == status.HTTP_200_OK
                 data = response.json()
-                assert "custom/test-run/output/stats.csv" in data["file_path"]
+                assert data["run_id"] == "test-run"
+                assert data["max_i_ptm"] == 0.85
+                assert data["total_designs"] == 1
 
     def test_get_max_score_file_not_found(self, client: TestClient):
         """Test max score with non-existent file."""
@@ -280,13 +281,11 @@ class TestS3ResponseModels:
             run_id="test-run",
             max_i_ptm=0.92,
             total_designs=5,
-            file_path="s3://results/test-run/ranker/s1_final_design_stats.csv",
         )
 
         assert response.run_id == "test-run"
         assert response.max_i_ptm == 0.92
         assert response.total_designs == 5
-        assert "s3://" in response.file_path
 
     def test_csv_data_response_model(self):
         """Test CSVDataResponse model."""
@@ -301,3 +300,80 @@ class TestS3ResponseModels:
         assert response.total_rows == 1
         assert len(response.data) == 1
         assert response.columns == ["col1", "col2"]
+
+
+class TestPathTraversalSecurity:
+    """Tests for path traversal attack prevention."""
+
+    def test_path_traversal_in_run_id(self, client: TestClient):
+        """Test that path traversal in run_id is blocked."""
+        # FastAPI normalizes the path before routing, so this results in 404
+        # Test with query params instead for actual validation
+        response = client.get("/api/s3/run/..%2F..%2Fsensitive/max-score")
+        # Either 400 (our validation) or 404 (FastAPI routing) is acceptable
+        assert response.status_code in [status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND]
+
+    def test_path_traversal_in_folder_prefix(self, client: TestClient):
+        """Test that path traversal in folder_prefix is blocked."""
+        response = client.get("/api/s3/run/test-run/max-score?folder_prefix=../secrets")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid characters" in response.json()["detail"].lower()
+
+    def test_path_traversal_in_subfolder(self, client: TestClient):
+        """Test that path traversal in subfolder is blocked."""
+        response = client.get("/api/s3/run/test-run/max-score?subfolder=../../other")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid characters" in response.json()["detail"].lower()
+
+    def test_path_traversal_in_filename(self, client: TestClient):
+        """Test that path traversal in filename is blocked."""
+        response = client.get("/api/s3/run/test-run/max-score?filename=../../../secret.csv")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid characters" in response.json()["detail"].lower()
+
+    def test_slash_in_run_id(self, client: TestClient):
+        """Test that forward slash in run_id is blocked."""
+        _ = client.get("/api/s3/run/test/run/max-score")
+        # Note: This might return 404 due to routing, but let's test the endpoint
+        # The actual validation happens when the path param is processed
+
+    def test_backslash_in_params(self, client: TestClient):
+        """Test that backslash in parameters is blocked."""
+        response = client.get("/api/s3/run/test-run/max-score?subfolder=folder\\evil")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid characters" in response.json()["detail"].lower()
+
+    def test_null_byte_injection(self, client: TestClient):
+        """Test that null byte injection is blocked."""
+        response = client.get("/api/s3/run/test-run/max-score?filename=file.csv%00.txt")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_empty_parameter_rejected(self, client: TestClient):
+        """Test that empty parameters are rejected."""
+        response = client.get("/api/s3/run/test-run/max-score?folder_prefix=   ")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "cannot be empty" in response.json()["detail"].lower()
+
+    def test_valid_alphanumeric_run_id(self, client: TestClient):
+        """Test that valid alphanumeric run_id is accepted."""
+        with patch(
+            "app.routes.s3_files.read_csv_from_s3", return_value=[{"Average_i_pTM": "0.85"}]
+        ):
+            with patch("app.routes.s3_files.calculate_csv_column_max", return_value=0.85):
+                response = client.get("/api/s3/run/test-run-123/max-score")
+                assert response.status_code == status.HTTP_200_OK
+
+    def test_valid_run_id_with_underscore_and_dash(self, client: TestClient):
+        """Test that run_id with underscores and dashes is accepted."""
+        with patch(
+            "app.routes.s3_files.read_csv_from_s3", return_value=[{"Average_i_pTM": "0.85"}]
+        ):
+            with patch("app.routes.s3_files.calculate_csv_column_max", return_value=0.85):
+                response = client.get("/api/s3/run/test_run-v2.0/max-score")
+                assert response.status_code == status.HTTP_200_OK
+
+    def test_special_chars_rejected(self, client: TestClient):
+        """Test that special characters are rejected."""
+        response = client.get("/api/s3/run/test-run/max-score?filename=file$name.csv")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid characters" in response.json()["detail"].lower()

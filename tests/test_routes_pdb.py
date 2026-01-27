@@ -58,7 +58,6 @@ def test_upload_pdb_file_success(
         assert data["message"] == "PDB file uploaded successfully"
         assert data["fileName"] == "test.pdb"
         assert data["fileId"] == "input/20260108_120000_test.pdb"
-        assert "s3://" in data["fileUrl"]  # Returns s3:// URI without credentials
 
 
 def test_upload_pdb_file_invalid_extension(client):

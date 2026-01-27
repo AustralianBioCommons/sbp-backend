@@ -1,5 +1,7 @@
 """Routes for S3 file operations - listing and reading CSV files."""
 
+import re
+
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -44,7 +46,47 @@ class MaxScoreResponse(BaseModel):
     run_id: str = Field(..., description="Run ID")
     max_i_ptm: float = Field(..., description="Maximum i_pTM score")
     total_designs: int = Field(..., description="Number of designs analyzed")
-    file_path: str = Field(..., description="S3 file path used")
+
+
+def _validate_path_component(component: str, param_name: str) -> str:
+    """
+    Validate a path component to prevent path traversal attacks.
+
+    Args:
+        component: The path component to validate
+        param_name: Name of the parameter (for error messages)
+
+    Returns:
+        The validated component
+
+    Raises:
+        HTTPException: If the component contains invalid characters
+    """
+    # Remove leading/trailing whitespace
+    component = component.strip()
+
+    # Reject if empty after stripping
+    if not component:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{param_name} cannot be empty",
+        )
+
+    # Reject path traversal attempts: /, \, .., null bytes
+    if re.search(r"[/\\]|\.\.|\x00", component):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{param_name} contains invalid characters (/, \\, .., or null bytes)",
+        )
+
+    # Only allow alphanumeric, dash, underscore, and dot
+    if not re.match(r"^[a-zA-Z0-9._-]+$", component):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{param_name} contains invalid characters. Only alphanumeric, dash, underscore, and dot allowed",
+        )
+
+    return component
 
 
 @router.get("/files", response_model=S3FileListResponse)
@@ -146,8 +188,14 @@ async def get_run_max_score(
     File path constructed as: {folder_prefix}/{run_id}/{subfolder}/{filename}
     """
     try:
-        # Construct file path: results/{run_id}/ranker/s1_final_design_stats.csv
-        file_key = f"{folder_prefix}/{run_id}/{subfolder}/{filename}"
+        # Validate all path components to prevent path traversal
+        safe_prefix = _validate_path_component(folder_prefix, "folder_prefix")
+        safe_run_id = _validate_path_component(run_id, "run_id")
+        safe_subfolder = _validate_path_component(subfolder, "subfolder")
+        safe_filename = _validate_path_component(filename, "filename")
+
+        # Construct file path securely with validated components
+        file_key = f"{safe_prefix}/{safe_run_id}/{safe_subfolder}/{safe_filename}"
 
         # First check if file exists and get row count
         data = await read_csv_from_s3(file_key=file_key, columns=["Average_i_pTM"])
@@ -163,7 +211,6 @@ async def get_run_max_score(
             run_id=run_id,
             max_i_ptm=max_score,
             total_designs=total_designs,
-            file_path=f"s3://{file_key}",
         )
 
     except S3ConfigurationError as exc:

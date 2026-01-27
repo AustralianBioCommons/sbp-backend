@@ -72,7 +72,6 @@ async def upload_pdb_file(
             success=upload_result.success,
             fileId=upload_result.file_key,
             fileName=file.filename,
-            fileUrl=upload_result.file_url or "",  # Returns s3:// URI
             details={
                 "bucket": upload_result.bucket,
                 "size": len(file_content),
