@@ -47,7 +47,9 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
     writer = csv.writer(output)
     writer.writerow(headers)
     writer.writerow(row)
-    return output.getvalue()
+    
+    csv_content = output.getvalue()    
+    return csv_content
 
 
 @dataclass
@@ -126,6 +128,9 @@ async def upload_dataset_to_seqera(
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
+    logger.info(f"About to convert formData to CSV. FormData keys: {list(form_data.keys())}")
+    logger.info(f"FormData starting_pdb value: {form_data.get('starting_pdb', 'NOT SET')}")
+    
     csv_payload = convert_form_data_to_csv(form_data)
     url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
     headers = {

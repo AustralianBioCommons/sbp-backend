@@ -119,6 +119,10 @@ class DatasetUploadRequest(BaseModel):
     formData: dict[str, Any]
     datasetName: str | None = Field(default=None)
     datasetDescription: str | None = Field(default=None)
+    pdbFileKey: str | None = Field(
+        default=None,
+        description="Optional S3 file key for PDB file to include in dataset"
+    )
 
     @field_validator("formData")
     @classmethod

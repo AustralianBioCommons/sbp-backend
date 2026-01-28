@@ -59,7 +59,7 @@ async def launch_seqera_workflow(
         'error_strategy: "terminate"',
         "version: false",
         'custom_config_version: "master"',
-        'outdir: "/g/data/za08/seqera-work/ui-jobs/"',
+        f'outdir: "{work_dir}"',
         "quote_char: '\"'",
         'bindcraft_container: "australianbiocommons/freebindcraft:1.0.3"',
         'publish_dir_mode: "copy"',
