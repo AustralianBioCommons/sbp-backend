@@ -90,7 +90,7 @@ async def launch_seqera_workflow(
             "workspaceId": workspace_id,
             "revision": form.revision or "dev",
             "paramsText": params_text,
-            "configProfiles": form.configProfiles or ["singularity"],
+            "configProfiles":["singularity", "gadi"],
             "preRunScript": "module load nextflow",
             "resume": False,
         }
