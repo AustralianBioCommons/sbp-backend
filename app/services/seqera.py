@@ -54,7 +54,7 @@ async def launch_seqera_workflow(
         'custom_config_base: "https://raw.githubusercontent.com/nf-core/configs/master"',
         "show_hidden: false",
         "plaintext_email: false",
-        'project: "za08"',
+        'project: "yz52"',
         "monochrome_logs: false",
         'error_strategy: "terminate"',
         "version: false",
