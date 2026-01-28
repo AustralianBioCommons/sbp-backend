@@ -45,6 +45,7 @@ async def launch_seqera_workflow(
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
+    out_dir = _get_required_env("AWS_S3_BUCKET")
 
     # Build default external parameters
     default_params = [
@@ -59,7 +60,7 @@ async def launch_seqera_workflow(
         'error_strategy: "terminate"',
         "version: false",
         'custom_config_version: "master"',
-        'outdir: "/g/data/za08/seqera-work/ui-jobs/"',
+        f'outdir: "{out_dir}"',
         "quote_char: '\"'",
         'bindcraft_container: "australianbiocommons/freebindcraft:1.0.3"',
         'publish_dir_mode: "copy"',
