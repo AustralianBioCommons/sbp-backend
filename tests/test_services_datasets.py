@@ -8,11 +8,10 @@ import httpx
 import pytest
 import respx
 
+from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 from app.services.datasets import (
     DatasetCreationResult,
     DatasetUploadResult,
-    SeqeraConfigurationError,
-    SeqeraServiceError,
     _get_required_env,
     _stringify_field,
     convert_form_data_to_csv,
@@ -73,7 +72,7 @@ def test_get_required_env_success():
 
 def test_get_required_env_missing():
     """Test _get_required_env raises error when env var is missing."""
-    with pytest.raises(SeqeraConfigurationError, match="Missing required environment variable"):
+    with pytest.raises(BindflowConfigurationError, match="Missing required environment variable"):
         _get_required_env("NONEXISTENT_ENV_VAR")
 
 
@@ -209,7 +208,7 @@ async def test_create_dataset_api_error():
         return_value=httpx.Response(400, text="Bad request")
     )
 
-    with pytest.raises(SeqeraServiceError, match="400"):
+    with pytest.raises(BindflowExecutorError, match="400"):
         await create_seqera_dataset(name="test")
 
 
@@ -229,7 +228,7 @@ async def test_create_dataset_missing_id_in_response():
         )
     )
 
-    with pytest.raises(SeqeraServiceError, match="response lacked dataset id"):
+    with pytest.raises(BindflowExecutorError, match="response lacked dataset id"):
         await create_seqera_dataset(name="test")
 
 
@@ -304,7 +303,7 @@ async def test_upload_api_error():
 
     form_data = {"sample": "test"}
 
-    with pytest.raises(SeqeraServiceError, match="500"):
+    with pytest.raises(BindflowExecutorError, match="500"):
         await upload_dataset_to_seqera("dataset_123", form_data)
 
 

@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from .seqera import SeqeraConfigurationError, SeqeraServiceError
+from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
+        raise BindflowConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -102,12 +102,16 @@ async def create_seqera_dataset(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(f"Seqera dataset creation failed: {response.status_code} {body}")
+        raise BindflowExecutorError(
+            f"Seqera dataset creation failed: {response.status_code} {body}"
+        )
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
     if not dataset_id:
-        raise SeqeraServiceError("Seqera dataset creation succeeded but response lacked dataset id")
+        raise BindflowExecutorError(
+            "Seqera dataset creation succeeded but response lacked dataset id"
+        )
 
     logger.info("Seqera dataset created", extra={"datasetId": dataset_id})
     return DatasetCreationResult(dataset_id=dataset_id, raw_response=data)
@@ -155,7 +159,7 @@ async def upload_dataset_to_seqera(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(f"Seqera dataset upload failed: {response.status_code} {body}")
+        raise BindflowExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
 
     data = response.json()
     returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id

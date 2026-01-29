@@ -9,7 +9,8 @@ from fastapi import HTTPException, status
 
 from app.routes.workflows import get_details, upload_dataset
 from app.schemas.workflows import DatasetUploadRequest
-from app.services.datasets import DatasetUploadResult, SeqeraConfigurationError, SeqeraServiceError
+from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
+from app.services.datasets import DatasetUploadResult
 
 
 @patch("app.routes.workflows.upload_dataset_to_seqera")
@@ -60,9 +61,9 @@ async def test_get_details_returns_placeholder():
 @patch("app.routes.workflows.upload_dataset_to_seqera")
 @patch("app.routes.workflows.create_seqera_dataset")
 async def test_upload_dataset_create_config_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraConfigurationError during creation."""
+    """Test dataset upload handles BindflowConfigurationError during creation."""
     # Mock dataset creation to raise error
-    mock_create.side_effect = SeqeraConfigurationError("Config error")
+    mock_create.side_effect = BindflowConfigurationError("Config error")
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
@@ -79,8 +80,8 @@ async def test_upload_dataset_create_config_error(mock_create, mock_upload):
 @patch("app.routes.workflows.upload_dataset_to_seqera")
 @patch("app.routes.workflows.create_seqera_dataset")
 async def test_upload_dataset_create_service_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraServiceError during creation."""
-    mock_create.side_effect = SeqeraServiceError("Service error")
+    """Test dataset upload handles BindflowExecutorError during creation."""
+    mock_create.side_effect = BindflowExecutorError("Service error")
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
@@ -121,14 +122,14 @@ async def test_upload_dataset_upload_value_error(mock_create, mock_upload):
 @patch("app.routes.workflows.upload_dataset_to_seqera")
 @patch("app.routes.workflows.create_seqera_dataset")
 async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraConfigurationError during upload."""
+    """Test dataset upload handles BindflowConfigurationError during upload."""
     # Mock successful creation
     mock_create_result = AsyncMock()
     mock_create_result.dataset_id = "dataset_123"
     mock_create.return_value = mock_create_result
 
     # Mock upload to raise error
-    mock_upload.side_effect = SeqeraConfigurationError("Upload config error")
+    mock_upload.side_effect = BindflowConfigurationError("Upload config error")
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
@@ -145,14 +146,14 @@ async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
 @patch("app.routes.workflows.upload_dataset_to_seqera")
 @patch("app.routes.workflows.create_seqera_dataset")
 async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraServiceError during upload."""
+    """Test dataset upload handles BindflowExecutorError during upload."""
     # Mock successful creation
     mock_create_result = AsyncMock()
     mock_create_result.dataset_id = "dataset_123"
     mock_create.return_value = mock_create_result
 
     # Mock upload to raise error
-    mock_upload.side_effect = SeqeraServiceError("Upload service error")
+    mock_upload.side_effect = BindflowExecutorError("Upload service error")
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},

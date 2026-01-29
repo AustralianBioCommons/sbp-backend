@@ -17,15 +17,15 @@ from ..schemas.workflows import (
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
 )
+from ..services.bindflow_executor import (
+    BindflowConfigurationError,
+    BindflowExecutorError,
+    BindflowLaunchResult,
+    launch_bindflow_workflow,
+)
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
-)
-from ..services.seqera import (
-    SeqeraConfigurationError,
-    SeqeraLaunchResult,
-    SeqeraServiceError,
-    launch_seqera_workflow,
 )
 
 router = APIRouter(tags=["workflows"])
@@ -38,12 +38,12 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
         dataset_id = payload.datasetId
 
         # Use the dataset created from /datasets/upload endpoint
-        result: SeqeraLaunchResult = await launch_seqera_workflow(payload.launch, dataset_id)
-    except SeqeraConfigurationError as exc:
+        result: BindflowLaunchResult = await launch_bindflow_workflow(payload.launch, dataset_id)
+    except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except SeqeraServiceError as exc:
+    except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return WorkflowLaunchResponse(
@@ -129,11 +129,11 @@ async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription
         )
-    except SeqeraConfigurationError as exc:
+    except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except SeqeraServiceError as exc:
+    except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     # Allow Seqera time to finish dataset initialization before uploading
@@ -143,11 +143,11 @@ async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse
         upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except SeqeraConfigurationError as exc:
+    except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except SeqeraServiceError as exc:
+    except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return DatasetUploadResponse(

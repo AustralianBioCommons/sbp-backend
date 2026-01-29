@@ -7,12 +7,12 @@ import pytest
 import respx
 
 from app.schemas.workflows import WorkflowLaunchForm
-from app.services.seqera import (
-    SeqeraConfigurationError,
-    SeqeraLaunchResult,
-    SeqeraServiceError,
+from app.services.bindflow_executor import (
+    BindflowConfigurationError,
+    BindflowExecutorError,
+    BindflowLaunchResult,
     _get_required_env,
-    launch_seqera_workflow,
+    launch_bindflow_workflow,
 )
 
 
@@ -24,7 +24,7 @@ def test_get_existing_env_variable():
 
 def test_get_missing_env_variable():
     """Test that missing env variable raises error."""
-    with pytest.raises(SeqeraConfigurationError, match="MISSING_VAR"):
+    with pytest.raises(BindflowConfigurationError, match="MISSING_VAR"):
         _get_required_env("MISSING_VAR")
 
 
@@ -46,10 +46,10 @@ async def test_launch_success_minimal():
     )
 
     # Execute
-    result = await launch_seqera_workflow(form)
+    result = await launch_bindflow_workflow(form)
 
     # Verify result
-    assert isinstance(result, SeqeraLaunchResult)
+    assert isinstance(result, BindflowLaunchResult)
     assert result.workflow_id == "wf_test_123"
     assert result.status == "submitted"
 
@@ -77,7 +77,7 @@ async def test_launch_success_with_all_params():
         paramsText="custom_param: value",
     )
 
-    result = await launch_seqera_workflow(form, dataset_id="dataset_789")
+    result = await launch_bindflow_workflow(form, dataset_id="dataset_789")
 
     assert result.workflow_id == "wf_full_456"
 
@@ -102,7 +102,7 @@ async def test_launch_includes_default_params():
 
     form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
 
-    await launch_seqera_workflow(form)
+    await launch_bindflow_workflow(form)
 
     # Check request payload
     request = route.calls.last.request
@@ -113,7 +113,7 @@ async def test_launch_includes_default_params():
 
     # Check default params are included
     assert "use_dgxa100: false" in params_text
-    assert 'project: "za08"' in params_text
+    assert 'project: "yz52"' in params_text
     assert "outdir:" in params_text
 
 
@@ -127,7 +127,7 @@ async def test_launch_with_dataset_adds_input_url():
 
     form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
 
-    await launch_seqera_workflow(form, dataset_id="ds_abc")
+    await launch_bindflow_workflow(form, dataset_id="ds_abc")
 
     # Verify request payload
     request = route.calls.last.request
@@ -151,8 +151,8 @@ async def test_launch_api_error_response():
 
     form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
 
-    with pytest.raises(SeqeraServiceError, match="400"):
-        await launch_seqera_workflow(form)
+    with pytest.raises(BindflowExecutorError, match="400"):
+        await launch_bindflow_workflow(form)
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,8 @@ async def test_launch_missing_workflow_id_in_response():
 
     form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
 
-    with pytest.raises(SeqeraServiceError, match="workflowId"):
-        await launch_seqera_workflow(form)
+    with pytest.raises(BindflowExecutorError, match="workflowId"):
+        await launch_bindflow_workflow(form)
 
 
 def test_launch_missing_env_vars():
@@ -178,10 +178,10 @@ def test_launch_missing_env_vars():
         mp.delenv("SEQERA_ACCESS_TOKEN", raising=False)
         mp.delenv("WORK_SPACE", raising=False)
 
-        with pytest.raises(SeqeraConfigurationError):
+        with pytest.raises(BindflowConfigurationError):
             import asyncio
 
-            asyncio.run(launch_seqera_workflow(form))
+            asyncio.run(launch_bindflow_workflow(form))
 
 
 @pytest.mark.asyncio
@@ -197,7 +197,7 @@ async def test_launch_with_custom_params_text():
         paramsText="my_custom_param: 42\nanother_param: test",
     )
 
-    await launch_seqera_workflow(form)
+    await launch_bindflow_workflow(form)
 
     # Verify request payload
     request = route.calls.last.request
