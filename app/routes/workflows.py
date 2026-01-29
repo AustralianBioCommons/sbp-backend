@@ -17,15 +17,15 @@ from ..schemas.workflows import (
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
 )
-from ..services.datasets import (
-    create_seqera_dataset,
-    upload_dataset_to_seqera,
-)
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
     BindflowLaunchResult,
     launch_bindflow_workflow,
+)
+from ..services.datasets import (
+    create_seqera_dataset,
+    upload_dataset_to_seqera,
 )
 
 router = APIRouter(tags=["workflows"])
