@@ -53,7 +53,7 @@ async def launch_bindflow_workflow(
     s3_bucket = _get_required_env("AWS_S3_BUCKET")
 
     # Get run name and include it in output directory
-    run_name = form.runName or "hello-from-ui"
+    run_name = form.runName
     out_dir = f"s3://{s3_bucket}/{run_name}"
 
     # Get AWS credentials from backend env (if available)
