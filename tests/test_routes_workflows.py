@@ -16,7 +16,7 @@ from app.services.bindflow_executor import (
 @patch("app.routes.workflows.launch_seqera_workflow")
 async def test_launch_success_without_dataset(mock_launch, client: TestClient):
     """Test successful workflow launch without dataset."""
-    mock_launch.return_value = SeqeraLaunchResult(
+    mock_launch.return_value = BindflowLaunchResult(
         workflow_id="wf_123",
         status="submitted",
         message="Success",
@@ -42,7 +42,7 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
 async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
     """Test successful workflow launch with pre-created dataset ID."""
     # Mock workflow launch
-    mock_launch.return_value = SeqeraLaunchResult(
+    mock_launch.return_value = BindflowLaunchResult(
         workflow_id="wf_789",
         status="submitted",
     )
@@ -70,7 +70,7 @@ async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
 @patch("app.routes.workflows.launch_seqera_workflow")
 async def test_launch_configuration_error(mock_launch, client: TestClient):
     """Test launch with configuration error."""
-    mock_launch.side_effect = SeqeraConfigurationError("Missing API token")
+    mock_launch.side_effect = BindflowConfigurationError("Missing API token")
 
     payload = {
         "launch": {
@@ -87,7 +87,7 @@ async def test_launch_configuration_error(mock_launch, client: TestClient):
 @patch("app.routes.workflows.launch_seqera_workflow")
 async def test_launch_service_error(mock_launch, client: TestClient):
     """Test launch with Seqera service error."""
-    mock_launch.side_effect = SeqeraServiceError("API returned 502")
+    mock_launch.side_effect = BindflowExecutorError("API returned 502")
 
     payload = {
         "launch": {
