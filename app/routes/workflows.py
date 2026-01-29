@@ -21,11 +21,11 @@ from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
 )
-from ..services.seqera import (
-    SeqeraConfigurationError,
-    SeqeraLaunchResult,
-    SeqeraServiceError,
-    launch_seqera_workflow,
+from ..services.bindflow_executor import (
+    BindflowConfigurationError,
+    BindflowExecutorError,
+    BindflowLaunchResult,
+    launch_bindflow_workflow,
 )
 
 router = APIRouter(tags=["workflows"])
@@ -38,12 +38,12 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
         dataset_id = payload.datasetId
 
         # Use the dataset created from /datasets/upload endpoint
-        result: SeqeraLaunchResult = await launch_seqera_workflow(payload.launch, dataset_id)
-    except SeqeraConfigurationError as exc:
+        result: BindflowLaunchResult = await launch_bindflow_workflow(payload.launch, dataset_id)
+    except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except SeqeraServiceError as exc:
+    except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return WorkflowLaunchResponse(

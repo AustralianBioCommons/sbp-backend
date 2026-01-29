@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.services.seqera import (
-    SeqeraConfigurationError,
-    SeqeraLaunchResult,
-    SeqeraServiceError,
+from app.services.bindflow_executor import (
+    BindflowConfigurationError,
+    BindflowExecutorError,
+    BindflowLaunchResult,
 )
 
 

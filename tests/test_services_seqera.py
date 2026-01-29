@@ -7,12 +7,12 @@ import pytest
 import respx
 
 from app.schemas.workflows import WorkflowLaunchForm
-from app.services.seqera import (
-    SeqeraConfigurationError,
-    SeqeraLaunchResult,
-    SeqeraServiceError,
+from app.services.bindflow_executor import (
+    BindflowConfigurationError,
+    BindflowExecutorError,
+    BindflowLaunchResult,
     _get_required_env,
-    launch_seqera_workflow,
+    launch_bindflow_workflow,
 )
 
 

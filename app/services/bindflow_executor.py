@@ -1,4 +1,4 @@
-"""Seqera Platform integration helpers."""
+"""Bindflow workflow executor for Seqera Platform."""
 
 from __future__ import annotations
 
@@ -10,20 +10,25 @@ from typing import Any
 import httpx
 
 from ..schemas.workflows import WorkflowLaunchForm
+from .bindflow_config import (
+    get_bindflow_config_profiles,
+    get_bindflow_default_params,
+    get_bindflow_executor_script,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class SeqeraConfigurationError(RuntimeError):
+class BindflowConfigurationError(RuntimeError):
     """Raised when required configuration is missing."""
 
 
-class SeqeraServiceError(RuntimeError):
-    """Raised when the Seqera Platform returns an error."""
+class BindflowExecutorError(RuntimeError):
+    """Raised when bindflow workflow execution fails."""
 
 
 @dataclass
-class SeqeraLaunchResult:
+class BindflowLaunchResult:
     workflow_id: str
     status: str
     message: str | None = None
@@ -32,42 +37,32 @@ class SeqeraLaunchResult:
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
+        raise BindflowConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
-async def launch_seqera_workflow(
+async def launch_bindflow_workflow(
     form: WorkflowLaunchForm, dataset_id: str | None = None
-) -> SeqeraLaunchResult:
-    """Launch a workflow on the Seqera Platform."""
+) -> BindflowLaunchResult:
+    """Launch a bindflow workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
-    out_dir = _get_required_env("AWS_S3_BUCKET")
+    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    
+    # Get run name and include it in output directory
+    run_name = form.runName or "hello-from-ui"
+    out_dir = f"s3://{s3_bucket}/{run_name}"
+    
+    # Get AWS credentials from backend env (if available)
+    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID", "")
+    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
-    # Build default external parameters
-    default_params = [
-        "use_dgxa100: false",
-        "validate_params: true",
-        "help_full: false",
-        'custom_config_base: "https://raw.githubusercontent.com/nf-core/configs/master"',
-        "show_hidden: false",
-        "plaintext_email: false",
-        'project: "yz52"',
-        "monochrome_logs: false",
-        'error_strategy: "terminate"',
-        "version: false",
-        'custom_config_version: "master"',
-        f'outdir: "{out_dir}"',
-        "quote_char: '\"'",
-        'bindcraft_container: "australianbiocommons/freebindcraft:1.0.3"',
-        'publish_dir_mode: "copy"',
-        'pipelines_testdata_base_path: "https://raw.githubusercontent.com/nf-core/test-datasets/"',
-        "batches: 1",
-        "help: false",
-    ]
+    # Build default external parameters from config
+    default_params = get_bindflow_default_params(out_dir)
 
     # Start with default parameters
     params_text = "\n".join(default_params)
@@ -84,14 +79,14 @@ async def launch_seqera_workflow(
     launch_payload: dict[str, Any] = {
         "launch": {
             "computeEnvId": compute_env_id,
-            "runName": form.runName or "hello-from-ui",
-            "pipeline": form.pipeline or "https://github.com/nextflow-io/hello",
+            "runName": run_name,
+            "pipeline": form.pipeline,
             "workDir": work_dir,
             "workspaceId": workspace_id,
             "revision": form.revision or "dev",
             "paramsText": params_text,
-            "configProfiles":["singularity", "gadi"],
-            "preRunScript": "module load nextflow",
+            "configProfiles": get_bindflow_config_profiles(),
+            "preRunScript": get_bindflow_executor_script(aws_access_key, aws_secret_key, aws_region),
             "resume": False,
         }
     }
@@ -107,7 +102,7 @@ async def launch_seqera_workflow(
     logger.info("Full launch payload", extra={"payload": launch_payload})
 
     logger.info(
-        "Launching workflow via Seqera API",
+        "Launching bindflow workflow via Seqera API",
         extra={
             "url": url,
             "workspaceId": workspace_id,
@@ -136,16 +131,16 @@ async def launch_seqera_workflow(
                 "body": body,
             },
         )
-        raise SeqeraServiceError(f"Seqera workflow launch failed: {response.status_code} {body}")
+        raise BindflowExecutorError(f"Bindflow workflow launch failed: {response.status_code} {body}")
 
     data = response.json()
     workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
     status = data.get("status", "submitted")
 
     if not workflow_id:
-        raise SeqeraServiceError("Seqera workflow launch succeeded but did not return a workflowId")
+        raise BindflowExecutorError("Bindflow workflow launch succeeded but did not return a workflowId")
 
-    return SeqeraLaunchResult(
+    return BindflowLaunchResult(
         workflow_id=workflow_id,
         status=status,
         message=data.get("message"),
