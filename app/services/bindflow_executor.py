@@ -86,7 +86,9 @@ async def launch_bindflow_workflow(
             "revision": form.revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_bindflow_config_profiles(),
-            "preRunScript": get_bindflow_executor_script(aws_access_key, aws_secret_key, aws_region),
+            "preRunScript": get_bindflow_executor_script(
+                aws_access_key, aws_secret_key, aws_region
+            ),
             "resume": False,
         }
     }
@@ -131,14 +133,18 @@ async def launch_bindflow_workflow(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(f"Bindflow workflow launch failed: {response.status_code} {body}")
+        raise BindflowExecutorError(
+            f"Bindflow workflow launch failed: {response.status_code} {body}"
+        )
 
     data = response.json()
     workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
     status = data.get("status", "submitted")
 
     if not workflow_id:
-        raise BindflowExecutorError("Bindflow workflow launch succeeded but did not return a workflowId")
+        raise BindflowExecutorError(
+            "Bindflow workflow launch succeeded but did not return a workflowId"
+        )
 
     return BindflowLaunchResult(
         workflow_id=workflow_id,

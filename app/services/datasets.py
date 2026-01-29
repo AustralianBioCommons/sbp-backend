@@ -102,12 +102,16 @@ async def create_seqera_dataset(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(f"Seqera dataset creation failed: {response.status_code} {body}")
+        raise BindflowExecutorError(
+            f"Seqera dataset creation failed: {response.status_code} {body}"
+        )
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
     if not dataset_id:
-        raise BindflowExecutorError("Seqera dataset creation succeeded but response lacked dataset id")
+        raise BindflowExecutorError(
+            "Seqera dataset creation succeeded but response lacked dataset id"
+        )
 
     logger.info("Seqera dataset created", extra={"datasetId": dataset_id})
     return DatasetCreationResult(dataset_id=dataset_id, raw_response=data)
