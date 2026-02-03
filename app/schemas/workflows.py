@@ -3,9 +3,42 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class PipelineStatus(str, Enum):
+    """Pipeline status values from Seqera Platform."""
+    SUBMITTED = "SUBMITTED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+    CANCELLED = "CANCELLED"
+
+
+class UIStatus(str, Enum):
+    """User-facing status values for the frontend."""
+    IN_QUEUE = "In queue"
+    IN_PROGRESS = "In progress"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+    STOPPED = "Stopped"
+
+
+def map_pipeline_status_to_ui(pipeline_status: str) -> str:
+    """Map Seqera pipeline status to UI-friendly status."""
+    status_mapping = {
+        PipelineStatus.SUBMITTED.value: UIStatus.IN_QUEUE.value,
+        PipelineStatus.RUNNING.value: UIStatus.IN_PROGRESS.value,
+        PipelineStatus.SUCCEEDED.value: UIStatus.COMPLETED.value,
+        PipelineStatus.FAILED.value: UIStatus.FAILED.value,
+        PipelineStatus.UNKNOWN.value: UIStatus.FAILED.value,
+        PipelineStatus.CANCELLED.value: UIStatus.STOPPED.value,
+    }
+    return status_mapping.get(pipeline_status, UIStatus.FAILED.value)
 
 
 class WorkflowLaunchForm(BaseModel):
@@ -144,3 +177,23 @@ class PdbUploadResponse(BaseModel):
     fileName: str = Field(..., description="Original filename")
     s3Uri: str = Field(..., description="Full S3 URI (s3://bucket/key) for dataset creation")
     details: dict[str, Any] | None = Field(default=None, description="Additional upload details")
+
+
+class JobListItem(BaseModel):
+    """Individual job item in the job listing."""
+    
+    id: str = Field(..., description="Workflow run ID")
+    jobName: str = Field(..., description="Human-readable job name")
+    workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
+    status: str = Field(..., description="UI-friendly status (e.g., Completed, In progress)")
+    submittedAt: datetime = Field(..., description="Submission date and time")
+    score: float | None = Field(None, description="Job score/metric")
+
+
+class JobListResponse(BaseModel):
+    """Paginated response for job listing."""
+    
+    jobs: list[JobListItem] = Field(default_factory=list, description="List of jobs")
+    total: int = Field(..., description="Total number of jobs matching the criteria")
+    limit: int = Field(..., description="Maximum number of items per page")
+    offset: int = Field(..., description="Number of items skipped")
