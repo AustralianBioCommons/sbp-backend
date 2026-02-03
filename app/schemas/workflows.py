@@ -181,7 +181,7 @@ class PdbUploadResponse(BaseModel):
 
 class JobListItem(BaseModel):
     """Individual job item in the job listing."""
-    
+
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
     workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
@@ -192,7 +192,7 @@ class JobListItem(BaseModel):
 
 class JobListResponse(BaseModel):
     """Paginated response for job listing."""
-    
+
     jobs: list[JobListItem] = Field(default_factory=list, description="List of jobs")
     total: int = Field(..., description="Total number of jobs matching the criteria")
     limit: int = Field(..., description="Maximum number of items per page")

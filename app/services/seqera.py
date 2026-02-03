@@ -12,6 +12,16 @@ from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from .seqera_models import WorkflowListItem
 from .seqera_parsers import extract_workflow_type, parse_workflow_list_payload
 
+__all__ = [
+    "SeqeraAPIError",
+    "SeqeraConfigurationError",
+    "WorkflowListItem",
+    "list_seqera_workflows",
+    "describe_workflow",
+    "cancel_seqera_workflow",
+    "delete_seqera_workflow",
+]
+
 
 async def list_seqera_workflows(
     workspace_id: str | None = None,

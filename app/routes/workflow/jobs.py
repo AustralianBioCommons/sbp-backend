@@ -68,7 +68,11 @@ async def cancel_workflow(
 @router.get("/jobs", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name or workflow type"),
-    status: list[str] | None = Query(None, description="Filter by status (Completed, Stopped, Failed)"),
+    status_filter: list[str] | None = Query(
+        None,
+        alias="status",
+        description="Filter by status (Completed, Stopped, Failed)",
+    ),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     current_user_id: UUID = Depends(get_current_user_id),
@@ -80,7 +84,7 @@ async def list_jobs(
         score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
         workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
         search_text = (search or "").strip().lower()
-        allowed_statuses = set(status or [])
+        allowed_statuses = set(status_filter or [])
         jobs: list[JobListItem] = []
         for run_id in owned_run_ids:
             payload = await describe_workflow(run_id)
