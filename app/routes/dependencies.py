@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from typing import cast
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
@@ -12,7 +14,7 @@ from ..db import SessionLocal
 from ..db.models.core import AppUser
 
 
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
@@ -39,4 +41,4 @@ def get_current_user_id(
             detail="Unknown user",
         )
 
-    return user.id
+    return cast(UUID, user.id)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,18 +15,19 @@ from ..db.models.core import RunMetric, Workflow, WorkflowRun
 from .s3 import S3ConfigurationError, S3ServiceError, calculate_csv_column_max
 
 
-def coerce_workflow_payload(payload: dict) -> dict:
-    if isinstance(payload, dict) and isinstance(payload.get("workflow"), dict):
-        return payload["workflow"]
-    return payload
+def coerce_workflow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    workflow = payload.get("workflow")
+    if isinstance(workflow, Mapping):
+        return dict(workflow)
+    return dict(payload)
 
 
-def extract_pipeline_status(payload: dict) -> str:
+def extract_pipeline_status(payload: Mapping[str, Any]) -> str:
     workflow = coerce_workflow_payload(payload)
     return str(workflow.get("status") or "UNKNOWN")
 
 
-def parse_submit_datetime(payload: dict) -> datetime | None:
+def parse_submit_datetime(payload: Mapping[str, Any]) -> datetime | None:
     workflow = coerce_workflow_payload(payload)
     submit_str = workflow.get("submit") or workflow.get("dateCreated")
     if not submit_str:
@@ -64,7 +67,9 @@ def get_score_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, float]:
         .where(WorkflowRun.owner_user_id == user_id)
     ).all()
     return {
-        seqera_run_id: _round_score(score) for seqera_run_id, score in rows if score is not None
+        str(seqera_run_id): rounded
+        for seqera_run_id, score in rows
+        if seqera_run_id and (rounded := _round_score(score)) is not None
     }
 
 

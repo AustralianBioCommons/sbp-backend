@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any, cast
 
 import httpx
 
@@ -36,7 +37,7 @@ def _headers(token: str) -> dict[str, str]:
 async def list_workflows_raw(
     workspace_id: str | None = None,
     search_query: str | None = None,
-) -> dict | list:
+) -> dict[str, Any] | list[Any]:
     api_url, token, params = _get_api_context(workspace_id)
     if search_query:
         params["search"] = search_query
@@ -47,10 +48,12 @@ async def list_workflows_raw(
 
     if response.is_error:
         raise SeqeraAPIError(f"Failed to list workflows: {response.status_code} {response.text}")
-    return response.json()
+    return cast(dict[str, Any] | list[Any], response.json())
 
 
-async def describe_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> dict:
+async def describe_workflow_raw(
+    workflow_id: str, workspace_id: str | None = None
+) -> dict[str, Any]:
     api_url, token, params = _get_api_context(workspace_id)
     url = f"{api_url}/workflow/{workflow_id}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
@@ -58,7 +61,7 @@ async def describe_workflow_raw(workflow_id: str, workspace_id: str | None = Non
 
     if response.is_error:
         raise SeqeraAPIError(f"Failed to describe workflow: {response.status_code} {response.text}")
-    return response.json()
+    return cast(dict[str, Any], response.json())
 
 
 async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
