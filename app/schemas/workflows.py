@@ -197,3 +197,36 @@ class JobListResponse(BaseModel):
     total: int = Field(..., description="Total number of jobs matching the criteria")
     limit: int = Field(..., description="Maximum number of items per page")
     offset: int = Field(..., description="Number of items skipped")
+
+
+class JobDetailsResponse(BaseModel):
+    """Detailed response for a single job."""
+
+    id: str = Field(..., description="Workflow run ID")
+    jobName: str = Field(..., description="Human-readable job name")
+    workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
+    status: str = Field(..., description="UI-friendly status")
+    submittedAt: datetime = Field(..., description="Submission date and time")
+    score: float | None = Field(None, description="Job max score rounded to 3 decimals")
+
+
+class DeleteJobResponse(BaseModel):
+    """Response for single job deletion."""
+
+    runId: str
+    deleted: bool
+    cancelledBeforeDelete: bool = False
+    message: str
+
+
+class BulkDeleteJobsRequest(BaseModel):
+    """Request payload for bulk job deletion."""
+
+    runIds: list[str] = Field(..., min_length=1)
+
+
+class BulkDeleteJobsResponse(BaseModel):
+    """Response for bulk job deletion."""
+
+    deleted: list[str] = Field(default_factory=list)
+    failed: dict[str, str] = Field(default_factory=dict)
