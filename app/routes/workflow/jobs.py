@@ -6,15 +6,9 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from ...db.models.core import RunInput, RunMetric, RunOutput
 from ...schemas.workflows import (
-    BulkDeleteJobsRequest,
-    BulkDeleteJobsResponse,
-    CancelWorkflowResponse,
-    DeleteJobResponse,
     JobDetailsResponse,
     JobListItem,
     JobListResponse,
@@ -33,36 +27,11 @@ from ...services.job_utils import (
 from ...services.seqera import (
     SeqeraAPIError,
     SeqeraConfigurationError,
-    cancel_seqera_workflow,
-    delete_seqera_workflow,
     describe_workflow,
 )
 from ..dependencies import get_current_user_id, get_db
 
 router = APIRouter()
-
-
-@router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
-async def cancel_workflow(
-    run_id: str,
-    current_user_id: UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> CancelWorkflowResponse:
-    """Cancel a workflow run."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
-    if not owned_run:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    try:
-        await cancel_seqera_workflow(run_id)
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    return CancelWorkflowResponse(
-        message="Workflow cancelled successfully",
-        runId=run_id,
-        status="cancelled",
-    )
 
 
 @router.get("/jobs", response_model=JobListResponse)
@@ -180,79 +149,3 @@ async def get_job_details(
         submittedAt=submitted_at,
         score=score,
     )
-
-
-@router.delete("/jobs/{run_id}", response_model=DeleteJobResponse)
-async def delete_job(
-    run_id: str,
-    current_user_id: UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> DeleteJobResponse:
-    """Delete a single job. Running jobs are cancelled before deletion."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
-    if not owned_run:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    cancelled = False
-    try:
-        payload = await describe_workflow(run_id)
-        pipeline_status = extract_pipeline_status(payload)
-        if pipeline_status in {"SUBMITTED", "RUNNING"}:
-            await cancel_seqera_workflow(run_id)
-            cancelled = True
-
-        await delete_seqera_workflow(run_id)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
-    db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
-    db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
-    db.delete(owned_run)
-    db.commit()
-
-    return DeleteJobResponse(
-        runId=run_id,
-        deleted=True,
-        cancelledBeforeDelete=cancelled,
-        message="Job deleted successfully",
-    )
-
-
-@router.post("/jobs/bulk-delete", response_model=BulkDeleteJobsResponse)
-async def bulk_delete_jobs(
-    payload: BulkDeleteJobsRequest,
-    current_user_id: UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> BulkDeleteJobsResponse:
-    """Delete multiple jobs. Each running job is cancelled before deletion."""
-    deleted: list[str] = []
-    failed: dict[str, str] = {}
-
-    for run_id in payload.runIds:
-        owned_run = get_owned_run(db, current_user_id, run_id)
-        if not owned_run:
-            failed[run_id] = "Job not found"
-            continue
-
-        try:
-            details = await describe_workflow(run_id)
-            if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
-                await cancel_seqera_workflow(run_id)
-            await delete_seqera_workflow(run_id)
-
-            db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
-            db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
-            db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
-            db.delete(owned_run)
-            db.commit()
-            deleted.append(run_id)
-        except (SeqeraConfigurationError, SeqeraAPIError) as exc:
-            db.rollback()
-            failed[run_id] = str(exc)
-
-    return BulkDeleteJobsResponse(deleted=deleted, failed=failed)

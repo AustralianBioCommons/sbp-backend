@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-from uuid import UUID
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.routes.dependencies import get_current_user_id, get_db
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
@@ -116,27 +114,10 @@ def test_launch_invalid_payload(client: TestClient):
     assert response.status_code == 422  # Validation error
 
 
-def test_cancel_workflow_success(client: TestClient):
-    """Test successful workflow cancellation."""
-    client.app.dependency_overrides[get_current_user_id] = lambda: UUID(
-        "11111111-1111-1111-1111-111111111111"
-    )
-    client.app.dependency_overrides[get_db] = lambda: iter([None])
-    with (
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
-        patch(
-            "app.routes.workflow.jobs.cancel_seqera_workflow",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
-    ):
-        response = client.post("/api/workflows/run_123/cancel")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["runId"] == "run_123"
-    assert data["status"] == "cancelled"
-    assert "message" in data
+def test_cancel_workflow_endpoint_removed(client: TestClient):
+    """Cancel endpoint is intentionally removed from jobs API."""
+    response = client.post("/api/workflows/run_123/cancel")
+    assert response.status_code == 404
 
 
 def test_get_logs_success(client: TestClient):
