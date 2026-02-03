@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -11,7 +10,6 @@ import pytest
 from app.services.seqera import (
     SeqeraAPIError,
     SeqeraConfigurationError,
-    WorkflowListItem,
     describe_workflow,
     list_seqera_workflows,
 )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -12,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..db.models.core import AppUser, WorkflowRun
-
 from ..schemas.workflows import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
@@ -45,7 +46,7 @@ from ..services.seqera import (
 router = APIRouter(tags=["workflows"])
 
 
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
@@ -71,7 +72,7 @@ def get_current_user_id(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unknown user",
         )
-    return user.id
+    return cast(UUID, user.id)
 
 
 def get_owned_run_ids(db: Session, user_id: UUID) -> set[str]:
@@ -166,7 +167,10 @@ async def list_runs(
 @router.get("/jobs", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name or workflow type"),
-    status: list[str] | None = Query(None, description="Filter by status (Completed, Stopped, Failed)"),
+    status_filter: list[str]
+    | None = Query(
+        None, alias="status", description="Filter by status (Completed, Stopped, Failed)"
+    ),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     current_user_id: UUID = Depends(get_current_user_id),
@@ -174,27 +178,27 @@ async def list_jobs(
 ) -> JobListResponse:
     """
     Retrieve a paginated list of workflow jobs with search and filtering.
-    
+
     Query Parameters:
     - search: Search by job name or workflow type
     - status: Filter by status values (Completed, Stopped, Failed, In progress, In queue)
     - limit: Maximum number of results per page
     - offset: Number of results to skip for pagination
-    
+
     Returns:
     - Paginated list of jobs with job name, workflow type, status, submitted date, and score
     """
     try:
         workflows, _total = await list_seqera_workflows(
             search_query=search,
-            status_filter=status,
+            status_filter=status_filter,
             limit=limit,
             offset=offset,
         )
 
         owned_run_ids = get_owned_run_ids(db, current_user_id)
         owned_workflows = [wf for wf in workflows if wf.workflow_id in owned_run_ids]
-        
+
         jobs = [
             JobListItem(
                 id=wf.workflow_id,
@@ -206,7 +210,7 @@ async def list_jobs(
             )
             for wf in owned_workflows
         ]
-        
+
         return JobListResponse(
             jobs=jobs,
             total=len(jobs),
