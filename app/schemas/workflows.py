@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class PipelineStatus(str, Enum):
     """Pipeline status values from Seqera Platform."""
+
     SUBMITTED = "SUBMITTED"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -21,6 +22,7 @@ class PipelineStatus(str, Enum):
 
 class UIStatus(str, Enum):
     """User-facing status values for the frontend."""
+
     IN_QUEUE = "In queue"
     IN_PROGRESS = "In progress"
     COMPLETED = "Completed"
@@ -184,7 +186,9 @@ class JobListItem(BaseModel):
 
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
+    workflowType: str | None = Field(
+        None, description="Workflow type (e.g., BindCraft, De novo design)"
+    )
     status: str = Field(..., description="UI-friendly status (e.g., Completed, In progress)")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
@@ -204,7 +208,9 @@ class JobDetailsResponse(BaseModel):
 
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
+    workflowType: str | None = Field(
+        None, description="Workflow type (e.g., BindCraft, De novo design)"
+    )
     status: str = Field(..., description="UI-friendly status")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job max score rounded to 3 decimals")

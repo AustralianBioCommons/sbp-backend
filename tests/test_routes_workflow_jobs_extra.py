@@ -31,7 +31,11 @@ async def test_cancel_workflow_not_owned_raises_404():
 async def test_cancel_workflow_api_error_maps_502():
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
-        patch("app.routes.workflow.jobs.cancel_seqera_workflow", new_callable=AsyncMock, side_effect=SeqeraAPIError("down")),
+        patch(
+            "app.routes.workflow.jobs.cancel_seqera_workflow",
+            new_callable=AsyncMock,
+            side_effect=SeqeraAPIError("down"),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await cancel_workflow("wf-1", UUID("11111111-1111-1111-1111-111111111111"), Mock())
@@ -43,8 +47,22 @@ async def test_get_job_details_success():
     owned_run = SimpleNamespace(workflow=SimpleNamespace(name="BindCraft"), id="rid")
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
-        patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock, return_value={"workflow": {"runName": "job-x", "status": "SUCCEEDED", "submit": "2026-02-01T10:00:00Z"}}),
-        patch("app.routes.workflow.jobs.ensure_completed_run_score", new_callable=AsyncMock, return_value=0.912),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            return_value={
+                "workflow": {
+                    "runName": "job-x",
+                    "status": "SUCCEEDED",
+                    "submit": "2026-02-01T10:00:00Z",
+                }
+            },
+        ),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=0.912,
+        ),
     ):
         result = await get_job_details("wf-1", UUID("11111111-1111-1111-1111-111111111111"), Mock())
 
@@ -59,9 +77,21 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows():
     owned_run = SimpleNamespace(id="rid", workflow=None)
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
-        patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock, return_value={"workflow": {"status": "RUNNING"}}),
-        patch("app.routes.workflow.jobs.cancel_seqera_workflow", new_callable=AsyncMock, return_value=None),
-        patch("app.routes.workflow.jobs.delete_seqera_workflow", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            return_value={"workflow": {"status": "RUNNING"}},
+        ),
+        patch(
+            "app.routes.workflow.jobs.cancel_seqera_workflow",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.routes.workflow.jobs.delete_seqera_workflow",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         resp = await delete_job("wf-1", UUID("11111111-1111-1111-1111-111111111111"), db)
 
@@ -80,8 +110,16 @@ async def test_bulk_delete_jobs_mixed_results():
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run", side_effect=_owned),
-        patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock, return_value={"workflow": {"status": "FAILED"}}),
-        patch("app.routes.workflow.jobs.delete_seqera_workflow", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            return_value={"workflow": {"status": "FAILED"}},
+        ),
+        patch(
+            "app.routes.workflow.jobs.delete_seqera_workflow",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         out = await bulk_delete_jobs(
             BulkDeleteJobsRequest(runIds=["ok", "missing"]),

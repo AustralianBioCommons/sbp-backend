@@ -63,7 +63,9 @@ def get_score_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, float]:
         .outerjoin(RunMetric, RunMetric.run_id == WorkflowRun.id)
         .where(WorkflowRun.owner_user_id == user_id)
     ).all()
-    return {seqera_run_id: _round_score(score) for seqera_run_id, score in rows if score is not None}
+    return {
+        seqera_run_id: _round_score(score) for seqera_run_id, score in rows if score is not None
+    }
 
 
 def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, str]:

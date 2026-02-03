@@ -118,11 +118,17 @@ def test_launch_invalid_payload(client: TestClient):
 
 def test_cancel_workflow_success(client: TestClient):
     """Test successful workflow cancellation."""
-    client.app.dependency_overrides[get_current_user_id] = lambda: UUID("11111111-1111-1111-1111-111111111111")
+    client.app.dependency_overrides[get_current_user_id] = lambda: UUID(
+        "11111111-1111-1111-1111-111111111111"
+    )
     client.app.dependency_overrides[get_db] = lambda: iter([None])
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
-        patch("app.routes.workflow.jobs.cancel_seqera_workflow", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.routes.workflow.jobs.cancel_seqera_workflow",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         response = client.post("/api/workflows/run_123/cancel")
 

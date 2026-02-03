@@ -86,4 +86,6 @@ async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None)
     if response.status_code == 404:
         return
     if response.is_error:
-        raise SeqeraAPIError(f"Failed to delete workflow {workflow_id}: {response.status_code} {response.text}")
+        raise SeqeraAPIError(
+            f"Failed to delete workflow {workflow_id}: {response.status_code} {response.text}"
+        )

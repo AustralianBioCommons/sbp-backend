@@ -52,15 +52,37 @@ def client():
 def test_list_jobs_endpoint_success(client):
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value={"wf-123", "wf-456"}),
-        patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={"wf-123": 0.953}),
+        patch(
+            "app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={"wf-123": 0.953}
+        ),
         patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
-        patch("app.routes.workflow.jobs.ensure_completed_run_score", new_callable=AsyncMock, return_value=0.953),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=0.953,
+        ),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             side_effect=[
-                {"workflow": {"id": "wf-123", "runName": "Job A", "projectName": "BindCraft", "status": "SUCCEEDED", "submit": "2026-02-01T10:00:00Z"}},
-                {"workflow": {"id": "wf-456", "runName": "Job B", "projectName": "De novo design", "status": "RUNNING", "submit": "2026-02-02T10:00:00Z"}},
+                {
+                    "workflow": {
+                        "id": "wf-123",
+                        "runName": "Job A",
+                        "projectName": "BindCraft",
+                        "status": "SUCCEEDED",
+                        "submit": "2026-02-01T10:00:00Z",
+                    }
+                },
+                {
+                    "workflow": {
+                        "id": "wf-456",
+                        "runName": "Job B",
+                        "projectName": "De novo design",
+                        "status": "RUNNING",
+                        "submit": "2026-02-02T10:00:00Z",
+                    }
+                },
             ],
         ),
     ):
@@ -78,17 +100,39 @@ def test_list_jobs_with_search_and_status_filter(client):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value={"wf-1", "wf-2"}),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
-        patch("app.routes.workflow.jobs.ensure_completed_run_score", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             side_effect=[
-                {"workflow": {"id": "wf-1", "runName": "Matching Job", "projectName": "BindCraft", "status": "SUCCEEDED", "submit": "2026-02-01T10:00:00Z"}},
-                {"workflow": {"id": "wf-2", "runName": "Other Job", "projectName": "BindCraft", "status": "FAILED", "submit": "2026-02-01T11:00:00Z"}},
+                {
+                    "workflow": {
+                        "id": "wf-1",
+                        "runName": "Matching Job",
+                        "projectName": "BindCraft",
+                        "status": "SUCCEEDED",
+                        "submit": "2026-02-01T10:00:00Z",
+                    }
+                },
+                {
+                    "workflow": {
+                        "id": "wf-2",
+                        "runName": "Other Job",
+                        "projectName": "BindCraft",
+                        "status": "FAILED",
+                        "submit": "2026-02-01T11:00:00Z",
+                    }
+                },
             ],
         ),
     ):
-        response = client.get("/api/workflows/jobs?search=Matching&status=Completed&limit=10&offset=0")
+        response = client.get(
+            "/api/workflows/jobs?search=Matching&status=Completed&limit=10&offset=0"
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -112,7 +156,9 @@ def test_list_jobs_configuration_error(client):
     with patch(
         "app.routes.workflow.jobs.describe_workflow",
         new_callable=AsyncMock,
-        side_effect=SeqeraConfigurationError("Missing required environment variable: SEQERA_API_URL"),
+        side_effect=SeqeraConfigurationError(
+            "Missing required environment variable: SEQERA_API_URL"
+        ),
     ), patch("app.routes.workflow.jobs.get_owned_run_ids", return_value={"wf-123"}):
         response = client.get("/api/workflows/jobs?limit=10&offset=0")
 

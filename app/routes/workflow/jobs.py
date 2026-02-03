@@ -68,7 +68,8 @@ async def cancel_workflow(
 @router.get("/jobs", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name or workflow type"),
-    status_filter: list[str] | None = Query(
+    status_filter: list[str]
+    | None = Query(
         None,
         alias="status",
         description="Filter by status (Completed, Stopped, Failed)",
@@ -97,7 +98,11 @@ async def list_jobs(
 
             workflow_type = workflow_type_by_run_id.get(run_id)
             job_name = wf.get("runName") or run_id
-            if search_text and search_text not in str(job_name).lower() and search_text not in str(workflow_type or "").lower():
+            if (
+                search_text
+                and search_text not in str(job_name).lower()
+                and search_text not in str(workflow_type or "").lower()
+            ):
                 continue
 
             score = score_by_run_id.get(run_id)
@@ -152,7 +157,9 @@ async def get_job_details(
     try:
         payload = await describe_workflow(run_id)
     except SeqeraConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -196,7 +203,9 @@ async def delete_job(
 
         await delete_seqera_workflow(run_id)
     except SeqeraConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

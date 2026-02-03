@@ -76,7 +76,9 @@ async def test_ensure_completed_run_score_branches():
 
     # calculate + add path
     db_new = _DB(scalar=None)
-    with patch("app.services.job_utils.calculate_csv_column_max", new_callable=AsyncMock, return_value=1.23):
+    with patch(
+        "app.services.job_utils.calculate_csv_column_max", new_callable=AsyncMock, return_value=1.23
+    ):
         score = await job_utils.ensure_completed_run_score(db_new, run, "Completed")
     assert score == 1.0
     assert db_new.added is not None
@@ -84,5 +86,9 @@ async def test_ensure_completed_run_score_branches():
 
     # calculate failure path
     db_fail = _DB(scalar=None)
-    with patch("app.services.job_utils.calculate_csv_column_max", new_callable=AsyncMock, side_effect=ValueError("bad")):
+    with patch(
+        "app.services.job_utils.calculate_csv_column_max",
+        new_callable=AsyncMock,
+        side_effect=ValueError("bad"),
+    ):
         assert await job_utils.ensure_completed_run_score(db_fail, run, "Completed") is None
