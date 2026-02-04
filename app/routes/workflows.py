@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, status
 
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
     LaunchDetails,
     LaunchLogs,
-    ListRunsResponse,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
 )
@@ -49,18 +48,6 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
         status=result.status,
         submitTime=datetime.now(timezone.utc),
     )
-
-
-@router.get("/runs", response_model=ListRunsResponse)
-async def list_runs(
-    status_filter: str | None = Query(None, alias="status"),
-    workspace: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> ListRunsResponse:
-    """List workflow runs (placeholder until Seqera list API integration)."""
-    _ = (status_filter, workspace)  # Reserved for future Seqera integration
-    return ListRunsResponse(runs=[], total=0, limit=limit, offset=offset)
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
