@@ -10,7 +10,7 @@ from .seqera_client import (
 )
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from .seqera_models import WorkflowListItem
-from .seqera_parsers import extract_workflow_type, parse_workflow_list_payload
+from .seqera_parsers import parse_workflow_list_payload
 
 __all__ = [
     "SeqeraAPIError",
@@ -53,8 +53,3 @@ async def cancel_seqera_workflow(workflow_id: str, workspace_id: str | None = No
 async def delete_seqera_workflow(workflow_id: str, workspace_id: str | None = None) -> None:
     """Delete a Seqera workflow run."""
     await delete_workflow_raw(workflow_id=workflow_id, workspace_id=workspace_id)
-
-
-def _extract_workflow_type(workflow_data: dict) -> str | None:
-    """Backward-compatible alias used by tests and callers."""
-    return extract_workflow_type(workflow_data)
