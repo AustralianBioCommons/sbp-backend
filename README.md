@@ -133,6 +133,10 @@ Required entries in `.env`:
 - `WORK_DIR` — Default work directory
 - `WORK_SPACE` — Seqera workspace identifier
 - `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
+- `AUTH0_DOMAIN` — Auth0 tenant domain used for JWKS lookup (e.g. `your-tenant.au.auth0.com`)
+- `AUTH0_AUDIENCE` — Expected audience claim in incoming bearer tokens
+- `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH0_DOMAIN}/`
+- `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
 
