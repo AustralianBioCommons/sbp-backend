@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any, cast
 
 import httpx
-from cachetools import TTLCache
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from fastapi import HTTPException, status
 from jose import jwk, jwt
 from jose.exceptions import JWTError
@@ -49,15 +50,15 @@ def _get_auth0_settings() -> Auth0Settings:
     )
 
 
-def _fetch_rsa_keys(auth0_domain: str) -> dict:
+def _fetch_rsa_keys(auth0_domain: str) -> dict[str, Any]:
     cache_key = f"jwks_{auth0_domain}"
     if cache_key in KEY_CACHE:
-        return KEY_CACHE[cache_key]
+        return cast(dict[str, Any], KEY_CACHE[cache_key])
 
     jwks_url = f"https://{auth0_domain}/.well-known/jwks.json"
     response = httpx.get(jwks_url, timeout=10)
     response.raise_for_status()
-    keys = response.json()
+    keys = cast(dict[str, Any], response.json())
     KEY_CACHE[cache_key] = keys
     return keys
 
@@ -67,7 +68,7 @@ def _get_rsa_key(
     settings: Auth0Settings,
     *,
     retry_on_failure: bool = True,
-) -> jwk.RSAKey | None:  # type: ignore[type-arg]
+) -> jwk.Key | None:
     jwks = _fetch_rsa_keys(settings.domain)
     unverified_header = jwt.get_unverified_header(token)
 
@@ -125,4 +126,3 @@ def verify_access_token_sub(token: str) -> str:
             detail="Invalid token: missing subject claim",
         )
     return subject
-
