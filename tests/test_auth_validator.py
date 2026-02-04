@@ -37,14 +37,13 @@ def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch):
     assert settings.algorithms == ("RS256", "ES256")
 
 
-def test_get_auth0_settings_missing_required(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_uses_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.delenv("AUTH0_AUDIENCE", raising=False)
 
-    with pytest.raises(HTTPException) as exc:
-        validator._get_auth0_settings()
-
-    assert exc.value.status_code == 500
+    settings = validator._get_auth0_settings()
+    assert settings.domain == "dev.login.aai.test.biocommons.org.au"
+    assert settings.audience == "https://dev.api.aai.test.biocommons.org.au"
 
 
 def test_get_auth0_settings_empty_algorithms(monkeypatch: pytest.MonkeyPatch):

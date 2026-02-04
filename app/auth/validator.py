@@ -13,6 +13,8 @@ from jose import jwk, jwt
 from jose.exceptions import JWTError
 
 KEY_CACHE = TTLCache(maxsize=10, ttl=30 * 60)
+DEFAULT_AUTH0_DOMAIN = "dev.login.aai.test.biocommons.org.au"
+DEFAULT_AUTH0_AUDIENCE = "https://dev.api.aai.test.biocommons.org.au"
 
 
 @dataclass(frozen=True)
@@ -24,17 +26,11 @@ class Auth0Settings:
 
 
 def _get_auth0_settings() -> Auth0Settings:
-    domain = os.getenv("AUTH0_DOMAIN")
-    audience = os.getenv("AUTH0_AUDIENCE")
+    domain = os.getenv("AUTH0_DOMAIN") or DEFAULT_AUTH0_DOMAIN
+    audience = os.getenv("AUTH0_AUDIENCE") or DEFAULT_AUTH0_AUDIENCE
     issuer = os.getenv("AUTH0_ISSUER")
     algorithms_raw = os.getenv("AUTH0_ALGORITHMS", "RS256")
     algorithms = tuple(alg.strip() for alg in algorithms_raw.split(",") if alg.strip())
-
-    if not domain or not audience:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Auth configuration error: AUTH0_DOMAIN and AUTH0_AUDIENCE must be set",
-        )
 
     if not algorithms:
         raise HTTPException(
