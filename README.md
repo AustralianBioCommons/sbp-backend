@@ -46,11 +46,15 @@ FastAPI backend for handling Seqera Platform workflow launches.
 
 - `GET /health` — Lightweight health probe
 - `POST /api/workflows/launch` — Launch a Seqera workflow (send the same payload previously expected by the Express server)
-- `POST /api/workflows/{runId}/cancel` — Placeholder response for cancelling a run
-- `GET /api/workflows/runs` — Placeholder list endpoint mirroring the previous Node API
+- `GET /api/workflows/jobs` — List jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
+- `GET /api/workflows/jobs/{run_id}` — Get one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `GET /api/workflows/{runId}/logs` — Placeholder log endpoint
 - `GET /api/workflows/{runId}/details` — Placeholder details endpoint
 - `POST /api/workflows/datasets/upload` — Create a Seqera dataset and upload submitted form data as a CSV
+- `POST /api/workflows/pdb/upload` — Upload a PDB file
+- `GET /files` — List S3 files
+- `GET /csv/{file_key}` — Read CSV rows from S3
+- `GET /run/{run_id}/max-score` — Fetch max score for a run
 
 ## Database Schema
 
@@ -133,8 +137,8 @@ Required entries in `.env`:
 - `WORK_DIR` — Default work directory
 - `WORK_SPACE` — Seqera workspace identifier
 - `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
-- `AUTH0_DOMAIN` — Auth0 tenant domain used for JWKS lookup (e.g. `your-tenant.au.auth0.com`)
-- `AUTH0_AUDIENCE` — Expected audience claim in incoming bearer tokens
+- `AUTH0_DOMAIN` — (Optional) Auth0 tenant domain used for JWKS lookup. Defaults to `dev.login.aai.test.biocommons.org.au`
+- `AUTH0_AUDIENCE` — (Optional) expected audience claim in incoming bearer tokens. Defaults to `https://dev.api.aai.test.biocommons.org.au`
 - `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH0_DOMAIN}/`
 - `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
