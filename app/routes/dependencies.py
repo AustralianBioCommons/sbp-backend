@@ -6,13 +6,16 @@ from collections.abc import Generator
 from typing import cast
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth.validator import verify_access_token_sub
 from ..db import SessionLocal
 from ..db.models.core import AppUser
+
+security = HTTPBearer()
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -24,23 +27,13 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_current_user_id(
-    authorization: str | None = Header(None, alias="Authorization"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> UUID:
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-        )
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Authorization header format; expected Bearer token",
-        )
-
-    auth0_user_id = verify_access_token_sub(token.strip())
+    # HTTPBearer automatically extracts the token from "Bearer <token>"
+    token = credentials.credentials
+    
+    auth0_user_id = verify_access_token_sub(token)
     user = db.execute(
         select(AppUser).where(AppUser.auth0_user_id == auth0_user_id)
     ).scalar_one_or_none()
