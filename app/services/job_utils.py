@@ -40,9 +40,12 @@ def parse_submit_datetime(payload: Mapping[str, Any]) -> datetime | None:
 
 def get_owned_run_ids(db: Session, user_id: UUID) -> set[str]:
     rows = db.execute(
-        select(WorkflowRun.seqera_run_id).where(WorkflowRun.owner_user_id == user_id)
+        select(WorkflowRun.seqera_run_id).where(
+            WorkflowRun.owner_user_id == user_id,
+            WorkflowRun.seqera_run_id.is_not(None),
+        )
     ).all()
-    return {row[0] for row in rows if row[0]}
+    return {row[0] for row in rows}
 
 
 def get_owned_run(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None:
