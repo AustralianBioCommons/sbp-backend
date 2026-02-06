@@ -152,7 +152,7 @@ async def list_jobs(
                 score = await ensure_completed_run_score(db, owned_run, ui_status)
 
             # Parse submission date
-            submitted_at = parse_submit_datetime(wf.get("submit")) or datetime.now(timezone.utc)
+            submitted_at = parse_submit_datetime(payload) or datetime.now(timezone.utc)
 
             jobs.append(
                 JobListItem(

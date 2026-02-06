@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 import httpx
 
@@ -60,7 +61,9 @@ def _extract_workflow_type(workflow_data: dict) -> str | None:
     return project_name or pipeline or None
 
 
-async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -> dict:
+async def describe_workflow(
+    workflow_id: str, workspace_id: str | None = None
+) -> dict[str, Any]:
     """
     Get detailed information about a specific workflow run.
 
@@ -105,4 +108,5 @@ async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -
         )
         raise SeqeraAPIError(f"Failed to describe workflow: {response.status_code} {body}")
 
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result
