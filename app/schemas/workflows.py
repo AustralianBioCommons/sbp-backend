@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class PipelineStatus(str, Enum):
     """Pipeline status values from Seqera Platform."""
-
     SUBMITTED = "SUBMITTED"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -22,7 +21,6 @@ class PipelineStatus(str, Enum):
 
 class UIStatus(str, Enum):
     """User-facing status values for the frontend."""
-
     IN_QUEUE = "In queue"
     IN_PROGRESS = "In progress"
     COMPLETED = "Completed"
@@ -183,12 +181,10 @@ class PdbUploadResponse(BaseModel):
 
 class JobListItem(BaseModel):
     """Individual job item in the job listing."""
-
+    
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(
-        None, description="Workflow type (e.g., BindCraft, De novo design)"
-    )
+    workflowType: str | None = Field(None, description="Workflow type (e.g., BindCraft, De novo design)")
     status: str = Field(..., description="UI-friendly status (e.g., Completed, In progress)")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
@@ -196,43 +192,8 @@ class JobListItem(BaseModel):
 
 class JobListResponse(BaseModel):
     """Paginated response for job listing."""
-
+    
     jobs: list[JobListItem] = Field(default_factory=list, description="List of jobs")
     total: int = Field(..., description="Total number of jobs matching the criteria")
     limit: int = Field(..., description="Maximum number of items per page")
     offset: int = Field(..., description="Number of items skipped")
-
-
-class JobDetailsResponse(BaseModel):
-    """Detailed response for a single job."""
-
-    id: str = Field(..., description="Workflow run ID")
-    jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(
-        None, description="Workflow type (e.g., BindCraft, De novo design)"
-    )
-    status: str = Field(..., description="UI-friendly status")
-    submittedAt: datetime = Field(..., description="Submission date and time")
-    score: float | None = Field(None, description="Job max score rounded to 3 decimals")
-
-
-class DeleteJobResponse(BaseModel):
-    """Response for single job deletion."""
-
-    runId: str
-    deleted: bool
-    cancelledBeforeDelete: bool = False
-    message: str
-
-
-class BulkDeleteJobsRequest(BaseModel):
-    """Request payload for bulk job deletion."""
-
-    runIds: list[str] = Field(..., min_length=1)
-
-
-class BulkDeleteJobsResponse(BaseModel):
-    """Response for bulk job deletion."""
-
-    deleted: list[str] = Field(default_factory=list)
-    failed: dict[str, str] = Field(default_factory=dict)

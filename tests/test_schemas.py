@@ -10,13 +10,18 @@ from pydantic import ValidationError
 from app.schemas.workflows import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
+    JobListItem,
+    JobListResponse,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
+    PipelineStatus,
     RunInfo,
+    UIStatus,
     WorkflowLaunchForm,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
+    map_pipeline_status_to_ui,
 )
 
 
@@ -262,3 +267,124 @@ def test_dataset_upload_request_empty_form_data():
             formData={},
             datasetName="test-dataset",
         )
+
+
+# Tests for Job Listing schemas
+
+
+def test_status_mapping_submitted():
+    """Test pipeline status SUBMITTED maps to 'In queue'."""
+    assert map_pipeline_status_to_ui("SUBMITTED") == "In queue"
+    assert map_pipeline_status_to_ui(PipelineStatus.SUBMITTED.value) == UIStatus.IN_QUEUE.value
+
+
+def test_status_mapping_running():
+    """Test pipeline status RUNNING maps to 'In progress'."""
+    assert map_pipeline_status_to_ui("RUNNING") == "In progress"
+    assert map_pipeline_status_to_ui(PipelineStatus.RUNNING.value) == UIStatus.IN_PROGRESS.value
+
+
+def test_status_mapping_succeeded():
+    """Test pipeline status SUCCEEDED maps to 'Completed'."""
+    assert map_pipeline_status_to_ui("SUCCEEDED") == "Completed"
+    assert map_pipeline_status_to_ui(PipelineStatus.SUCCEEDED.value) == UIStatus.COMPLETED.value
+
+
+def test_status_mapping_failed():
+    """Test pipeline status FAILED maps to 'Failed'."""
+    assert map_pipeline_status_to_ui("FAILED") == "Failed"
+    assert map_pipeline_status_to_ui(PipelineStatus.FAILED.value) == UIStatus.FAILED.value
+
+
+def test_status_mapping_unknown():
+    """Test pipeline status UNKNOWN maps to 'Failed'."""
+    assert map_pipeline_status_to_ui("UNKNOWN") == "Failed"
+    assert map_pipeline_status_to_ui(PipelineStatus.UNKNOWN.value) == UIStatus.FAILED.value
+
+
+def test_status_mapping_cancelled():
+    """Test pipeline status CANCELLED maps to 'Stopped'."""
+    assert map_pipeline_status_to_ui("CANCELLED") == "Stopped"
+    assert map_pipeline_status_to_ui(PipelineStatus.CANCELLED.value) == UIStatus.STOPPED.value
+
+
+def test_status_mapping_invalid():
+    """Test invalid pipeline status defaults to 'Failed'."""
+    assert map_pipeline_status_to_ui("INVALID_STATUS") == "Failed"
+    assert map_pipeline_status_to_ui("") == "Failed"
+
+
+def test_job_list_item_valid():
+    """Test creating valid JobListItem."""
+    job = JobListItem(
+        id="wf-123",
+        jobName="Test Job",
+        workflowType="BindCraft",
+        status="Completed",
+        submittedAt=datetime(2026, 2, 1, 10, 0, 0),
+        score=0.95,
+    )
+
+    assert job.id == "wf-123"
+    assert job.jobName == "Test Job"
+    assert job.workflowType == "BindCraft"
+    assert job.status == "Completed"
+    assert job.score == 0.95
+
+
+def test_job_list_item_optional_fields():
+    """Test JobListItem with optional fields as None."""
+    job = JobListItem(
+        id="wf-456",
+        jobName="Another Job",
+        workflowType=None,
+        status="In progress",
+        submittedAt=datetime(2026, 2, 2, 11, 0, 0),
+        score=None,
+    )
+
+    assert job.workflowType is None
+    assert job.score is None
+
+
+def test_job_list_response_valid():
+    """Test creating valid JobListResponse."""
+    jobs = [
+        JobListItem(
+            id="wf-1",
+            jobName="Job 1",
+            status="Completed",
+            submittedAt=datetime(2026, 2, 1, 10, 0, 0),
+        ),
+        JobListItem(
+            id="wf-2",
+            jobName="Job 2",
+            status="In progress",
+            submittedAt=datetime(2026, 2, 2, 11, 0, 0),
+        ),
+    ]
+
+    response = JobListResponse(
+        jobs=jobs,
+        total=100,
+        limit=10,
+        offset=0,
+    )
+
+    assert len(response.jobs) == 2
+    assert response.total == 100
+    assert response.limit == 10
+    assert response.offset == 0
+
+
+def test_job_list_response_empty():
+    """Test JobListResponse with empty job list."""
+    response = JobListResponse(
+        jobs=[],
+        total=0,
+        limit=10,
+        offset=0,
+    )
+
+    assert len(response.jobs) == 0
+    assert response.total == 0
