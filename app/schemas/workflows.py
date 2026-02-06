@@ -197,3 +197,14 @@ class JobListResponse(BaseModel):
     total: int = Field(..., description="Total number of jobs matching the criteria")
     limit: int = Field(..., description="Maximum number of items per page")
     offset: int = Field(..., description="Number of items skipped")
+
+
+class JobDetailsResponse(BaseModel):
+    """Detailed response for a single job."""
+    
+    id: str = Field(..., description="Workflow run ID")
+    jobName: str = Field(..., description="Human-readable job name")
+    workflowType: str | None = Field(None, description="Workflow type")
+    status: str = Field(..., description="UI-friendly status")
+    submittedAt: datetime = Field(..., description="Submission date and time")
+    score: float | None = Field(None, description="Job score/metric")

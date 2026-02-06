@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..schemas.workflows import (
-    CancelWorkflowResponse,
     DatasetUploadRequest,
     DatasetUploadResponse,
     JobListItem,
@@ -20,6 +19,7 @@ from ..schemas.workflows import (
     ListRunsResponse,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
+    map_pipeline_status_to_ui,
 )
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
@@ -71,16 +71,6 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
         runId=result.workflow_id,
         status=result.status,
         submitTime=datetime.now(timezone.utc),
-    )
-
-
-@router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
-async def cancel_workflow(run_id: str) -> CancelWorkflowResponse:
-    """Cancel a workflow run (placeholder implementation)."""
-    return CancelWorkflowResponse(
-        message="Workflow cancelled successfully",
-        runId=run_id,
-        status="cancelled",
     )
 
 

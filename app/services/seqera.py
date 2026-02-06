@@ -7,6 +7,9 @@ import os
 
 import httpx
 
+# Re-export for backward compatibility with tests
+from .seqera_models import WorkflowListItem
+
 logger = logging.getLogger(__name__)
 
 
