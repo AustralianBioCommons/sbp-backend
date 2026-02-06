@@ -61,9 +61,7 @@ def _extract_workflow_type(workflow_data: dict) -> str | None:
     return project_name or pipeline or None
 
 
-async def describe_workflow(
-    workflow_id: str, workspace_id: str | None = None
-) -> dict[str, Any]:
+async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -> dict[str, Any]:
     """
     Get detailed information about a specific workflow run.
 
