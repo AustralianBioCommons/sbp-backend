@@ -18,13 +18,7 @@ os.environ["WORK_SPACE"] = "test_workspace_id"
 os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
-# Use in-memory SQLite for faster tests
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
-from app.db import Base
 from app.main import create_app
 from app.schemas.workflows import (
     LaunchDetails,
@@ -37,7 +31,8 @@ from app.schemas.workflows import (
 )
 
 # ============================================================================
-# Auto-generate test data from Pydantic schemas # ============================================================================
+# Auto-generate test data from Pydantic schemas
+# ============================================================================
 
 
 class WorkflowLaunchFormFactory(ModelFactory[WorkflowLaunchForm]):
@@ -97,6 +92,10 @@ class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
 @pytest.fixture
 def test_engine():
     """Create a test database engine using SQLite in-memory."""
+    from sqlalchemy import create_engine
+
+    from app.db import Base
+
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     yield engine
@@ -105,10 +104,12 @@ def test_engine():
 
 
 @pytest.fixture
-def test_db(test_engine) -> Generator[Session, None, None]:
+def test_db(test_engine) -> Generator:
     """Create a test database session."""
-    TestSessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
-    session = TestSessionLocal()
+    from sqlalchemy.orm import sessionmaker
+
+    test_session_local = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
+    session = test_session_local()
     try:
         yield session
     finally:
