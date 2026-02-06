@@ -32,7 +32,7 @@ def get_current_user_id(
 ) -> UUID:
     # HTTPBearer automatically extracts the token from "Bearer <token>"
     token = credentials.credentials
-    
+
     auth0_user_id = verify_access_token_sub(token)
     user = db.execute(
         select(AppUser).where(AppUser.auth0_user_id == auth0_user_id)

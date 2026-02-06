@@ -12,8 +12,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from fastapi import HTTPException
-from jose import jwk, jwt
-from jose.backends.cryptography_backend import CryptographyRSAKey
+from jose import jwt
 from jose.exceptions import JWTError
 
 from app.auth import validator
@@ -177,16 +176,16 @@ def test_get_rsa_key_retries_once_and_returns_none(mocker):
 def test_verify_access_token_sub_success(monkeypatch: pytest.MonkeyPatch, mocker):
     """Test JWT validation with actual token instead of mocking decode."""
     _set_required_env(monkeypatch)
-    
+
     token = create_access_token(
         sub="auth0|abc123",
         iss="https://dev.login.aai.test.biocommons.org.au/",
         aud="https://api.example.test",
     )
-    
+
     # Mock the key retrieval to return our test public key
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
-    
+
     result = validator.verify_access_token_sub(token.access_token_str)
     assert result == "auth0|abc123"
 
@@ -195,15 +194,15 @@ def test_verify_access_token_sub_with_custom_issuer(monkeypatch: pytest.MonkeyPa
     """Test JWT validation with custom issuer setting."""
     _set_required_env(monkeypatch)
     monkeypatch.setenv("AUTH0_ISSUER", "https://custom.example.com/")
-    
+
     token = create_access_token(
         sub="auth0|xyz789",
         iss="https://custom.example.com/",
         aud="https://api.example.test",
     )
-    
+
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
-    
+
     result = validator.verify_access_token_sub(token.access_token_str)
     assert result == "auth0|xyz789"
 
@@ -211,19 +210,19 @@ def test_verify_access_token_sub_with_custom_issuer(monkeypatch: pytest.MonkeyPa
 def test_verify_access_token_sub_expired_token(monkeypatch: pytest.MonkeyPatch, mocker):
     """Test JWT validation fails with expired token."""
     _set_required_env(monkeypatch)
-    
+
     token = create_access_token(
         sub="auth0|expired",
         iss="https://dev.login.aai.test.biocommons.org.au/",
         aud="https://api.example.test",
         exp=int((datetime.now() - timedelta(hours=1)).timestamp()),
     )
-    
+
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
-    
+
     with pytest.raises(HTTPException) as exc:
         validator.verify_access_token_sub(token.access_token_str)
-    
+
     assert exc.value.status_code == 401
     assert "expired" in str(exc.value.detail).lower()
 
@@ -231,36 +230,36 @@ def test_verify_access_token_sub_expired_token(monkeypatch: pytest.MonkeyPatch, 
 def test_verify_access_token_sub_wrong_audience(monkeypatch: pytest.MonkeyPatch, mocker):
     """Test JWT validation fails with wrong audience."""
     _set_required_env(monkeypatch)
-    
+
     token = create_access_token(
         sub="auth0|wrongaud",
         iss="https://dev.login.aai.test.biocommons.org.au/",
         aud="https://wrong.audience.com",
     )
-    
+
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
-    
+
     with pytest.raises(HTTPException) as exc:
         validator.verify_access_token_sub(token.access_token_str)
-    
+
     assert exc.value.status_code == 401
 
 
 def test_verify_access_token_sub_wrong_issuer(monkeypatch: pytest.MonkeyPatch, mocker):
     """Test JWT validation fails with wrong issuer."""
     _set_required_env(monkeypatch)
-    
+
     token = create_access_token(
         sub="auth0|wrongiss",
         iss="https://evil.issuer.com/",
         aud="https://api.example.test",
     )
-    
+
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
-    
+
     with pytest.raises(HTTPException) as exc:
         validator.verify_access_token_sub(token.access_token_str)
-    
+
     assert exc.value.status_code == 401
 
 
@@ -301,20 +300,20 @@ def test_verify_access_token_sub_missing_signing_key(monkeypatch: pytest.MonkeyP
 def test_verify_access_token_sub_invalid_payload(monkeypatch: pytest.MonkeyPatch, mocker):
     """Test JWT validation fails when signature is invalid."""
     _set_required_env(monkeypatch)
-    
+
     token = create_access_token(
         sub="auth0|test",
         iss="https://dev.login.aai.test.biocommons.org.au/",
         aud="https://api.example.test",
     )
-    
+
     # Create a different public key to cause signature verification failure
     _, different_key = generate_public_private_key_pair()
     mocker.patch("app.auth.validator._get_rsa_key", return_value=different_key.public_key())
-    
+
     with pytest.raises(HTTPException) as exc:
         validator.verify_access_token_sub(token.access_token_str)
-    
+
     assert exc.value.status_code == 401
 
 
@@ -330,38 +329,38 @@ def test_verify_access_token_sub_invalid_subject(
 ):
     """Test JWT validation fails when subject claim is invalid or missing."""
     _set_required_env(monkeypatch)
-    
+
     # Create a token with valid structure but invalid sub claim
     public_key, private_key = generate_public_private_key_pair()
-    
+
     from cryptography.hazmat.primitives import serialization
     pem_private_key = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    
+
     payload = {
         "iss": "https://dev.login.aai.test.biocommons.org.au/",
         "aud": "https://api.example.test",
         "iat": int(datetime.now().timestamp()),
         "exp": int((datetime.now() + timedelta(hours=1)).timestamp()),
     }
-    
+
     if sub_value is not None:
         payload["sub"] = sub_value
-    
+
     token_str = jwt.encode(
         payload,
         key=pem_private_key,
         algorithm="RS256",
         headers={"kid": "test-key-id"},
     )
-    
+
     mocker.patch("app.auth.validator._get_rsa_key", return_value=public_key)
-    
+
     with pytest.raises(HTTPException) as exc:
         validator.verify_access_token_sub(token_str)
-    
+
     assert exc.value.status_code == 401
     assert "subject" in str(exc.value.detail).lower()
