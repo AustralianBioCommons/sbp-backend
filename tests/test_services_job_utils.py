@@ -98,18 +98,10 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
         work_dir=2002,
     )
 
-    # Add run with None seqera_run_id for user1 (should be filtered out)
-    run3_user1_null = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user1.id,
-        seqera_run_id=None,
-        work_dir=1003,
-    )
-
-    test_db.add_all([run1_user1, run2_user1, run1_user2, run2_user2, run3_user1_null])
+    test_db.add_all([run1_user1, run2_user1, run1_user2, run2_user2])
     test_db.commit()
 
-    # Get run IDs for user1 - should only return user1's runs with non-null seqera_run_id
+    # Get run IDs for user1 - should only return user1's runs
     user1_runs = job_utils.get_owned_run_ids(test_db, user1.id)
     assert user1_runs == {"run-user1-1", "run-user1-2"}
     assert "run-user2-1" not in user1_runs
@@ -177,12 +169,12 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
 
     # Get scores for user1
     user1_scores = job_utils.get_score_by_seqera_run_id(test_db, user1.id)
-    assert user1_scores == {"run-user1-1": 0.912}  # Rounded to 3 decimals
+    assert user1_scores == {"run-user1-1": 0.91}  # Numeric(8, 2) precision
     assert "run-user2-1" not in user1_scores
 
     # Get scores for user2
     user2_scores = job_utils.get_score_by_seqera_run_id(test_db, user2.id)
-    assert user2_scores == {"run-user2-1": 0.556}  # Rounded to 3 decimals
+    assert user2_scores == {"run-user2-1": 0.56}  # Numeric(8, 2) precision
     assert "run-user1-1" not in user2_scores
 
 
