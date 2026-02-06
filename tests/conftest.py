@@ -18,7 +18,13 @@ os.environ["WORK_SPACE"] = "test_workspace_id"
 os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
+# Use in-memory SQLite for faster tests
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db import Base
 from app.main import create_app
 from app.schemas.workflows import (
     LaunchDetails,
@@ -81,6 +87,33 @@ class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
 
     __model__ = LaunchDetails
     __check_model__ = False
+
+
+# ============================================================================
+# Database Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def test_engine():
+    """Create a test database engine using SQLite in-memory."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+@pytest.fixture
+def test_db(test_engine) -> Generator[Session, None, None]:
+    """Create a test database session."""
+    TestSessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
+    session = TestSessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
 
 
 # ============================================================================
