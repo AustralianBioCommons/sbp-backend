@@ -57,7 +57,7 @@ def test_workflow_router_included(app: FastAPI):
     route_paths = [route.path for route in app.routes]
 
     assert "/api/workflows/launch" in route_paths
-    assert "/api/workflows/runs" in route_paths
+    assert "/api/workflows/jobs" in route_paths
 
 
 def test_exception_handler(client: TestClient):

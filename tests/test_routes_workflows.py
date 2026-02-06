@@ -114,62 +114,10 @@ def test_launch_invalid_payload(client: TestClient):
     assert response.status_code == 422  # Validation error
 
 
-def test_cancel_workflow_success(client: TestClient):
-    """Test successful workflow cancellation."""
+def test_cancel_workflow_endpoint_removed(client: TestClient):
+    """Cancel endpoint is intentionally removed from jobs API."""
     response = client.post("/api/workflows/run_123/cancel")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["runId"] == "run_123"
-    assert data["status"] == "cancelled"
-    assert "message" in data
-
-
-def test_list_runs_default_params(client: TestClient):
-    """Test listing runs with default parameters."""
-    response = client.get("/api/workflows/runs")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "runs" in data
-    assert data["limit"] == 50
-    assert data["offset"] == 0
-    assert data["total"] == 0
-
-
-def test_list_runs_with_filters(client: TestClient):
-    """Test listing runs with filter parameters."""
-    response = client.get(
-        "/api/workflows/runs",
-        params={
-            "status": "running",
-            "workspace": "test_ws",
-            "limit": 10,
-            "offset": 5,
-        },
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["limit"] == 10
-    assert data["offset"] == 5
-
-
-def test_list_runs_limit_validation(client: TestClient):
-    """Test that limit must be between 1 and 200."""
-    # Test limit too high
-    response = client.get("/api/workflows/runs", params={"limit": 300})
-    assert response.status_code == 422
-
-    # Test limit too low
-    response = client.get("/api/workflows/runs", params={"limit": 0})
-    assert response.status_code == 422
-
-
-def test_list_runs_offset_validation(client: TestClient):
-    """Test that offset must be non-negative."""
-    response = client.get("/api/workflows/runs", params={"offset": -1})
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 def test_get_logs_success(client: TestClient):

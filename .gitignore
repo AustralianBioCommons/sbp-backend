@@ -39,3 +39,6 @@ logs/
 # UV
 # Note: uv.lock is tracked for reproducibility
 # .python-version is tracked if using specific Python version
+
+# Database
+db/sample_seed.sql
