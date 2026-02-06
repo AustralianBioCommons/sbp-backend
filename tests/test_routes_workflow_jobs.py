@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -10,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.db.models.core import AppUser, Workflow, WorkflowRun
+from app.db.models.core import Workflow, WorkflowRun
 from app.main import create_app
 from app.routes.workflow.jobs import get_job_details, list_jobs
 
