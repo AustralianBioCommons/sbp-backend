@@ -334,6 +334,7 @@ def test_verify_access_token_sub_invalid_subject(
     public_key, private_key = generate_public_private_key_pair()
 
     from cryptography.hazmat.primitives import serialization
+
     pem_private_key = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
