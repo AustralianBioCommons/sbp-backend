@@ -31,7 +31,8 @@ from app.schemas.workflows import (
 )
 
 # ============================================================================
-# Auto-generate test data from Pydantic schemas # ============================================================================
+# Auto-generate test data from Pydantic schemas
+# ============================================================================
 
 
 class WorkflowLaunchFormFactory(ModelFactory[WorkflowLaunchForm]):
@@ -81,6 +82,39 @@ class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
 
     __model__ = LaunchDetails
     __check_model__ = False
+
+
+# ============================================================================
+# Database Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def test_engine():
+    """Create a test database engine using SQLite in-memory."""
+    from sqlalchemy import create_engine
+
+    from app.db import Base
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+@pytest.fixture
+def test_db(test_engine) -> Generator:
+    """Create a test database session."""
+    from sqlalchemy.orm import sessionmaker
+
+    test_session_local = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
+    session = test_session_local()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
 
 
 # ============================================================================
