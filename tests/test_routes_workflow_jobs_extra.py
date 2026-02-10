@@ -67,7 +67,6 @@ async def test_get_job_details_success(test_db):
         workflow_id=workflow.id,
         seqera_run_id="wf-1",
         work_dir="workdir-1",
-        status="CREATED",
     )
     test_db.add_all([user, workflow, run])
     test_db.commit()
@@ -113,7 +112,6 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
         owner_user_id=user.id,
         seqera_run_id="wf-1",
         work_dir="workdir-1",
-        status="CREATED",
     )
     s3_in = S3Object(object_key="in-1", uri="s3://bucket/in-1")
     s3_out = S3Object(object_key="out-1", uri="s3://bucket/out-1")

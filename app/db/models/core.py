@@ -44,7 +44,6 @@ class WorkflowRun(Base):
     seqera_run_id: Mapped[str] = mapped_column(Text, nullable=False)
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")

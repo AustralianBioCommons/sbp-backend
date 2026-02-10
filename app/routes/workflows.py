@@ -81,7 +81,6 @@ async def launch_workflow(
         seqera_run_id=result.workflow_id,
         run_name=run_name,
         work_dir=run_work_dir,
-        status="QUEUED",
     )
 
     db.add(workflow_run)
