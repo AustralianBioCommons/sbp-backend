@@ -13,7 +13,7 @@ from app.services.bindflow_executor import (
     BindflowExecutorError,
     BindflowLaunchResult,
 )
-from app.services.seqera import SeqeraAPIError
+from app.services.seqera_errors import SeqeraAPIError
 
 
 @patch("app.routes.workflows.get_owned_run_ids")
