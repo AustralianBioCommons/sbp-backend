@@ -66,18 +66,17 @@ async def describe_workflow_raw(
 
 async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
     api_url, token, params = _get_api_context(workspace_id)
-    candidate_paths = [
-        f"{api_url}/workflow/{workflow_id}/cancel",
-        f"{api_url}/workflow/{workflow_id}/kill",
-    ]
+    url = f"{api_url}/workflow/{workflow_id}/cancel"
+    payload: dict[str, Any] = {}
+    headers = _headers(token)
+    headers["Content-Type"] = "application/json"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
-        last_error = None
-        for url in candidate_paths:
-            response = await client.post(url, headers=_headers(token), params=params)
-            if not response.is_error:
-                return
-            last_error = f"{response.status_code} {response.text}"
-    raise SeqeraAPIError(f"Failed to cancel workflow {workflow_id}: {last_error}")
+        response = await client.post(url, headers=headers, params=params, json=payload)
+
+    if response.is_error:
+        raise SeqeraAPIError(
+            f"Failed to cancel workflow {workflow_id}: {response.status_code} {response.text}"
+        )
 
 
 async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
@@ -91,4 +90,17 @@ async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None)
     if response.is_error:
         raise SeqeraAPIError(
             f"Failed to delete workflow {workflow_id}: {response.status_code} {response.text}"
+        )
+
+
+async def delete_workflows_raw(workflow_ids: list[str], workspace_id: str | None = None) -> None:
+    api_url, token, params = _get_api_context(workspace_id)
+    url = f"{api_url}/workflow/delete"
+    payload = {"workflowIds": workflow_ids}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
+        response = await client.post(url, headers=_headers(token), params=params, json=payload)
+
+    if response.is_error:
+        raise SeqeraAPIError(
+            f"Failed to delete workflows {workflow_ids}: {response.status_code} {response.text}"
         )

@@ -137,7 +137,7 @@ def test_upload_pdb_file_no_filename(client):
     # The empty filename fails before reaching our validation
     assert response.status_code in [
         status.HTTP_400_BAD_REQUEST,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
     ]
 
 

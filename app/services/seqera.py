@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-# Re-export for backward compatibility with tests
+from .seqera_client import cancel_workflow_raw, delete_workflow_raw, delete_workflows_raw
 
 logger = logging.getLogger(__name__)
 
@@ -108,3 +108,18 @@ async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -
 
     result: dict[str, Any] = response.json()
     return result
+
+
+async def cancel_seqera_workflow(workflow_id: str, workspace_id: str | None = None) -> None:
+    """Cancel a Seqera workflow run."""
+    await cancel_workflow_raw(workflow_id, workspace_id=workspace_id)
+
+
+async def delete_seqera_workflow(workflow_id: str, workspace_id: str | None = None) -> None:
+    """Delete a Seqera workflow run."""
+    await delete_workflow_raw(workflow_id, workspace_id=workspace_id)
+
+
+async def delete_seqera_workflows(workflow_ids: list[str], workspace_id: str | None = None) -> None:
+    """Delete multiple Seqera workflow runs."""
+    await delete_workflows_raw(workflow_ids, workspace_id=workspace_id)
