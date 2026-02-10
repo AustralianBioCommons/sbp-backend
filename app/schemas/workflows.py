@@ -212,3 +212,25 @@ class JobDetailsResponse(BaseModel):
     status: str = Field(..., description="UI-friendly status")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
+
+
+class DeleteJobResponse(BaseModel):
+    """Response for single job deletion."""
+
+    runId: str
+    deleted: bool
+    cancelledBeforeDelete: bool = False
+    message: str
+
+
+class BulkDeleteJobsRequest(BaseModel):
+    """Request payload for bulk job deletion."""
+
+    runIds: list[str] = Field(..., min_length=1)
+
+
+class BulkDeleteJobsResponse(BaseModel):
+    """Response for bulk job deletion."""
+
+    deleted: list[str] = Field(default_factory=list)
+    failed: dict[str, str] = Field(default_factory=dict)

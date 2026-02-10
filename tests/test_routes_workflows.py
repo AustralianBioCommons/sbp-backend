@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.services.bindflow_executor import (
@@ -11,6 +13,86 @@ from app.services.bindflow_executor import (
     BindflowExecutorError,
     BindflowLaunchResult,
 )
+from app.services.seqera_errors import SeqeraAPIError
+
+
+@patch("app.routes.workflows.get_owned_run_ids")
+@patch("app.routes.workflows.get_score_by_seqera_run_id")
+@patch("app.routes.workflows.get_workflow_type_by_seqera_run_id")
+@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
+@patch("app.routes.workflows.get_owned_run")
+@patch("app.routes.workflows.ensure_completed_run_score", new_callable=AsyncMock)
+async def test_list_jobs_success(
+    mock_ensure_score,
+    mock_get_owned_run,
+    mock_describe,
+    mock_types,
+    mock_scores,
+    mock_owned_ids,
+):
+    """Test job listing via workflows router."""
+    run_id = "wf-111"
+    mock_owned_ids.return_value = [run_id]
+    mock_scores.return_value = {}
+    mock_types.return_value = {run_id: "BindCraft"}
+    mock_describe.return_value = {
+        "workflow": {
+            "id": run_id,
+            "runName": "Test Job",
+            "status": "SUCCEEDED",
+            "submit": "2026-02-01T10:00:00Z",
+        }
+    }
+    mock_get_owned_run.return_value = object()
+    mock_ensure_score.return_value = 0.42
+
+    from app.routes.workflows import list_jobs
+
+    response = await list_jobs(
+        search=None,
+        status_filter=None,
+        limit=50,
+        offset=0,
+        current_user_id="user",
+        db=object(),
+    )
+
+    assert response.total == 1
+    assert response.jobs[0].id == run_id
+    assert response.jobs[0].score == 0.42
+
+
+@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
+async def test_list_jobs_seqera_error_maps_502(mock_describe):
+    """Test Seqera API error maps to HTTP 502."""
+    mock_describe.side_effect = SeqeraAPIError("boom")
+
+    from app.routes.workflows import list_jobs
+
+    with patch("app.routes.workflows.get_owned_run_ids", return_value=["wf-1"]), patch(
+        "app.routes.workflows.get_score_by_seqera_run_id", return_value={}
+    ), patch("app.routes.workflows.get_workflow_type_by_seqera_run_id", return_value={}):
+        with pytest.raises(HTTPException) as exc:
+            await list_jobs(
+                search=None,
+                status_filter=None,
+                limit=50,
+                offset=0,
+                current_user_id="user",
+                db=object(),
+            )
+    assert exc.value.status_code == 502
+
+
+def test_list_runs_placeholder(client: TestClient):
+    """Test list runs placeholder endpoint."""
+    response = client.get("/api/workflows/runs?limit=10&offset=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["runs"] == []
+    assert data["limit"] == 10
+    assert data["offset"] == 5
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")

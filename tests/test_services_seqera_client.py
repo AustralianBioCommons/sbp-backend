@@ -10,6 +10,7 @@ import pytest
 from app.services.seqera_client import (
     cancel_workflow_raw,
     delete_workflow_raw,
+    delete_workflows_raw,
     describe_workflow_raw,
     list_workflows_raw,
 )
@@ -42,16 +43,12 @@ async def test_cancel_and_delete_paths(monkeypatch):
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
 
-    err = AsyncMock(spec=httpx.Response)
-    err.is_error = True
-    err.status_code = 500
-    err.text = "no"
-
     ok = AsyncMock(spec=httpx.Response)
     ok.is_error = False
 
-    with patch("httpx.AsyncClient.post", side_effect=[err, ok]):
+    with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
         await cancel_workflow_raw("wf-1")
+        assert mock_post.call_count == 1
 
     not_found = AsyncMock(spec=httpx.Response)
     not_found.status_code = 404
@@ -60,6 +57,12 @@ async def test_cancel_and_delete_paths(monkeypatch):
 
     with patch("httpx.AsyncClient.delete", return_value=not_found):
         await delete_workflow_raw("wf-1")
+
+    ok_post = AsyncMock(spec=httpx.Response)
+    ok_post.is_error = False
+
+    with patch("httpx.AsyncClient.post", return_value=ok_post):
+        await delete_workflows_raw(["wf-1", "wf-2"])
 
 
 @pytest.mark.asyncio
@@ -79,3 +82,7 @@ async def test_cancel_and_delete_errors(monkeypatch):
     with patch("httpx.AsyncClient.delete", return_value=err):
         with pytest.raises(SeqeraAPIError):
             await delete_workflow_raw("wf-1")
+
+    with patch("httpx.AsyncClient.post", return_value=err):
+        with pytest.raises(SeqeraAPIError):
+            await delete_workflows_raw(["wf-1"])

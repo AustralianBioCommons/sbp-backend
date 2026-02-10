@@ -8,17 +8,9 @@ from typing import Any
 
 import httpx
 
-# Re-export for backward compatibility with tests
+from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
-
-
-class SeqeraConfigurationError(RuntimeError):
-    """Raised when required Seqera configuration is missing."""
-
-
-class SeqeraAPIError(RuntimeError):
-    """Raised when Seqera API calls fail."""
 
 
 def _get_required_env(key: str) -> str:

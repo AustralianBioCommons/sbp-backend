@@ -41,11 +41,8 @@ from ..services.job_utils import (
     get_workflow_type_by_seqera_run_id,
     parse_submit_datetime,
 )
-from ..services.seqera import (
-    SeqeraAPIError,
-    SeqeraConfigurationError,
-    describe_workflow,
-)
+from ..services.seqera import describe_workflow
+from ..services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
