@@ -203,7 +203,7 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
     """Test handling of Seqera configuration error."""
-    from app.services.seqera import SeqeraConfigurationError
+    from app.services.seqera_errors import SeqeraConfigurationError
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
@@ -232,7 +232,7 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
     """Test handling of Seqera API error."""
-    from app.services.seqera import SeqeraAPIError
+    from app.services.seqera_errors import SeqeraAPIError
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
@@ -347,7 +347,7 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
 @pytest.mark.asyncio
 async def test_get_job_details_seqera_error(mock_db, mock_user_id, mocker):
     """Test handling of Seqera API error in job details."""
-    from app.services.seqera import SeqeraAPIError
+    from app.services.seqera_errors import SeqeraAPIError
 
     owned_run = mocker.Mock()
 

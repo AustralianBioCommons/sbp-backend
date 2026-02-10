@@ -30,14 +30,9 @@ from ...services.job_utils import (
     get_workflow_type_by_seqera_run_id,
     parse_submit_datetime,
 )
-from ...services.seqera import (
-    SeqeraAPIError,
-    SeqeraConfigurationError,
-    cancel_seqera_workflow,
-    delete_seqera_workflow,
-    delete_seqera_workflows,
-    describe_workflow,
-)
+from ...services.seqera import describe_workflow
+from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, delete_workflows_raw
+from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
 router = APIRouter()
@@ -55,7 +50,7 @@ async def cancel_workflow(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     try:
-        await cancel_seqera_workflow(run_id)
+        await cancel_workflow_raw(run_id)
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -199,10 +194,10 @@ async def delete_job(
         payload = await describe_workflow(run_id)
         pipeline_status = extract_pipeline_status(payload)
         if pipeline_status in {"SUBMITTED", "RUNNING"}:
-            await cancel_seqera_workflow(run_id)
+            await cancel_workflow_raw(run_id)
             cancelled = True
 
-        await delete_seqera_workflow(run_id)
+        await delete_workflow_raw(run_id)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -244,16 +239,15 @@ async def bulk_delete_jobs(
         try:
             details = await describe_workflow(run_id)
             if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
-                await cancel_seqera_workflow(run_id)
+                await cancel_workflow_raw(run_id)
             to_delete.append((run_id, owned_run))
         except (SeqeraConfigurationError, SeqeraAPIError) as exc:
-            db.rollback()
             failed[run_id] = str(exc)
 
     if to_delete:
         run_ids = [run_id for run_id, _ in to_delete]
         try:
-            await delete_seqera_workflows(run_ids)
+            await delete_workflows_raw(run_ids)
         except (SeqeraConfigurationError, SeqeraAPIError) as exc:
             for run_id in run_ids:
                 failed[run_id] = str(exc)
