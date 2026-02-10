@@ -45,7 +45,7 @@ FastAPI backend for handling Seqera Platform workflow launches.
 ## API Endpoints
 
 - `GET /health` — Lightweight health probe
-- `POST /api/workflows/launch` — Launch a Seqera workflow (send the same payload previously expected by the Express server)
+- `POST /api/workflows/launch` — Launch a Seqera workflow (requires `Authorization: Bearer <access_token>`)
 - `GET /api/workflows/jobs` — List jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `GET /api/workflows/jobs/{run_id}` — Get one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `POST /api/workflows/{run_id}/cancel` — Cancel a workflow run (requires `Authorization: Bearer <access_token>`)

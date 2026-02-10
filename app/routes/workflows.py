@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from ..db.models.core import WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -25,6 +26,7 @@ from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
     BindflowLaunchResult,
+    _get_required_env,
     launch_bindflow_workflow,
 )
 from ..services.datasets import (
@@ -52,8 +54,13 @@ router = APIRouter(tags=["workflows"])
 
 
 @router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
-async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchResponse:
+async def launch_workflow(
+    payload: WorkflowLaunchPayload,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
+    run_name = payload.launch.runName
     try:
         dataset_id = payload.datasetId
 
@@ -65,6 +72,23 @@ async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchRespo
         ) from exc
     except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
+    run_id = uuid4()
+    run_work_dir = f"{base_work_dir}/{run_id}"
+    workflow_run = WorkflowRun(
+        id=run_id,
+        workflow_id=None,
+        owner_user_id=current_user_id,
+        seqera_dataset_id=payload.datasetId,
+        seqera_run_id=result.workflow_id,
+        run_name=run_name,
+        work_dir=run_work_dir,
+        status="QUEUED",
+    )
+
+    db.add(workflow_run)
+    db.commit()
 
     return WorkflowLaunchResponse(
         message="Workflow launched successfully",
