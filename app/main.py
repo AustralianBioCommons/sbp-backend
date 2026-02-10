@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     from .db.admin import mount_db_admin
     from .routes.pdb_upload import router as pdb_router
+    from .routes.results import router as results_router
     from .routes.s3_files import router as s3_router
     from .routes.workflow.jobs import router as workflow_jobs_router
     from .routes.workflows import router as workflow_router
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
 
     app.include_router(workflow_router, prefix="/api/workflows")
     app.include_router(workflow_jobs_router, prefix="/api/jobs")
+    app.include_router(results_router, prefix="/api/results")
     app.include_router(pdb_router, prefix="/api/workflows/pdb")
     app.include_router(s3_router)
     mount_db_admin(app)

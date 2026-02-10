@@ -115,6 +115,7 @@ def test_workflow_run_model():
     assert "binder_name" in column_names
     assert "sample_id" in column_names
     assert "run_name" in column_names
+    assert "submitted_form_data" in column_names
     assert "work_dir" in column_names
 
     # Check relationships
