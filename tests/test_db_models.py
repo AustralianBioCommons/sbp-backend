@@ -113,7 +113,6 @@ def test_workflow_run_model():
     assert "seqera_run_id" in column_names
     assert "run_name" in column_names
     assert "work_dir" in column_names
-    assert "status" in column_names
 
     # Check relationships
     assert hasattr(WorkflowRun, "owner")
@@ -251,7 +250,6 @@ def test_model_type_annotations():
     # WorkflowRun
     assert "seqera_run_id" in WorkflowRun.__annotations__
     assert "work_dir" in WorkflowRun.__annotations__
-    assert "status" in WorkflowRun.__annotations__
 
     # S3Object
     assert "object_key" in S3Object.__annotations__
