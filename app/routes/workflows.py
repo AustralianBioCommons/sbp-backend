@@ -50,6 +50,14 @@ from .dependencies import get_current_user_id, get_db
 router = APIRouter(tags=["workflows"])
 
 
+@router.post("/me/sync")
+async def sync_current_user(
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> dict[str, str]:
+    """Ensure authenticated user exists in app_users and return user id."""
+    return {"message": "User synced", "userId": str(current_user_id)}
+
+
 @router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
 async def launch_workflow(
     payload: WorkflowLaunchPayload,

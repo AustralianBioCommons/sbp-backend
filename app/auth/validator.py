@@ -82,6 +82,12 @@ def _get_rsa_key(
 
 def verify_access_token_sub(token: str) -> str:
     """Verify Auth0 JWT and return subject claim used as app_users.auth0_user_id."""
+    payload = verify_access_token_claims(token)
+    return cast(str, payload["sub"])
+
+
+def verify_access_token_claims(token: str) -> dict[str, Any]:
+    """Verify Auth0 JWT and return decoded claims payload."""
     settings = _get_auth0_settings()
     try:
         rsa_key = _get_rsa_key(token, settings=settings)
@@ -121,4 +127,24 @@ def verify_access_token_sub(token: str) -> str:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token: missing subject claim",
         )
-    return subject
+    return payload
+
+
+def fetch_userinfo_claims(token: str) -> dict[str, Any]:
+    """Fetch Auth0 /userinfo claims for the provided access token."""
+    settings = _get_auth0_settings()
+    userinfo_url = f"https://{settings.domain}/userinfo"
+    try:
+        response = httpx.get(
+            userinfo_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return {}
+
+    payload = response.json()
+    if isinstance(payload, dict):
+        return cast(dict[str, Any], payload)
+    return {}
