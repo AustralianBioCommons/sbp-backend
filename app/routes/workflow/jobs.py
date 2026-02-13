@@ -35,7 +35,7 @@ from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, 
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
-router = APIRouter()
+router = APIRouter(tags=["jobs"])
 
 
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
@@ -61,7 +61,7 @@ async def cancel_workflow(
     )
 
 
-@router.get("/jobs", response_model=JobListResponse)
+@router.get("", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name or workflow type"),
     status_filter: list[str]
@@ -139,7 +139,7 @@ async def list_jobs(
         ) from exc
 
 
-@router.get("/jobs/{run_id}", response_model=JobDetailsResponse)
+@router.get("/{run_id}", response_model=JobDetailsResponse)
 async def get_job_details(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
@@ -178,7 +178,7 @@ async def get_job_details(
     )
 
 
-@router.delete("/jobs/{run_id}", response_model=DeleteJobResponse)
+@router.delete("/{run_id}", response_model=DeleteJobResponse)
 async def delete_job(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
@@ -219,7 +219,7 @@ async def delete_job(
     )
 
 
-@router.post("/jobs/bulk-delete", response_model=BulkDeleteJobsResponse)
+@router.post("/bulk-delete", response_model=BulkDeleteJobsResponse)
 async def bulk_delete_jobs(
     payload: BulkDeleteJobsRequest,
     current_user_id: UUID = Depends(get_current_user_id),

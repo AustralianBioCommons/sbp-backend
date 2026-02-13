@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from typing import cast
-from uuid import UUID
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
