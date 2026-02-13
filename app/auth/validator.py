@@ -108,7 +108,7 @@ def verify_access_token_claims(token: str) -> dict[str, Any]:
         issuers.append(settings.issuer)
 
     try:
-        payload = jwt.decode(
+        decoded = jwt.decode(
             token,
             rsa_key,
             algorithms=list(settings.algorithms),
@@ -120,6 +120,13 @@ def verify_access_token_claims(token: str) -> dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {exc}",
         ) from exc
+
+    if not isinstance(decoded, dict):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: malformed payload",
+        )
+    payload = cast(dict[str, Any], decoded)
 
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject.strip():
