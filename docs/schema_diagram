@@ -63,7 +63,7 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">work_dir</TD>
-                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR></TABLE>> URL="http://WorkflowRun_details.html"]
 	WorkflowRun -> AppUser [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
 	WorkflowRun -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]

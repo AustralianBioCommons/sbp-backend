@@ -16,12 +16,12 @@ from app.services.bindflow_executor import (
 from app.services.seqera_errors import SeqeraAPIError
 
 
-@patch("app.routes.workflows.get_owned_run_ids")
-@patch("app.routes.workflows.get_score_by_seqera_run_id")
-@patch("app.routes.workflows.get_workflow_type_by_seqera_run_id")
-@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
-@patch("app.routes.workflows.get_owned_run")
-@patch("app.routes.workflows.ensure_completed_run_score", new_callable=AsyncMock)
+@patch("app.routes.workflow.jobs.get_owned_run_ids")
+@patch("app.routes.workflow.jobs.get_score_by_seqera_run_id")
+@patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id")
+@patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock)
+@patch("app.routes.workflow.jobs.get_owned_run")
+@patch("app.routes.workflow.jobs.ensure_completed_run_score", new_callable=AsyncMock)
 async def test_list_jobs_success(
     mock_ensure_score,
     mock_get_owned_run,
@@ -46,7 +46,7 @@ async def test_list_jobs_success(
     mock_get_owned_run.return_value = object()
     mock_ensure_score.return_value = 0.42
 
-    from app.routes.workflows import list_jobs
+    from app.routes.workflow.jobs import list_jobs
 
     response = await list_jobs(
         search=None,
@@ -62,16 +62,16 @@ async def test_list_jobs_success(
     assert response.jobs[0].score == 0.42
 
 
-@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
+@patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock)
 async def test_list_jobs_seqera_error_maps_502(mock_describe):
     """Test Seqera API error maps to HTTP 502."""
     mock_describe.side_effect = SeqeraAPIError("boom")
 
-    from app.routes.workflows import list_jobs
+    from app.routes.workflow.jobs import list_jobs
 
-    with patch("app.routes.workflows.get_owned_run_ids", return_value=["wf-1"]), patch(
-        "app.routes.workflows.get_score_by_seqera_run_id", return_value={}
-    ), patch("app.routes.workflows.get_workflow_type_by_seqera_run_id", return_value={}):
+    with patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]), patch(
+        "app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}
+    ), patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}):
         with pytest.raises(HTTPException) as exc:
             await list_jobs(
                 search=None,

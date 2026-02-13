@@ -45,12 +45,12 @@ FastAPI backend for handling Seqera Platform workflow launches.
 ## API Endpoints
 
 - `GET /health` — Lightweight health probe
-- `POST /api/workflows/launch` — Launch a Seqera workflow (send the same payload previously expected by the Express server)
-- `GET /api/workflows/jobs` — List jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
-- `GET /api/workflows/jobs/{run_id}` — Get one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
-- `POST /api/workflows/{run_id}/cancel` — Cancel a workflow run (requires `Authorization: Bearer <access_token>`)
-- `DELETE /api/workflows/jobs/{run_id}` — Delete one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
-- `POST /api/workflows/jobs/bulk-delete` — Delete multiple jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
+- `POST /api/workflows/launch` — Launch a Seqera workflow (requires `Authorization: Bearer <access_token>`)
+- `GET /api/jobs` — List jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
+- `GET /api/jobs/{run_id}` — Get one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
+- `POST /api/jobs/{run_id}/cancel` — Cancel a workflow run (requires `Authorization: Bearer <access_token>`)
+- `DELETE /api/jobs/{run_id}` — Delete one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
+- `POST /api/jobs/bulk-delete` — Delete multiple jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `GET /api/workflows/{runId}/logs` — Placeholder log endpoint
 - `GET /api/workflows/{runId}/details` — Placeholder details endpoint
 - `POST /api/workflows/datasets/upload` — Create a Seqera dataset and upload submitted form data as a CSV

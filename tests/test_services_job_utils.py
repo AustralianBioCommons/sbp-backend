@@ -75,13 +75,13 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
         id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-1",
-        work_dir=1001,
+        work_dir="workdir-1001",
     )
     run2_user1 = WorkflowRun(
         id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-2",
-        work_dir=1002,
+        work_dir="workdir-1002",
     )
 
     # Create runs for user2
@@ -89,13 +89,13 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
         id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-1",
-        work_dir=2001,
+        work_dir="workdir-2001",
     )
     run2_user2 = WorkflowRun(
         id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-2",
-        work_dir=2002,
+        work_dir="workdir-2002",
     )
 
     test_db.add_all([run1_user1, run2_user1, run1_user2, run2_user2])
@@ -137,13 +137,13 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
         id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-1",
-        work_dir=1001,
+        work_dir="workdir-1001",
     )
     run2_user1 = WorkflowRun(
         id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-2",
-        work_dir=1002,
+        work_dir="workdir-1002",
     )
     test_db.add_all([run1_user1, run2_user1])
     test_db.commit()
@@ -158,7 +158,7 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
         id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-1",
-        work_dir=2001,
+        work_dir="workdir-2001",
     )
     test_db.add(run1_user2)
     test_db.commit()
@@ -216,7 +216,7 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
         owner_user_id=user1.id,
         workflow_id=workflow1.id,
         seqera_run_id="run-user1-1",
-        work_dir=1001,
+        work_dir="workdir-1001",
     )
     test_db.add(run1_user1)
 
@@ -226,7 +226,7 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
         owner_user_id=user2.id,
         workflow_id=workflow2.id,
         seqera_run_id="run-user2-1",
-        work_dir=2001,
+        work_dir="workdir-2001",
     )
     test_db.add(run1_user2)
     test_db.commit()
