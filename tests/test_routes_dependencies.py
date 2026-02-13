@@ -70,7 +70,9 @@ def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
 
 
 def test_get_current_user_id_success(mocker: MockerFixture):
-    mocker.patch("app.routes.dependencies.verify_access_token_claims", return_value={"sub": "auth0|x"})
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims", return_value={"sub": "auth0|x"}
+    )
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     user = SimpleNamespace(id="u-1", name="Existing User", email="existing@example.com")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")

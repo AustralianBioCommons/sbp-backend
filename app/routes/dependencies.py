@@ -36,7 +36,11 @@ def _extract_name_email_from_claims(
         if not (isinstance(email_claim, str) and email_claim.strip()):
             email_claim = userinfo.get("email")
 
-    name = str(name_claim).strip() if isinstance(name_claim, str) and name_claim.strip() else auth0_user_id
+    name = (
+        str(name_claim).strip()
+        if isinstance(name_claim, str) and name_claim.strip()
+        else auth0_user_id
+    )
     if isinstance(email_claim, str) and email_claim.strip():
         email = email_claim.strip().lower()
     else:
