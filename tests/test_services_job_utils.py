@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services import job_utils
 
 
@@ -271,3 +271,75 @@ async def test_ensure_completed_run_score_branches():
         side_effect=ValueError("bad"),
     ):
         assert await job_utils.ensure_completed_run_score(db_fail, run, "Completed") is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_uses_run_outputs_file_key(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|score-user",
+        name="Score User",
+        email="score-user@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="seqera-123",
+        work_dir="workdir-score-1",
+    )
+    output = S3Object(
+        object_key="run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
+        uri="s3://bucket/run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
+    )
+    run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
+    test_db.add_all([user, run, output, run_output])
+    test_db.commit()
+
+    with patch(
+        "app.services.job_utils.calculate_csv_column_max",
+        new_callable=AsyncMock,
+        return_value=0.88,
+    ) as mocked_max:
+        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
+
+    assert score == 0.88
+    mocked_max.assert_awaited_once_with(
+        file_key="run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
+        column_name="Average_i_pTM",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|sample-user",
+        name="Sample User",
+        email="sample-user@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="seqera-456",
+        work_dir="workdir-score-2",
+    )
+    output = S3Object(
+        object_key="Anne_test/ranker/Anne_test_final_design_stats.csv",
+        uri="s3://bucket/Anne_test/ranker/Anne_test_final_design_stats.csv",
+    )
+    run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
+    test_db.add_all([user, run, output, run_output])
+    test_db.commit()
+
+    with patch(
+        "app.services.job_utils.calculate_csv_column_max",
+        new_callable=AsyncMock,
+        return_value=0.91,
+    ) as mocked_max:
+        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
+
+    assert score == 0.91
+    mocked_max.assert_awaited_once_with(
+        file_key="Anne_test/ranker/Anne_test_final_design_stats.csv",
+        column_name="Average_i_pTM",
+    )

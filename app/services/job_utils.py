@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import RunMetric, Workflow, WorkflowRun
+from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from .s3 import S3ConfigurationError, S3ServiceError, calculate_csv_column_max
 
 
@@ -86,6 +86,47 @@ def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, 
     return {seqera_run_id: workflow_name for seqera_run_id, workflow_name in rows if workflow_name}
 
 
+def _s3_uri_to_key(uri: str | None) -> str | None:
+    if not uri:
+        return None
+    value = uri.strip()
+    if not value:
+        return None
+    if not value.startswith("s3://"):
+        return value
+    # s3://bucket/key -> key
+    parts = value.split("/", 3)
+    if len(parts) < 4:
+        return None
+    return parts[3].strip() or None
+
+
+def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
+    candidates: list[str] = []
+    rows = db.execute(
+        select(S3Object.object_key, S3Object.uri)
+        .join(RunOutput, RunOutput.s3_object_id == S3Object.object_key)
+        .where(RunOutput.run_id == run.id)
+    ).all()
+
+    for object_key, uri in rows:
+        for key in (object_key, _s3_uri_to_key(uri)):
+            if not key:
+                continue
+            if (
+                key.endswith("/ranker/s1_final_design_stats.csv")
+                or key.endswith("s1_final_design_stats.csv")
+                or key.endswith("_final_design_stats.csv")
+            ):
+                if key not in candidates:
+                    candidates.append(key)
+
+    fallback = f"results/{run.seqera_run_id}/ranker/s1_final_design_stats.csv"
+    if fallback not in candidates:
+        candidates.append(fallback)
+    return candidates
+
+
 async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
     if ui_status != "Completed":
         return None
@@ -94,10 +135,14 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
     if existing and existing.max_score is not None:
         return _round_score(existing.max_score)
 
-    file_key = f"results/{run.seqera_run_id}/ranker/s1_final_design_stats.csv"
-    try:
-        max_score = await calculate_csv_column_max(file_key=file_key, column_name="Average_i_pTM")
-    except (S3ConfigurationError, S3ServiceError, ValueError):
+    max_score: float | None = None
+    for file_key in _build_score_file_candidates(db, run):
+        try:
+            max_score = await calculate_csv_column_max(file_key=file_key, column_name="Average_i_pTM")
+            break
+        except (S3ConfigurationError, S3ServiceError, ValueError):
+            continue
+    if max_score is None:
         return None
 
     bounded_score = max(0.0, min(1.0, float(max_score)))
