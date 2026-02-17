@@ -139,9 +139,7 @@ def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: Mock
     user_id = get_current_user_id(credentials, test_db)
 
     assert user_id == existing_id
-    assert (
-        test_db.query(AppUser).filter(AppUser.auth0_user_id == "auth0|db-existing").count() == 1
-    )
+    assert test_db.query(AppUser).filter(AppUser.auth0_user_id == "auth0|db-existing").count() == 1
 
 
 def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker: MockerFixture):
