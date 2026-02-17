@@ -42,7 +42,11 @@ def _get_required_env(key: str) -> str:
 
 
 async def launch_bindflow_workflow(
-    form: WorkflowLaunchForm, dataset_id: str | None = None
+    form: WorkflowLaunchForm,
+    dataset_id: str,
+    *,
+    pipeline: str,
+    revision: str | None = None,
 ) -> BindflowLaunchResult:
     """Launch a bindflow workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -71,19 +75,19 @@ async def launch_bindflow_workflow(
     if form.paramsText and form.paramsText.strip():
         params_text = f"{params_text}\n{form.paramsText.rstrip()}"
 
-    # Add dataset input URL if dataset_id is provided
-    if dataset_id:
-        dataset_url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-        params_text = f"{params_text}\ninput: {dataset_url}"
+    dataset_url = (
+        f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
+    )
+    params_text = f"{params_text}\ninput: {dataset_url}"
 
     launch_payload: dict[str, Any] = {
         "launch": {
             "computeEnvId": compute_env_id,
             "runName": run_name,
-            "pipeline": form.pipeline,
+            "pipeline": pipeline,
             "workDir": work_dir,
             "workspaceId": workspace_id,
-            "revision": form.revision or "dev",
+            "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_bindflow_config_profiles(),
             "preRunScript": get_bindflow_executor_script(
@@ -93,8 +97,7 @@ async def launch_bindflow_workflow(
         }
     }
 
-    if dataset_id:
-        launch_payload["launch"]["datasetIds"] = [dataset_id]
+    launch_payload["launch"]["datasetIds"] = [dataset_id]
 
     url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
 

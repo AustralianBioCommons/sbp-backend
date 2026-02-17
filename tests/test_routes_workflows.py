@@ -106,8 +106,10 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
+            "tool": "BindCraft",
             "runName": "test-run",
-        }
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -118,8 +120,9 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
     assert data["status"] == "submitted"
     assert "submitTime" in data
     launch_form_arg = mock_launch.call_args[0][0]
-    assert launch_form_arg.pipeline == "https://github.com/test/repo"
-    assert launch_form_arg.revision == "dev"
+    assert launch_form_arg.tool == "BindCraft"
+    assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
+    assert mock_launch.call_args.kwargs["revision"] == "dev"
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -133,6 +136,7 @@ async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
+            "tool": "BindCraft",
             "runName": "test-with-data",
         },
         "datasetId": "dataset_456",  # Use existing dataset
@@ -157,8 +161,10 @@ async def test_launch_configuration_error(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
+            "tool": "BindCraft",
             "runName": "test-run",
-        }
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -174,8 +180,10 @@ async def test_launch_service_error(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
+            "tool": "BindCraft",
             "runName": "test-run",
-        }
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -200,6 +208,34 @@ def test_cancel_workflow_endpoint_removed(client: TestClient):
     """Cancel endpoint is intentionally removed from jobs API."""
     response = client.post("/api/workflows/run_123/cancel")
     assert response.status_code == 404
+
+
+def test_launch_rejects_unavailable_tool(client: TestClient):
+    payload = {
+        "launch": {
+            "tool": "BoltzGen",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 501
+    assert "not available" in response.json()["detail"]
+
+
+def test_launch_rejects_unknown_tool(client: TestClient):
+    payload = {
+        "launch": {
+            "tool": "UnknownTool",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 501
+    assert "Only BindCraft is supported" in response.json()["detail"]
 
 
 def test_get_logs_success(client: TestClient):

@@ -34,7 +34,6 @@ from ..services.datasets import (
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
-DEFAULT_WORKFLOW_NAME = "BindCraft"
 
 
 @router.post("/me/sync")
@@ -52,13 +51,31 @@ async def launch_workflow(
     db: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
+    requested_tool_raw = payload.launch.tool
+    requested_tool = requested_tool_raw.strip().lower()
+    if requested_tool != "bindcraft":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                f"Tool '{requested_tool_raw}' is not available for workflow launch yet. "
+                "Only BindCraft is supported at the moment."
+            ),
+        )
+
+    dataset_id = payload.datasetId.strip()
+    if not dataset_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="datasetId is required and must not be empty.",
+        )
+
     run_name = payload.launch.runName
-    workflow = db.scalar(select(Workflow).where(Workflow.name == DEFAULT_WORKFLOW_NAME))
+    workflow = db.scalar(select(Workflow).where(Workflow.name == "BindCraft"))
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{DEFAULT_WORKFLOW_NAME}' is not configured in workflows table. "
+                "Workflow 'BindCraft' is not configured in workflows table. "
                 "Seed the workflows catalog before launching."
             ),
         )
@@ -66,21 +83,24 @@ async def launch_workflow(
     if not workflow.repo_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(f"Workflow '{DEFAULT_WORKFLOW_NAME}' is missing repo_url in workflows table."),
+            detail="Workflow 'BindCraft' is missing repo_url in workflows table.",
         )
 
-    resolved_launch = payload.launch.model_copy(
-        update={
-            "pipeline": workflow.repo_url,
-            "revision": workflow.default_revision or payload.launch.revision or "dev",
-        }
-    )
+    if not workflow.default_revision:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Workflow 'BindCraft' is missing default_revision in workflows table.",
+        )
+    resolved_revision = workflow.default_revision
 
     try:
-        dataset_id = payload.datasetId
-
         # Use workflow config from DB (repo_url/default_revision) and selected dataset.
-        result: BindflowLaunchResult = await launch_bindflow_workflow(resolved_launch, dataset_id)
+        result: BindflowLaunchResult = await launch_bindflow_workflow(
+            payload.launch,
+            dataset_id,
+            pipeline=workflow.repo_url,
+            revision=resolved_revision,
+        )
     except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)

@@ -196,7 +196,7 @@ def sample_workflow_launch_form():
     NOTE: Consider using WorkflowLaunchFormFactory.build() directly in tests.
     """
     return {
-        "pipeline": "https://github.com/nextflow-io/hello",
+        "tool": "BindCraft",
         "revision": "main",
         "configProfiles": ["singularity"],
         "runName": "test-workflow-run",
