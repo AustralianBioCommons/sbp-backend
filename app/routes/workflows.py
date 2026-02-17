@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import Workflow, WorkflowRun
@@ -70,12 +70,12 @@ async def launch_workflow(
         )
 
     run_name = payload.launch.runName
-    workflow = db.scalar(select(Workflow).where(Workflow.name == "BindCraft"))
+    workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                "Workflow 'BindCraft' is not configured in workflows table. "
+                f"Workflow '{requested_tool_raw}' is not configured in workflows table. "
                 "Seed the workflows catalog before launching."
             ),
         )
@@ -83,13 +83,13 @@ async def launch_workflow(
     if not workflow.repo_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Workflow 'BindCraft' is missing repo_url in workflows table.",
+            detail=f"Workflow '{workflow.name}' is missing repo_url in workflows table.",
         )
 
     if not workflow.default_revision:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Workflow 'BindCraft' is missing default_revision in workflows table.",
+            detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
     resolved_revision = workflow.default_revision
 
