@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import WorkflowRun
+from ..db.models.core import Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -33,6 +34,7 @@ from ..services.datasets import (
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
+DEFAULT_WORKFLOW_NAME = "BindCraft"
 
 
 @router.post("/me/sync")
@@ -51,11 +53,34 @@ async def launch_workflow(
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
     run_name = payload.launch.runName
+    workflow = db.scalar(select(Workflow).where(Workflow.name == DEFAULT_WORKFLOW_NAME))
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Workflow '{DEFAULT_WORKFLOW_NAME}' is not configured in workflows table. "
+                "Seed the workflows catalog before launching."
+            ),
+        )
+
+    if not workflow.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(f"Workflow '{DEFAULT_WORKFLOW_NAME}' is missing repo_url in workflows table."),
+        )
+
+    resolved_launch = payload.launch.model_copy(
+        update={
+            "pipeline": workflow.repo_url,
+            "revision": workflow.default_revision or payload.launch.revision or "dev",
+        }
+    )
+
     try:
         dataset_id = payload.datasetId
 
-        # Use the dataset created from /datasets/upload endpoint
-        result: BindflowLaunchResult = await launch_bindflow_workflow(payload.launch, dataset_id)
+        # Use workflow config from DB (repo_url/default_revision) and selected dataset.
+        result: BindflowLaunchResult = await launch_bindflow_workflow(resolved_launch, dataset_id)
     except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -68,7 +93,7 @@ async def launch_workflow(
     run_work_dir = f"{base_work_dir}/{run_id}"
     workflow_run = WorkflowRun(
         id=run_id,
-        workflow_id=None,
+        workflow_id=workflow.id,
         owner_user_id=current_user_id,
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=result.workflow_id,

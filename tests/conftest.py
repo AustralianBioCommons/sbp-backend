@@ -19,9 +19,9 @@ os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from app.db.models.core import AppUser
+from app.db.models.core import AppUser, Workflow
 from app.main import create_app
 from app.routes.dependencies import get_current_user_id, get_db
 from app.schemas.workflows import (
@@ -149,6 +149,15 @@ def app(test_engine):
             auth0_user_id="auth0|test-user",
             name="Test User",
             email="test@example.com",
+        )
+    )
+    setup_session.add(
+        Workflow(
+            id=uuid4(),
+            name="BindCraft",
+            description="Test workflow",
+            repo_url="https://github.com/test/repo",
+            default_revision="dev",
         )
     )
     setup_session.commit()

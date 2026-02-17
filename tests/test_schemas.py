@@ -27,9 +27,9 @@ from app.schemas.workflows import (
 
 def test_valid_minimal_form():
     """Test WorkflowLaunchForm with minimal valid data."""
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm()
 
-    assert form.pipeline == "https://github.com/test/repo"
+    assert form.pipeline is None
     assert form.revision is None
     assert form.configProfiles == []
     assert form.runName is None
@@ -53,19 +53,12 @@ def test_valid_complete_form():
     assert "param1" in form.paramsText
 
 
-def test_pipeline_required():
-    """Test that pipeline field is required."""
-    with pytest.raises(ValidationError) as exc_info:
-        WorkflowLaunchForm()
-
-    errors = exc_info.value.errors()
-    assert any(error["loc"] == ("pipeline",) for error in errors)
-
-
-def test_pipeline_cannot_be_empty():
-    """Test that pipeline cannot be empty string."""
-    with pytest.raises(ValidationError, match="pipeline is required"):
-        WorkflowLaunchForm(pipeline="")
+def test_pipeline_can_be_omitted_or_empty():
+    """Test that pipeline can be omitted or passed as empty value."""
+    form_without_pipeline = WorkflowLaunchForm()
+    form_with_empty_pipeline = WorkflowLaunchForm(pipeline="")
+    assert form_without_pipeline.pipeline is None
+    assert form_with_empty_pipeline.pipeline is None
 
 
 def test_pipeline_whitespace_stripped():
@@ -82,9 +75,9 @@ def test_extra_fields_forbidden():
 
 def test_valid_payload_with_launch_only():
     """Test payload with only launch data."""
-    payload = WorkflowLaunchPayload(launch={"pipeline": "https://github.com/test/repo"})
+    payload = WorkflowLaunchPayload(launch={})
 
-    assert payload.launch.pipeline == "https://github.com/test/repo"
+    assert payload.launch.pipeline is None
     assert payload.datasetId is None
     assert payload.formData is None
 
@@ -92,7 +85,7 @@ def test_valid_payload_with_launch_only():
 def test_valid_payload_with_dataset_id():
     """Test payload with dataset ID."""
     payload = WorkflowLaunchPayload(
-        launch={"pipeline": "https://github.com/test/repo"},
+        launch={},
         datasetId="dataset_123",
     )
 
@@ -107,7 +100,7 @@ def test_valid_payload_with_form_data():
         "param": 42,
     }
     payload = WorkflowLaunchPayload(
-        launch={"pipeline": "https://github.com/test/repo"},
+        launch={},
         formData=form_data,
     )
 
@@ -117,9 +110,7 @@ def test_valid_payload_with_form_data():
 def test_payload_extra_fields_forbidden():
     """Test that extra fields are not allowed in payload."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(
-            launch={"pipeline": "https://github.com/test/repo"}, unknownField="value"
-        )
+        WorkflowLaunchPayload(launch={}, unknownField="value")
 
 
 def test_valid_response():

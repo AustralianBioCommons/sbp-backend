@@ -46,7 +46,7 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
 class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    pipeline: str = Field(..., description="Workflow pipeline repository or URL")
+    pipeline: str | None = Field(default=None, description="Workflow pipeline repository or URL")
     revision: str | None = Field(
         default=None, description="Revision or branch of the pipeline to run"
     )
@@ -58,10 +58,11 @@ class WorkflowLaunchForm(BaseModel):
 
     @field_validator("pipeline")
     @classmethod
-    def validate_pipeline(cls, value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError("pipeline is required")
-        return value.strip()
+    def validate_pipeline(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class WorkflowLaunchPayload(BaseModel):

@@ -106,7 +106,6 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
             "runName": "test-run",
         }
     }
@@ -118,6 +117,9 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
     assert data["runId"] == "wf_123"
     assert data["status"] == "submitted"
     assert "submitTime" in data
+    launch_form_arg = mock_launch.call_args[0][0]
+    assert launch_form_arg.pipeline == "https://github.com/test/repo"
+    assert launch_form_arg.revision == "dev"
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -131,7 +133,6 @@ async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
             "runName": "test-with-data",
         },
         "datasetId": "dataset_456",  # Use existing dataset
@@ -156,7 +157,7 @@ async def test_launch_configuration_error(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
+            "runName": "test-run",
         }
     }
 
@@ -173,7 +174,7 @@ async def test_launch_service_error(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
+            "runName": "test-run",
         }
     }
 
@@ -186,9 +187,8 @@ async def test_launch_service_error(mock_launch, client: TestClient):
 def test_launch_invalid_payload(client: TestClient):
     """Test launch with invalid payload."""
     payload = {
-        "launch": {
-            "pipeline": "",  # Empty pipeline
-        }
+        "launch": {},
+        "unknownField": "not allowed",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
