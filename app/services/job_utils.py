@@ -138,7 +138,9 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
     max_score: float | None = None
     for file_key in _build_score_file_candidates(db, run):
         try:
-            max_score = await calculate_csv_column_max(file_key=file_key, column_name="Average_i_pTM")
+            max_score = await calculate_csv_column_max(
+                file_key=file_key, column_name="Average_i_pTM"
+            )
             break
         except (S3ConfigurationError, S3ServiceError, ValueError):
             continue
