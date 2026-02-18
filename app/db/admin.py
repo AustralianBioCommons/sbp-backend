@@ -7,6 +7,9 @@ import os
 from fastapi import APIRouter, Depends, FastAPI, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.requests import Request
+from starlette_admin._types import RequestAction
+from starlette_admin.fields import StringField
 
 from ..routes.dependencies import get_db
 from . import engine
@@ -23,6 +26,25 @@ from .models.core import (
 
 def _is_db_admin_enabled() -> bool:
     return os.getenv("ENABLE_DB_ADMIN", "false").strip().lower() in {"1", "true", "yes"}
+
+
+def _mask_auth0_user_id(value: str | None) -> str | None:
+    if not value:
+        return value
+    if len(value) <= 10:
+        return "*" * len(value)
+    return f"{value[:8]}{'*' * (len(value) - 12)}{value[-4:]}"
+
+
+def _mask_email(value: str | None) -> str | None:
+    if not value or "@" not in value:
+        return value
+    local, domain = value.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "*" if len(local) == 2 else "*"
+    else:
+        masked_local = f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}"
+    return f"{masked_local}@{domain}"
 
 
 def mount_db_admin(app: FastAPI) -> None:
@@ -42,8 +64,45 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             "ENABLE_DB_ADMIN=true but starlette-admin is not installed."
         ) from exc
 
+    class MaskedAuth0UserIdField(StringField):
+        async def parse_obj(self, request: Request, obj: object) -> str | None:
+            raw_value = getattr(obj, self.name, None)
+            return _mask_auth0_user_id(str(raw_value) if raw_value is not None else None)
+
+        async def serialize_value(
+            self, request: Request, value: object, action: RequestAction
+        ) -> str | None:
+            return _mask_auth0_user_id(str(value) if value is not None else None)
+
+    class MaskedEmailField(StringField):
+        async def parse_obj(self, request: Request, obj: object) -> str | None:
+            raw_value = getattr(obj, self.name, None)
+            return _mask_email(str(raw_value) if raw_value is not None else None)
+
+        async def serialize_value(
+            self, request: Request, value: object, action: RequestAction
+        ) -> str | None:
+            return _mask_email(str(value) if value is not None else None)
+
     class AppUserAdmin(ModelView):
-        fields = ["id", "auth0_user_id", "name", "email"]
+        fields = [
+            "id",
+            MaskedAuth0UserIdField(
+                "auth0_user_id",
+                label="Auth0 User ID",
+                read_only=True,
+                exclude_from_create=True,
+                exclude_from_edit=True,
+            ),
+            "name",
+            MaskedEmailField(
+                "email",
+                label="Email",
+                read_only=True,
+                exclude_from_create=True,
+                exclude_from_edit=True,
+            ),
+        ]
 
     class WorkflowAdmin(ModelView):
         fields = ["id", "name", "description", "repo_url", "default_revision"]
@@ -61,7 +120,26 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         ]
 
     class RunMetricAdmin(ModelView):
-        fields = ["run_id", "max_score"]
+        class RunIdField(StringField):
+            async def parse_obj(self, request: Request, obj: object) -> str | None:
+                raw_value = getattr(obj, self.name, None)
+                return str(raw_value) if raw_value is not None else None
+
+            async def serialize_value(
+                self, request: Request, value: object, action: RequestAction
+            ) -> str | None:
+                return str(value) if value is not None else None
+
+        fields = [
+            RunIdField(
+                "run_id",
+                label="Run ID",
+                read_only=True,
+                exclude_from_create=True,
+                exclude_from_edit=True,
+            ),
+            "max_score",
+        ]
 
     admin = Admin(engine=engine, title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"))
     admin.add_view(AppUserAdmin(AppUser))
