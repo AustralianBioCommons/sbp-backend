@@ -132,7 +132,10 @@ def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     ).all()
 
     for object_key, uri in rows:
-        for key in (object_key, _s3_uri_to_key(uri)):
+        for raw_key in (object_key, _s3_uri_to_key(uri)):
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
             if not key:
                 continue
             if (
