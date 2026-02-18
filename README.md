@@ -58,6 +58,7 @@ FastAPI backend for handling Seqera Platform workflow launches.
 - `GET /files` — List S3 files
 - `GET /csv/{file_key}` — Read CSV rows from S3
 - `GET /run/{run_id}/max-score` — Fetch max score for a run
+- `GET /admin` — Optional Starlette Admin UI for database debugging (disabled by default)
 
 ## Database Schema
 
@@ -146,6 +147,20 @@ Required entries in `.env`:
 - `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
+- `ENABLE_DB_ADMIN` — (Optional) set to `true` to enable Starlette Admin at `/admin`
+- `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
+
+## DB Debug UI (Starlette Admin)
+
+Enable local DB debugging UI:
+
+```bash
+ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
+```
+
+Then open `http://localhost:3000/admin`.
+
+Use this only in trusted/internal environments.
 
 ## Containerization
 
