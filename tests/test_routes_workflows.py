@@ -64,9 +64,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
                 WorkflowRun.sample_id,
-            ).where(
-                WorkflowRun.seqera_run_id == "wf_123"
-            )
+            ).where(WorkflowRun.seqera_run_id == "wf_123")
         ).first()
         assert created_run is not None
         assert created_run.seqera_dataset_id == "dataset_123"
