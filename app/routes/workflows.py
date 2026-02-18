@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import Workflow, WorkflowRun
+from ..db.models.core import RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -34,6 +34,32 @@ from ..services.datasets import (
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
+
+
+def _extract_form_id(form_data: dict[str, object] | None) -> str | None:
+    if not isinstance(form_data, dict):
+        return None
+    for key in ("id", "sample_id", "binder_name"):
+        value = form_data.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _extract_final_design_count(form_data: dict[str, object] | None) -> int | None:
+    if not isinstance(form_data, dict):
+        return None
+    value = form_data.get("number_of_final_designs")
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
 
 
 @router.post("/me/sync")
@@ -70,6 +96,8 @@ async def launch_workflow(
         )
 
     run_name = payload.launch.runName
+    form_id = _extract_form_id(payload.formData)
+    final_design_count = _extract_final_design_count(payload.formData)
     workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
         raise HTTPException(
@@ -120,8 +148,12 @@ async def launch_workflow(
         run_name=run_name,
         work_dir=run_work_dir,
     )
-
+    if form_id:
+        workflow_run.binder_name = form_id
+        workflow_run.sample_id = form_id
     db.add(workflow_run)
+    if final_design_count is not None:
+        db.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
     db.commit()
 
     return WorkflowLaunchResponse(

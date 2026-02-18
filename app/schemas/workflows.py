@@ -190,6 +190,7 @@ class JobListItem(BaseModel):
     status: str = Field(..., description="UI-friendly status (e.g., Completed, In progress)")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
+    finalDesignCount: int | None = Field(None, description="Number of final designs")
 
 
 class JobListResponse(BaseModel):
@@ -210,6 +211,7 @@ class JobDetailsResponse(BaseModel):
     status: str = Field(..., description="UI-friendly status")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
+    finalDesignCount: int | None = Field(None, description="Number of final designs")
 
 
 class DeleteJobResponse(BaseModel):

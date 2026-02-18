@@ -38,6 +38,25 @@ from ..dependencies import get_current_user_id, get_db
 router = APIRouter(tags=["jobs"])
 
 
+def _resolve_job_name(run_id: str, wf: dict[str, object], owned_run: WorkflowRun | None) -> str:
+    if owned_run is not None:
+        for attr in ("binder_name", "sample_id", "run_name"):
+            value = getattr(owned_run, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    run_name = wf.get("runName")
+    if isinstance(run_name, str) and run_name.strip():
+        return run_name.strip()
+    return run_id
+
+
+def _resolve_final_design_count(owned_run: WorkflowRun | None) -> int | None:
+    if not owned_run or not owned_run.metrics:
+        return None
+    value = owned_run.metrics.final_design_count
+    return value if isinstance(value, int) else None
+
+
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
 async def cancel_workflow(
     run_id: str,
@@ -93,7 +112,8 @@ async def list_jobs(
                 continue
 
             workflow_type = workflow_type_by_run_id.get(run_id)
-            job_name = wf.get("runName") or run_id
+            owned_run = get_owned_run(db, current_user_id, run_id)
+            job_name = _resolve_job_name(run_id, wf, owned_run)
             if (
                 search_text
                 and search_text not in str(job_name).lower()
@@ -102,7 +122,6 @@ async def list_jobs(
                 continue
 
             score = score_by_run_id.get(run_id)
-            owned_run = get_owned_run(db, current_user_id, run_id)
             if score is None and owned_run:
                 score = await ensure_completed_run_score(db, owned_run, ui_status)
 
@@ -114,6 +133,7 @@ async def list_jobs(
                     status=ui_status,
                     submittedAt=parse_submit_datetime(payload) or datetime.now(timezone.utc),
                     score=score if ui_status == "Completed" else None,
+                    finalDesignCount=_resolve_final_design_count(owned_run),
                 )
             )
 
@@ -170,11 +190,12 @@ async def get_job_details(
 
     return JobDetailsResponse(
         id=run_id,
-        jobName=wf.get("runName") or run_id,
+        jobName=_resolve_job_name(run_id, wf, owned_run),
         workflowType=(owned_run.workflow.name if owned_run.workflow else None),
         status=ui_status,
         submittedAt=submitted_at,
         score=score,
+        finalDesignCount=_resolve_final_design_count(owned_run),
     )
 
 

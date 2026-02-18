@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models.core import WorkflowRun
+from app.db.models.core import RunMetric, WorkflowRun
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
@@ -42,6 +42,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
+        "formData": {"id": "PDL1", "number_of_final_designs": 20},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -58,13 +59,25 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 
     with Session(test_engine) as db:
         created_run = db.execute(
-            select(WorkflowRun.seqera_dataset_id, WorkflowRun.run_name).where(
+            select(
+                WorkflowRun.seqera_dataset_id,
+                WorkflowRun.run_name,
+                WorkflowRun.binder_name,
+                WorkflowRun.sample_id,
+            ).where(
                 WorkflowRun.seqera_run_id == "wf_123"
             )
         ).first()
         assert created_run is not None
         assert created_run.seqera_dataset_id == "dataset_123"
         assert created_run.run_name == "test-run"
+        assert created_run.binder_name == "PDL1"
+        assert created_run.sample_id == "PDL1"
+        run_id = db.execute(
+            select(WorkflowRun.id).where(WorkflowRun.seqera_run_id == "wf_123")
+        ).scalar_one()
+        metric = db.execute(select(RunMetric).where(RunMetric.run_id == run_id)).scalar_one()
+        assert metric.final_design_count == 20
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")

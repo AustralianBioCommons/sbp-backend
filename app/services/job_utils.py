@@ -101,8 +101,30 @@ def _s3_uri_to_key(uri: str | None) -> str | None:
     return parts[3].strip() or None
 
 
+def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
+    # Form schema `id` should be persisted on the run model as metadata.
+    sample_id = (
+        getattr(run, "sample_id", None)
+        or getattr(run, "binder_name", None)
+        or getattr(run, "form_id", None)
+    )
+    if not sample_id:
+        return None
+    value = str(sample_id).strip()
+    return value or None
+
+
 def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     candidates: list[str] = []
+    sample_id = _get_sample_id_for_score(run)
+    if sample_id:
+        for key in (
+            f"{run.seqera_run_id}/{sample_id}_final_design_stats.csv",
+            f"{run.seqera_run_id}/ranker/{sample_id}_final_design_stats.csv",
+        ):
+            if key not in candidates:
+                candidates.append(key)
+
     rows = db.execute(
         select(S3Object.object_key, S3Object.uri)
         .join(RunOutput, RunOutput.s3_object_id == S3Object.object_key)
