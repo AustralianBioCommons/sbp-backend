@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,6 +35,16 @@ from ..services.datasets import (
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
+
+
+def _extract_binder_name_from_form_data(form_data: dict[str, Any] | None) -> str | None:
+    if not isinstance(form_data, dict):
+        return None
+    for key in ("binder_name", "binderName"):
+        value = form_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 @router.post("/me/sync")
@@ -70,6 +81,7 @@ async def launch_workflow(
         )
 
     run_name = payload.launch.runName
+    binder_name = _extract_binder_name_from_form_data(payload.formData)
     workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
         raise HTTPException(
@@ -117,6 +129,7 @@ async def launch_workflow(
         owner_user_id=current_user_id,
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=result.workflow_id,
+        binder_name=binder_name,
         run_name=run_name,
         work_dir=run_work_dir,
     )

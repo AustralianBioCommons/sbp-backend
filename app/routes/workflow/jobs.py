@@ -38,6 +38,12 @@ from ..dependencies import get_current_user_id, get_db
 router = APIRouter(tags=["jobs"])
 
 
+def _as_non_empty_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
 async def cancel_workflow(
     run_id: str,
@@ -84,6 +90,7 @@ async def list_jobs(
         allowed_statuses = set(status_filter or [])
         jobs: list[JobListItem] = []
         for run_id in owned_run_ids:
+            owned_run = get_owned_run(db, current_user_id, run_id)
             payload = await describe_workflow(run_id)
             wf = coerce_workflow_payload(payload)
             pipeline_status = extract_pipeline_status(payload)
@@ -93,7 +100,12 @@ async def list_jobs(
                 continue
 
             workflow_type = workflow_type_by_run_id.get(run_id)
-            job_name = wf.get("runName") or run_id
+            job_name = (
+                _as_non_empty_string(owned_run.binder_name if owned_run else None)
+                or _as_non_empty_string(owned_run.run_name if owned_run else None)
+                or _as_non_empty_string(wf.get("runName"))
+                or run_id
+            )
             if (
                 search_text
                 and search_text not in str(job_name).lower()
@@ -102,7 +114,6 @@ async def list_jobs(
                 continue
 
             score = score_by_run_id.get(run_id)
-            owned_run = get_owned_run(db, current_user_id, run_id)
             if score is None and owned_run:
                 score = await ensure_completed_run_score(db, owned_run, ui_status)
 
@@ -170,7 +181,10 @@ async def get_job_details(
 
     return JobDetailsResponse(
         id=run_id,
-        jobName=wf.get("runName") or run_id,
+        jobName=_as_non_empty_string(owned_run.binder_name)
+        or _as_non_empty_string(owned_run.run_name)
+        or _as_non_empty_string(wf.get("runName"))
+        or run_id,
         workflowType=(owned_run.workflow.name if owned_run.workflow else None),
         status=ui_status,
         submittedAt=submitted_at,

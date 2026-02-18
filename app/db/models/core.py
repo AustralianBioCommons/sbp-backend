@@ -42,6 +42,7 @@ class WorkflowRun(Base):
     owner_user_id: Mapped[UUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
     seqera_dataset_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     seqera_run_id: Mapped[str] = mapped_column(Text, nullable=False)
+    binder_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
 
