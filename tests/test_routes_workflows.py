@@ -123,7 +123,7 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 0
+        assert count == 1
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -147,7 +147,7 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 0
+        assert count == 1
 
 
 def test_launch_invalid_payload(client: TestClient):

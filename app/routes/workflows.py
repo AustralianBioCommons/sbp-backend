@@ -94,6 +94,23 @@ async def launch_workflow(
     resolved_revision = workflow.default_revision
 
     run_id = uuid4()
+    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
+    run_work_dir = f"{base_work_dir}/{run_id}"
+
+    # Reserve DB row first so a launched workflow always has a DB entry.
+    # Use local run UUID as a temporary seqera_run_id placeholder.
+    workflow_run = WorkflowRun(
+        id=run_id,
+        workflow_id=workflow.id,
+        owner_user_id=current_user_id,
+        seqera_dataset_id=payload.datasetId,
+        seqera_run_id=str(run_id),
+        run_name=run_name,
+        work_dir=run_work_dir,
+    )
+
+    db.add(workflow_run)
+    db.commit()
 
     try:
         # Use workflow config from DB (repo_url/default_revision) and selected dataset.
@@ -104,27 +121,22 @@ async def launch_workflow(
             revision=resolved_revision,
             output_id=str(run_id),
         )
+        workflow_run.seqera_run_id = result.workflow_id
+        db.commit()
     except BindflowConfigurationError as exc:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
     except BindflowExecutorError as exc:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
-    run_work_dir = f"{base_work_dir}/{run_id}"
-    workflow_run = WorkflowRun(
-        id=run_id,
-        workflow_id=workflow.id,
-        owner_user_id=current_user_id,
-        seqera_dataset_id=payload.datasetId,
-        seqera_run_id=result.workflow_id,
-        run_name=run_name,
-        work_dir=run_work_dir,
-    )
-
-    db.add(workflow_run)
-    db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update local workflow run after launch.",
+        ) from exc
 
     return WorkflowLaunchResponse(
         message="Workflow launched successfully",
