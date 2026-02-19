@@ -205,8 +205,12 @@ async def get_details(run_id: str) -> LaunchDetails:
 
 
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
-async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse:
+async def upload_dataset(
+    payload: DatasetUploadRequest,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
+    _ = current_user_id  # Authentication guard for dataset creation endpoint.
     try:
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription
