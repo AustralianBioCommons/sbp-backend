@@ -93,6 +93,8 @@ async def launch_workflow(
         )
     resolved_revision = workflow.default_revision
 
+    run_id = uuid4()
+
     try:
         # Use workflow config from DB (repo_url/default_revision) and selected dataset.
         result: BindflowLaunchResult = await launch_bindflow_workflow(
@@ -100,6 +102,7 @@ async def launch_workflow(
             dataset_id,
             pipeline=workflow.repo_url,
             revision=resolved_revision,
+            output_id=str(run_id),
         )
     except BindflowConfigurationError as exc:
         raise HTTPException(
@@ -109,7 +112,6 @@ async def launch_workflow(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
-    run_id = uuid4()
     run_work_dir = f"{base_work_dir}/{run_id}"
     workflow_run = WorkflowRun(
         id=run_id,

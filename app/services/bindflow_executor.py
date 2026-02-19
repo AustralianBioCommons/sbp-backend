@@ -47,6 +47,7 @@ async def launch_bindflow_workflow(
     *,
     pipeline: str,
     revision: str | None = None,
+    output_id: str | None = None,
 ) -> BindflowLaunchResult:
     """Launch a bindflow workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -56,9 +57,12 @@ async def launch_bindflow_workflow(
     work_dir = _get_required_env("WORK_DIR")
     s3_bucket = _get_required_env("AWS_S3_BUCKET")
 
-    # Get run name and include it in output directory
     run_name = form.runName
-    out_dir = f"s3://{s3_bucket}/{run_name}"
+    # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
+    output_key = (output_id or "").strip()
+    if not output_key:
+        raise BindflowConfigurationError("Missing output identifier for workflow launch")
+    out_dir = f"s3://{s3_bucket}/{output_key}"
 
     # Get AWS credentials from backend env (if available)
     aws_access_key = os.getenv("AWS_ACCESS_KEY_ID", "")

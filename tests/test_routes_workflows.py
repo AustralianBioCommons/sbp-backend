@@ -55,6 +55,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
     assert launch_form_arg.tool == "BindCraft"
     assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
     assert mock_launch.call_args.kwargs["revision"] == "dev"
+    assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
 
     with Session(test_engine) as db:
         created_run = db.execute(
