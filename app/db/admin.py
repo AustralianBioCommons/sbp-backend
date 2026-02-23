@@ -141,6 +141,15 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             "max_score",
         ]
 
+    def _has_column(model: type, column_name: str) -> bool:
+        return column_name in model.__table__.columns.keys()
+
+    if _has_column(WorkflowRun, "sample_id"):
+        WorkflowRunAdmin.fields.insert(-1, "sample_id")
+
+    if _has_column(RunMetric, "final_design_count"):
+        RunMetricAdmin.fields.append("final_design_count")
+
     admin = Admin(engine=engine, title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"))
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))
