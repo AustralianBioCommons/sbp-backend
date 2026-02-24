@@ -311,6 +311,7 @@ async def test_ensure_completed_run_score_uses_run_outputs_file_key(test_db):
 
 @pytest.mark.asyncio
 async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(test_db):
+    sample_id = "Anne_test"
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|sample-user",
@@ -321,7 +322,7 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
         id=uuid4(),
         owner_user_id=user.id,
         seqera_run_id="seqera-456",
-        sample_id="Anne_test",
+        sample_id=sample_id,
         work_dir="workdir-score-2",
     )
     test_db.add_all([user, run])
@@ -336,6 +337,6 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
 
     assert score == 0.91
     mocked_max.assert_awaited_once_with(
-        file_key="seqera-456/Anne_test_final_design_stats.csv",
+        file_key=f"{sample_id}/ranker/{sample_id}_final_design_stats.csv",
         column_name="Average_i_pTM",
     )
