@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from time import time
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -17,6 +18,30 @@ from ..db import SessionLocal
 from ..db.models.core import AppUser
 
 security = HTTPBearer()
+USERINFO_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
+
+
+def _get_token_expiry_epoch(claims: dict[str, object]) -> float | None:
+    raw_exp = claims.get("exp")
+    if isinstance(raw_exp, (int, float)):
+        return float(raw_exp)
+    return None
+
+
+def _fetch_userinfo_claims_cached(token: str, claims: dict[str, object]) -> dict[str, object]:
+    now = time()
+    cached = USERINFO_CACHE.get(token)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    userinfo = fetch_userinfo_claims(token)
+    if not userinfo:
+        return {}
+
+    expiry_epoch = _get_token_expiry_epoch(claims)
+    if expiry_epoch is not None and expiry_epoch > now:
+        USERINFO_CACHE[token] = (expiry_epoch, userinfo)
+    return userinfo
 
 
 def _extract_name_email_from_claims(
@@ -30,7 +55,7 @@ def _extract_name_email_from_claims(
     if not (isinstance(name_claim, str) and name_claim.strip()) or not (
         isinstance(email_claim, str) and email_claim.strip()
     ):
-        userinfo = fetch_userinfo_claims(token)
+        userinfo = _fetch_userinfo_claims_cached(token, claims)
         if not (isinstance(name_claim, str) and name_claim.strip()):
             name_claim = userinfo.get("name") or userinfo.get("nickname")
         if not (isinstance(email_claim, str) and email_claim.strip()):

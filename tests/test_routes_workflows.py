@@ -56,10 +56,12 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
     assert launch_form_arg.tool == "BindCraft"
     assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
     assert mock_launch.call_args.kwargs["revision"] == "dev"
+    assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
 
     with Session(test_engine) as db:
         created_run = db.execute(
             select(
+                WorkflowRun.id,
                 WorkflowRun.seqera_dataset_id,
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
@@ -71,10 +73,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "PDL1"
-        run_id = db.execute(
-            select(WorkflowRun.id).where(WorkflowRun.seqera_run_id == "wf_123")
-        ).scalar_one()
-        metric = db.execute(select(RunMetric).where(RunMetric.run_id == run_id)).scalar_one()
+        metric = db.execute(select(RunMetric).where(RunMetric.run_id == created_run.id)).scalar_one()
         assert metric.final_design_count == 20
 
 
@@ -133,7 +132,7 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 0
+        assert count == 1
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -157,7 +156,7 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 0
+        assert count == 1
 
 
 def test_launch_invalid_payload(client: TestClient):

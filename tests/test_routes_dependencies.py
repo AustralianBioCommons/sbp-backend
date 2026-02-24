@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models.core import AppUser
-from app.routes.dependencies import get_current_user_id
+from app.routes.dependencies import USERINFO_CACHE, get_current_user_id
 
 
 class _Result:
@@ -85,20 +85,23 @@ def test_get_current_user_id_race_conflict_fetches_existing(mocker: MockerFixtur
 
 
 def test_get_current_user_id_fetches_userinfo_when_claims_missing(mocker: MockerFixture):
+    USERINFO_CACHE.clear()
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
-        return_value={"sub": "auth0|x"},
+        return_value={"sub": "auth0|x", "exp": 4102444800},
     )
-    mocker.patch(
+    fetch_userinfo_mock = mocker.patch(
         "app.routes.dependencies.fetch_userinfo_claims",
         return_value={"name": "From UserInfo", "email": "userinfo@example.com"},
     )
     db = _DB(None)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
     _ = get_current_user_id(credentials, db)
+    _ = get_current_user_id(credentials, db)
     created_user = db.added[0]
     assert created_user.name == "From UserInfo"
     assert created_user.email == "userinfo@example.com"
+    assert fetch_userinfo_mock.call_count == 1
 
 
 def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture):
