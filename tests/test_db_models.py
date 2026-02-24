@@ -112,6 +112,8 @@ def test_workflow_run_model():
     assert "owner_user_id" in column_names
     assert "seqera_dataset_id" in column_names
     assert "seqera_run_id" in column_names
+    assert "binder_name" in column_names
+    assert "sample_id" in column_names
     assert "run_name" in column_names
     assert "work_dir" in column_names
 
@@ -196,6 +198,7 @@ def test_run_metric_model():
     column_names = {col.key for col in mapper.columns}
     assert "run_id" in column_names
     assert "max_score" in column_names
+    assert "final_design_count" in column_names
 
     assert hasattr(RunMetric, "run")
 
@@ -250,6 +253,8 @@ def test_model_type_annotations():
 
     # WorkflowRun
     assert "seqera_run_id" in WorkflowRun.__annotations__
+    assert "binder_name" in WorkflowRun.__annotations__
+    assert "sample_id" in WorkflowRun.__annotations__
     assert "work_dir" in WorkflowRun.__annotations__
 
     # S3Object
@@ -258,3 +263,4 @@ def test_model_type_annotations():
 
     # RunMetric
     assert "max_score" in RunMetric.__annotations__
+    assert "final_design_count" in RunMetric.__annotations__

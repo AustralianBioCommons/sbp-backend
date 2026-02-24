@@ -1,9 +1,9 @@
 """change_auth0_user_id_to_text"""
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = 'acd29f674da4'

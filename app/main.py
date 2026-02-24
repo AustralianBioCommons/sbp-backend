@@ -11,11 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .routes.pdb_upload import router as pdb_router
-from .routes.s3_files import router as s3_router
-from .routes.workflow.jobs import router as workflow_jobs_router
-from .routes.workflows import router as workflow_router
-
+# Load .env before importing modules that may initialize DB settings.
 load_dotenv()
 
 logging.basicConfig(
@@ -27,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
+    from .routes.pdb_upload import router as pdb_router
+    from .routes.s3_files import router as s3_router
+    from .routes.workflow.jobs import router as workflow_jobs_router
+    from .routes.workflows import router as workflow_router
+
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
 
     allowed_origins_env = os.getenv("ALLOWED_ORIGINS")

@@ -42,6 +42,8 @@ class WorkflowRun(Base):
     owner_user_id: Mapped[UUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
     seqera_dataset_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     seqera_run_id: Mapped[str] = mapped_column(Text, nullable=False)
+    binder_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sample_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -92,5 +94,6 @@ class RunMetric(Base):
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), primary_key=True)
     max_score: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    final_design_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     run: Mapped[WorkflowRun] = relationship(back_populates="metrics")
