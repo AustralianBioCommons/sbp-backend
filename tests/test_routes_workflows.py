@@ -73,7 +73,9 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "PDL1"
-        metric = db.execute(select(RunMetric).where(RunMetric.run_id == created_run.id)).scalar_one()
+        metric = db.execute(
+            select(RunMetric).where(RunMetric.run_id == created_run.id)
+        ).scalar_one()
         assert metric.final_design_count == 20
 
 
