@@ -62,6 +62,7 @@ def _extract_final_design_count(form_data: dict[str, Any] | None) -> int | None:
         return None
     return parsed if parsed >= 1 else None
 
+
 @router.post("/me/sync")
 async def sync_current_user(
     current_user_id: UUID = Depends(get_current_user_id),
