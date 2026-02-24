@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column("seqera_dataset_id", sa.Text(), nullable=True),
         sa.Column("seqera_run_id", sa.Text(), nullable=False),
         sa.Column("run_name", sa.Text(), nullable=True),
-        sa.Column("work_dir", sa.BigInteger(), nullable=False),
+        sa.Column("work_dir", sa.Text(), nullable=False),
         sa.ForeignKeyConstraint(["owner_user_id"], ["app_users.id"], name="workflow_runs_owner_user_id_foreign"),
         sa.ForeignKeyConstraint(["workflow_id"], ["workflows.id"], name="workflow_runs_workflow_id_foreign"),
         sa.PrimaryKeyConstraint("id"),
