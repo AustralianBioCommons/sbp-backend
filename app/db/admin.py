@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, FastAPI, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from starlette.requests import Request
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import HTMLResponse, Response
 from starlette_admin._types import RequestAction
+from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.fields import StringField
 
+from ..auth.validator import verify_access_token_claims
 from ..routes.dependencies import get_db
 from . import engine
 from .models.core import (
@@ -23,9 +26,16 @@ from .models.core import (
     WorkflowRun,
 )
 
+DEFAULT_DB_ADMIN_ROLE_CLAIM = "biocommons/role/sbp/admin"
+DEFAULT_DB_ADMIN_TOKEN_COOKIE = "sbp_admin_token"
+
 
 def _is_db_admin_enabled() -> bool:
     return os.getenv("ENABLE_DB_ADMIN", "false").strip().lower() in {"1", "true", "yes"}
+
+
+def _is_db_admin_cookie_secure() -> bool:
+    return os.getenv("DB_ADMIN_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes"}
 
 
 def _mask_auth0_user_id(value: str | None) -> str | None:
@@ -47,6 +57,72 @@ def _mask_email(value: str | None) -> str | None:
     return f"{masked_local}@{domain}"
 
 
+def _is_truthy_claim_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "admin", "sbp_admin"}
+    if isinstance(value, (list, tuple, set)):
+        return any(_is_truthy_claim_value(item) for item in value)
+    return False
+
+
+def _claims_has_admin_role(claims: dict[str, object]) -> bool:
+    required_claim_key = os.getenv("DB_ADMIN_ROLE_CLAIM", DEFAULT_DB_ADMIN_ROLE_CLAIM).strip()
+    if not required_claim_key:
+        return False
+
+    direct_value = claims.get(required_claim_key)
+    if _is_truthy_claim_value(direct_value):
+        return True
+
+    permissions = claims.get("permissions")
+    if isinstance(permissions, list) and required_claim_key in permissions:
+        return True
+
+    roles = claims.get("roles")
+    if isinstance(roles, list) and required_claim_key in roles:
+        return True
+
+    return False
+
+
+def _extract_admin_token_from_request(request: StarletteRequest) -> str | None:
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        if token:
+            return token
+
+    cookie_name = os.getenv("DB_ADMIN_TOKEN_COOKIE", DEFAULT_DB_ADMIN_TOKEN_COOKIE).strip()
+    if cookie_name:
+        cookie_token = request.cookies.get(cookie_name)
+        if isinstance(cookie_token, str) and cookie_token.strip():
+            return cookie_token.strip()
+    return None
+
+
+def _verify_admin_request(request: StarletteRequest) -> dict[str, object]:
+    token = _extract_admin_token_from_request(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin authentication required",
+        )
+
+    claims = verify_access_token_claims(token)
+    if not _claims_has_admin_role(claims):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role is required",
+        )
+    return claims
+
+
+def require_admin_access(request: StarletteRequest) -> dict[str, object]:
+    return _verify_admin_request(request)
+
+
 def mount_db_admin(app: FastAPI) -> None:
     """Mount Starlette Admin and read-only debug endpoints when enabled."""
     if not _is_db_admin_enabled():
@@ -64,23 +140,106 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             "ENABLE_DB_ADMIN=true but starlette-admin is not installed."
         ) from exc
 
+    cookie_name = os.getenv("DB_ADMIN_TOKEN_COOKIE", DEFAULT_DB_ADMIN_TOKEN_COOKIE).strip()
+
+    class Auth0AdminAuthProvider(AuthProvider):
+        async def login(
+            self,
+            username: str,
+            password: str,
+            remember_me: bool,
+            request: StarletteRequest,
+            response: Response,
+        ) -> Response:
+            _ = (password, remember_me)
+            token = (username or "").strip()
+            if not token:
+                raise LoginFailed("Please provide an Auth0 access token.")
+            try:
+                claims = verify_access_token_claims(token)
+            except HTTPException as exc:
+                raise LoginFailed(str(exc.detail)) from exc
+
+            if not _claims_has_admin_role(claims):
+                raise LoginFailed(
+                    f"Missing required admin role claim: {os.getenv('DB_ADMIN_ROLE_CLAIM', DEFAULT_DB_ADMIN_ROLE_CLAIM)}"
+                )
+
+            response.set_cookie(
+                key=cookie_name,
+                value=token,
+                httponly=True,
+                secure=_is_db_admin_cookie_secure(),
+                samesite="lax",
+                path="/admin",
+            )
+            return response
+
+        async def logout(self, request: StarletteRequest, response: Response) -> Response:
+            _ = request
+            response.delete_cookie(key=cookie_name, path="/admin")
+            return response
+
+        async def render_login(self, request: StarletteRequest, admin: object) -> Response:
+            _ = admin
+            if request.method == "GET":
+                html = """
+                <html>
+                  <head><title>SBP Admin Login</title></head>
+                  <body>
+                    <h2>SBP Admin Login</h2>
+                    <p>Paste a valid Auth0 access token with admin role.</p>
+                    <form method="post">
+                      <label for="username">Access Token</label><br/>
+                      <input id="username" name="username" type="password" style="width: 640px;" /><br/><br/>
+                      <input name="password" type="hidden" value="unused" />
+                      <button type="submit">Login</button>
+                    </form>
+                  </body>
+                </html>
+                """
+                return HTMLResponse(html)
+            return await super().render_login(request, admin)
+
+        async def is_authenticated(self, request: StarletteRequest) -> bool:
+            try:
+                claims = _verify_admin_request(request)
+            except HTTPException:
+                return False
+
+            request.state.user = claims
+            return True
+
+        def get_admin_user(self, request: StarletteRequest) -> AdminUser | None:
+            claims = getattr(request.state, "user", None)
+            if not isinstance(claims, dict):
+                return None
+            username = str(
+                claims.get("name")
+                or claims.get("nickname")
+                or claims.get("email")
+                or claims.get("sub")
+                or "Administrator"
+            )
+            return AdminUser(username=username)
+
     class MaskedAuth0UserIdField(StringField):
-        async def parse_obj(self, request: Request, obj: object) -> str | None:
+        async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
             raw_value = getattr(obj, self.name, None)
             return _mask_auth0_user_id(str(raw_value) if raw_value is not None else None)
 
         async def serialize_value(
-            self, request: Request, value: object, action: RequestAction
+            self, request: StarletteRequest, value: object, action: RequestAction
         ) -> str | None:
             return _mask_auth0_user_id(str(value) if value is not None else None)
 
     class MaskedEmailField(StringField):
-        async def parse_obj(self, request: Request, obj: object) -> str | None:
+        async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
             raw_value = getattr(obj, self.name, None)
             return _mask_email(str(raw_value) if raw_value is not None else None)
 
         async def serialize_value(
-            self, request: Request, value: object, action: RequestAction
+            self, request: StarletteRequest, value: object, action: RequestAction
         ) -> str | None:
             return _mask_email(str(value) if value is not None else None)
 
@@ -121,12 +280,12 @@ def _mount_starlette_admin(app: FastAPI) -> None:
 
     class RunMetricAdmin(ModelView):
         class RunIdField(StringField):
-            async def parse_obj(self, request: Request, obj: object) -> str | None:
+            async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
                 raw_value = getattr(obj, self.name, None)
                 return str(raw_value) if raw_value is not None else None
 
             async def serialize_value(
-                self, request: Request, value: object, action: RequestAction
+                self, request: StarletteRequest, value: object, action: RequestAction
             ) -> str | None:
                 return str(value) if value is not None else None
 
@@ -150,7 +309,11 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     if _has_column(RunMetric, "final_design_count"):
         RunMetricAdmin.fields.append("final_design_count")
 
-    admin = Admin(engine=engine, title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"))
+    admin = Admin(
+        engine=engine,
+        title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
+        auth_provider=Auth0AdminAuthProvider(),
+    )
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))
     admin.add_view(WorkflowRunAdmin(WorkflowRun))
@@ -159,7 +322,11 @@ def _mount_starlette_admin(app: FastAPI) -> None:
 
 
 def _mount_db_debug_api(app: FastAPI) -> None:
-    router = APIRouter(prefix="/admin/debug", tags=["admin-debug"])
+    router = APIRouter(
+        prefix="/admin/debug",
+        tags=["admin-debug"],
+        dependencies=[Depends(require_admin_access)],
+    )
 
     @router.get("/s3-objects")
     def list_s3_objects(

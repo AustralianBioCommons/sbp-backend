@@ -9,7 +9,13 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.db.admin import _is_db_admin_enabled, _mount_db_debug_api, mount_db_admin
+from app.db.admin import (
+    _claims_has_admin_role,
+    _is_db_admin_enabled,
+    _mount_db_debug_api,
+    mount_db_admin,
+    require_admin_access,
+)
 from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
 
@@ -91,6 +97,7 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         yield test_db
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
     _mount_db_debug_api(app)
 
     with TestClient(app) as client:
@@ -112,3 +119,23 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
     assert any(item["run_id"] == str(run_id) for item in inputs_json["items"])
     assert outputs_json["total"] >= 1
     assert any(item["run_id"] == str(run_id) for item in outputs_json["items"])
+
+
+def test_claims_has_admin_role_from_direct_claim(mocker) -> None:
+    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": "biocommons/role/sbp/admin"})
+    claims = {"biocommons/role/sbp/admin": True}
+    assert _claims_has_admin_role(claims) is True
+
+
+def test_claims_has_admin_role_from_permissions(mocker) -> None:
+    required = "biocommons/role/sbp/admin"
+    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": required})
+    claims = {"permissions": [required]}
+    assert _claims_has_admin_role(claims) is True
+
+
+def test_claims_has_admin_role_missing(mocker) -> None:
+    required = "biocommons/role/sbp/admin"
+    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": required})
+    claims = {"permissions": ["something/else"]}
+    assert _claims_has_admin_role(claims) is False
