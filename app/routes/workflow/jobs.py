@@ -40,7 +40,7 @@ router = APIRouter(tags=["jobs"])
 
 def _resolve_job_name(run_id: str, wf: dict[str, object], owned_run: WorkflowRun | None) -> str:
     if owned_run is not None:
-        for attr in ("binder_name", "sample_id", "run_name"):
+        for attr in ("binder_name", "run_name"):
             value = getattr(owned_run, attr, None)
             if isinstance(value, str) and value.strip():
                 return value.strip()

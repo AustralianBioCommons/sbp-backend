@@ -40,7 +40,7 @@ router = APIRouter(tags=["workflows"])
 def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
     if not isinstance(form_data, dict):
         return None
-    for key in ("id", "sample_id", "binder_name"):
+    for key in ("id", "sample_id"):
         value = form_data.get(key)
         if value is None:
             continue
@@ -48,6 +48,16 @@ def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
         if text:
             return text
     return None
+
+
+def _extract_binder_name(form_data: dict[str, Any] | None) -> str | None:
+    if not isinstance(form_data, dict):
+        return None
+    value = form_data.get("binder_name")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _extract_final_design_count(form_data: dict[str, Any] | None) -> int | None:
@@ -98,6 +108,7 @@ async def launch_workflow(
 
     run_name = payload.launch.runName
     form_id = _extract_form_id(payload.formData)
+    binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
     workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
@@ -134,7 +145,7 @@ async def launch_workflow(
         owner_user_id=current_user_id,
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=str(run_id),
-        binder_name=form_id,
+        binder_name=binder_name,
         sample_id=form_id,
         run_name=run_name,
         work_dir=run_work_dir,
