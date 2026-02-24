@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import Workflow, WorkflowRun
+from ..db.models.core import RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -37,15 +37,30 @@ from .dependencies import get_current_user_id, get_db
 router = APIRouter(tags=["workflows"])
 
 
-def _extract_binder_name_from_form_data(form_data: dict[str, Any] | None) -> str | None:
+def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
     if not isinstance(form_data, dict):
         return None
-    for key in ("binder_name", "binderName"):
+    for key in ("id", "sample_id", "binder_name"):
         value = form_data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
     return None
 
+
+def _extract_final_design_count(form_data: dict[str, Any] | None) -> int | None:
+    if not isinstance(form_data, dict):
+        return None
+    value = form_data.get("number_of_final_designs")
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
 
 @router.post("/me/sync")
 async def sync_current_user(
@@ -53,6 +68,8 @@ async def sync_current_user(
 ) -> dict[str, str]:
     """Ensure authenticated user exists in app_users and return user id."""
     return {"message": "User synced", "userId": str(current_user_id)}
+
+
 @router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
@@ -79,7 +96,8 @@ async def launch_workflow(
         )
 
     run_name = payload.launch.runName
-    binder_name = _extract_binder_name_from_form_data(payload.formData)
+    form_id = _extract_form_id(payload.formData)
+    final_design_count = _extract_final_design_count(payload.formData)
     workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
         raise HTTPException(
@@ -115,12 +133,15 @@ async def launch_workflow(
         owner_user_id=current_user_id,
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=str(run_id),
-        binder_name=binder_name,
+        binder_name=form_id,
+        sample_id=form_id,
         run_name=run_name,
         work_dir=run_work_dir,
     )
 
     db.add(workflow_run)
+    if final_design_count is not None:
+        db.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
     db.commit()
 
     try:
@@ -170,8 +191,9 @@ async def list_runs(
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
-async def get_logs() -> LaunchLogs:
+async def get_logs(run_id: str) -> LaunchLogs:
     """Retrieve workflow logs (placeholder)."""
+    _ = run_id
     return LaunchLogs(
         truncated=False,
         entries=[],

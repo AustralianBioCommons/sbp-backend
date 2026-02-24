@@ -321,14 +321,10 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
         id=uuid4(),
         owner_user_id=user.id,
         seqera_run_id="seqera-456",
+        sample_id="Anne_test",
         work_dir="workdir-score-2",
     )
-    output = S3Object(
-        object_key="Anne_test/ranker/Anne_test_final_design_stats.csv",
-        uri="s3://bucket/Anne_test/ranker/Anne_test_final_design_stats.csv",
-    )
-    run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
-    test_db.add_all([user, run, output, run_output])
+    test_db.add_all([user, run])
     test_db.commit()
 
     with patch(
@@ -340,6 +336,6 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
 
     assert score == 0.91
     mocked_max.assert_awaited_once_with(
-        file_key="Anne_test/ranker/Anne_test_final_design_stats.csv",
+        file_key="seqera-456/Anne_test_final_design_stats.csv",
         column_name="Average_i_pTM",
     )
