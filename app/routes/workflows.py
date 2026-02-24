@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -35,16 +34,6 @@ from ..services.datasets import (
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
-
-
-def _extract_binder_name_from_form_data(form_data: dict[str, Any] | None) -> str | None:
-    if not isinstance(form_data, dict):
-        return None
-    for key in ("binder_name", "binderName"):
-        value = form_data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
 
 
 @router.post("/me/sync")
@@ -81,7 +70,6 @@ async def launch_workflow(
         )
 
     run_name = payload.launch.runName
-    binder_name = _extract_binder_name_from_form_data(payload.formData)
     workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
     if not workflow:
         raise HTTPException(
@@ -125,7 +113,6 @@ async def launch_workflow(
     db.commit()
 
     try:
-        # Use workflow config from DB (repo_url/default_revision) and selected dataset.
         result: BindflowLaunchResult = await launch_bindflow_workflow(
             payload.launch,
             dataset_id,
@@ -143,23 +130,12 @@ async def launch_workflow(
     except BindflowExecutorError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
-    run_id = uuid4()
-    run_work_dir = f"{base_work_dir}/{run_id}"
-    workflow_run = WorkflowRun(
-        id=run_id,
-        workflow_id=workflow.id,
-        owner_user_id=current_user_id,
-        seqera_dataset_id=payload.datasetId,
-        seqera_run_id=result.workflow_id,
-        binder_name=binder_name,
-        run_name=run_name,
-        work_dir=run_work_dir,
-    )
-
-    db.add(workflow_run)
-    db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update local workflow run after launch.",
+        ) from exc
 
     return WorkflowLaunchResponse(
         message="Workflow launched successfully",
@@ -177,13 +153,14 @@ async def list_runs(
     offset: int = Query(0, ge=0),
 ) -> ListRunsResponse:
     """List workflow runs (placeholder until Seqera list API integration)."""
-    _ = (status_filter, workspace)  # Reserved for future Seqera integration
+    _ = (status_filter, workspace)
     return ListRunsResponse(runs=[], total=0, limit=limit, offset=offset)
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
-async def get_logs() -> LaunchLogs:
+async def get_logs(run_id: str) -> LaunchLogs:
     """Retrieve workflow logs (placeholder)."""
+    _ = run_id
     return LaunchLogs(
         truncated=False,
         entries=[],
@@ -233,7 +210,7 @@ async def upload_dataset(
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
-    _ = current_user_id  # Authentication guard for dataset creation endpoint.
+    _ = current_user_id
     try:
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription
@@ -245,7 +222,6 @@ async def upload_dataset(
     except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    # Allow Seqera time to finish dataset initialization before uploading
     await asyncio.sleep(2)
 
     try:
