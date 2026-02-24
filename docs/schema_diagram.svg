@@ -90,7 +90,7 @@
 <text xml:space="preserve" text-anchor="start" x="327.5" y="-436.6" font-family="Roboto" font-size="12.00">work_dir</text>
 <polygon fill="#bbdefb" stroke="none" points="402.88,-432.25 402.88,-451 465.88,-451 465.88,-432.25 402.88,-432.25"/>
 <polygon fill="none" stroke="black" points="402.88,-432.25 402.88,-451 465.88,-451 465.88,-432.25 402.88,-432.25"/>
-<text xml:space="preserve" text-anchor="start" x="409.25" y="-436.6" font-family="Roboto" font-size="12.00">BIGINT ()</text>
+<text xml:space="preserve" text-anchor="start" x="413.38" y="-436.6" font-family="Roboto" font-size="12.00">TEXT ()</text>
 </a>
 </g>
 </g>

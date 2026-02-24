@@ -46,31 +46,29 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
 class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    pipeline: str = Field(..., description="Workflow pipeline repository or URL")
-    revision: str | None = Field(
-        default=None, description="Revision or branch of the pipeline to run"
-    )
+    tool: str = Field(..., description="Requested tool name")
     configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )
     runName: str | None = Field(default=None, description="Human-readable workflow run name")
     paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
 
-    @field_validator("pipeline")
+    @field_validator("tool")
     @classmethod
-    def validate_pipeline(cls, value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError("pipeline is required")
-        return value.strip()
+    def validate_tool(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("tool is required")
+        return stripped
 
 
 class WorkflowLaunchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     launch: WorkflowLaunchForm
-    datasetId: str | None = Field(
-        default=None,
-        description="Optional Seqera dataset ID to attach to the workflow",
+    datasetId: str = Field(
+        ...,
+        description="Seqera dataset ID to attach to the workflow",
     )
     formData: dict[str, Any] | None = Field(
         default=None,

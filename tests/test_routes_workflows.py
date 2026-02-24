@@ -2,86 +2,18 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
-import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
+from app.db.models.core import WorkflowRun
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
     BindflowLaunchResult,
 )
-from app.services.seqera_errors import SeqeraAPIError
-
-
-@patch("app.routes.workflows.get_owned_run_ids")
-@patch("app.routes.workflows.get_score_by_seqera_run_id")
-@patch("app.routes.workflows.get_workflow_type_by_seqera_run_id")
-@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
-@patch("app.routes.workflows.get_owned_run")
-@patch("app.routes.workflows.ensure_completed_run_score", new_callable=AsyncMock)
-async def test_list_jobs_success(
-    mock_ensure_score,
-    mock_get_owned_run,
-    mock_describe,
-    mock_types,
-    mock_scores,
-    mock_owned_ids,
-):
-    """Test job listing via workflows router."""
-    run_id = "wf-111"
-    mock_owned_ids.return_value = [run_id]
-    mock_scores.return_value = {}
-    mock_types.return_value = {run_id: "BindCraft"}
-    mock_describe.return_value = {
-        "workflow": {
-            "id": run_id,
-            "runName": "Test Job",
-            "status": "SUCCEEDED",
-            "submit": "2026-02-01T10:00:00Z",
-        }
-    }
-    mock_get_owned_run.return_value = object()
-    mock_ensure_score.return_value = 0.42
-
-    from app.routes.workflows import list_jobs
-
-    response = await list_jobs(
-        search=None,
-        status_filter=None,
-        limit=50,
-        offset=0,
-        current_user_id="user",
-        db=object(),
-    )
-
-    assert response.total == 1
-    assert response.jobs[0].id == run_id
-    assert response.jobs[0].score == 0.42
-
-
-@patch("app.routes.workflows.describe_workflow", new_callable=AsyncMock)
-async def test_list_jobs_seqera_error_maps_502(mock_describe):
-    """Test Seqera API error maps to HTTP 502."""
-    mock_describe.side_effect = SeqeraAPIError("boom")
-
-    from app.routes.workflows import list_jobs
-
-    with patch("app.routes.workflows.get_owned_run_ids", return_value=["wf-1"]), patch(
-        "app.routes.workflows.get_score_by_seqera_run_id", return_value={}
-    ), patch("app.routes.workflows.get_workflow_type_by_seqera_run_id", return_value={}):
-        with pytest.raises(HTTPException) as exc:
-            await list_jobs(
-                search=None,
-                status_filter=None,
-                limit=50,
-                offset=0,
-                current_user_id="user",
-                db=object(),
-            )
-    assert exc.value.status_code == 502
 
 
 def test_list_runs_placeholder(client: TestClient):
@@ -96,7 +28,7 @@ def test_list_runs_placeholder(client: TestClient):
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
-async def test_launch_success_without_dataset(mock_launch, client: TestClient):
+def test_launch_success_without_dataset(mock_launch, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
     mock_launch.return_value = BindflowLaunchResult(
         workflow_id="wf_123",
@@ -106,9 +38,10 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
+            "tool": "BindCraft",
             "runName": "test-run",
-        }
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -118,12 +51,26 @@ async def test_launch_success_without_dataset(mock_launch, client: TestClient):
     assert data["runId"] == "wf_123"
     assert data["status"] == "submitted"
     assert "submitTime" in data
+    launch_form_arg = mock_launch.call_args[0][0]
+    assert launch_form_arg.tool == "BindCraft"
+    assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
+    assert mock_launch.call_args.kwargs["revision"] == "dev"
+    assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
+
+    with Session(test_engine) as db:
+        created_run = db.execute(
+            select(WorkflowRun.seqera_dataset_id, WorkflowRun.run_name).where(
+                WorkflowRun.seqera_run_id == "wf_123"
+            )
+        ).first()
+        assert created_run is not None
+        assert created_run.seqera_dataset_id == "dataset_123"
+        assert created_run.run_name == "test-run"
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
-async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
+def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_engine):
     """Test successful workflow launch with pre-created dataset ID."""
-    # Mock workflow launch
     mock_launch.return_value = BindflowLaunchResult(
         workflow_id="wf_789",
         status="submitted",
@@ -131,7 +78,7 @@ async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
+            "tool": "BindCraft",
             "runName": "test-with-data",
         },
         "datasetId": "dataset_456",  # Use existing dataset
@@ -143,52 +90,71 @@ async def test_launch_success_with_dataset_id(mock_launch, client: TestClient):
     data = response.json()
     assert data["runId"] == "wf_789"
 
-    # Verify workflow was launched with the provided dataset ID
     mock_launch.assert_called_once()
     call_args = mock_launch.call_args
-    assert call_args[0][1] == "dataset_456"  # Second argument is dataset_id
+    assert call_args[0][1] == "dataset_456"
+
+    with Session(test_engine) as db:
+        created_run = db.execute(
+            select(WorkflowRun.seqera_dataset_id).where(WorkflowRun.seqera_run_id == "wf_789")
+        ).first()
+        assert created_run is not None
+        assert created_run.seqera_dataset_id == "dataset_456"
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
-async def test_launch_configuration_error(mock_launch, client: TestClient):
+def test_launch_configuration_error(mock_launch, client: TestClient, test_engine):
     """Test launch with configuration error."""
     mock_launch.side_effect = BindflowConfigurationError("Missing API token")
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
-        }
+            "tool": "BindCraft",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 500
     assert "Missing API token" in response.json()["detail"]
+    with Session(test_engine) as db:
+        count = db.scalar(
+            select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
+        )
+        assert count == 1
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
-async def test_launch_service_error(mock_launch, client: TestClient):
+def test_launch_service_error(mock_launch, client: TestClient, test_engine):
     """Test launch with Seqera service error."""
     mock_launch.side_effect = BindflowExecutorError("API returned 502")
 
     payload = {
         "launch": {
-            "pipeline": "https://github.com/test/repo",
-        }
+            "tool": "BindCraft",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 502
     assert "API returned 502" in response.json()["detail"]
+    with Session(test_engine) as db:
+        count = db.scalar(
+            select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
+        )
+        assert count == 1
 
 
 def test_launch_invalid_payload(client: TestClient):
     """Test launch with invalid payload."""
     payload = {
-        "launch": {
-            "pipeline": "",  # Empty pipeline
-        }
+        "launch": {},
+        "unknownField": "not allowed",
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -200,6 +166,34 @@ def test_cancel_workflow_endpoint_removed(client: TestClient):
     """Cancel endpoint is intentionally removed from jobs API."""
     response = client.post("/api/workflows/run_123/cancel")
     assert response.status_code == 404
+
+
+def test_launch_rejects_unavailable_tool(client: TestClient):
+    payload = {
+        "launch": {
+            "tool": "BoltzGen",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 501
+    assert "not available" in response.json()["detail"]
+
+
+def test_launch_rejects_unknown_tool(client: TestClient):
+    payload = {
+        "launch": {
+            "tool": "UnknownTool",
+            "runName": "test-run",
+        },
+        "datasetId": "dataset_123",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 501
+    assert "Only BindCraft is supported" in response.json()["detail"]
 
 
 def test_get_logs_success(client: TestClient):

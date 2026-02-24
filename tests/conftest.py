@@ -19,7 +19,11 @@ os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
 
+from uuid import UUID, uuid4
+
+from app.db.models.core import AppUser, Workflow
 from app.main import create_app
+from app.routes.dependencies import get_current_user_id, get_db
 from app.schemas.workflows import (
     LaunchDetails,
     LaunchLogs,
@@ -93,10 +97,15 @@ class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
 def test_engine():
     """Create a test database engine using SQLite in-memory."""
     from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
 
     from app.db import Base
 
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
@@ -123,9 +132,47 @@ def test_db(test_engine) -> Generator:
 
 
 @pytest.fixture
-def app():
+def app(test_engine):
     """Create a FastAPI app instance for testing."""
-    return create_app()
+    app = create_app()
+    user_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(
+        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
+    )
+    setup_session = SessionLocal()
+    setup_session.add(
+        AppUser(
+            id=user_id,
+            auth0_user_id="auth0|test-user",
+            name="Test User",
+            email="test@example.com",
+        )
+    )
+    setup_session.add(
+        Workflow(
+            id=uuid4(),
+            name="BindCraft",
+            description="Test workflow",
+            repo_url="https://github.com/test/repo",
+            default_revision="dev",
+        )
+    )
+    setup_session.commit()
+    setup_session.close()
+
+    def _get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
+    return app
 
 
 @pytest.fixture
@@ -149,7 +196,7 @@ def sample_workflow_launch_form():
     NOTE: Consider using WorkflowLaunchFormFactory.build() directly in tests.
     """
     return {
-        "pipeline": "https://github.com/nextflow-io/hello",
+        "tool": "BindCraft",
         "revision": "main",
         "configProfiles": ["singularity"],
         "runName": "test-workflow-run",

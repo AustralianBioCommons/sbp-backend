@@ -4,64 +4,139 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..db.models.core import Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
-    JobListItem,
-    JobListResponse,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
-    map_pipeline_status_to_ui,
 )
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
     BindflowLaunchResult,
+    _get_required_env,
     launch_bindflow_workflow,
 )
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
 )
-from ..services.job_utils import (
-    coerce_workflow_payload,
-    ensure_completed_run_score,
-    extract_pipeline_status,
-    get_owned_run,
-    get_owned_run_ids,
-    get_score_by_seqera_run_id,
-    get_workflow_type_by_seqera_run_id,
-    parse_submit_datetime,
-)
-from ..services.seqera import describe_workflow
-from ..services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["workflows"])
 
 
-@router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
-async def launch_workflow(payload: WorkflowLaunchPayload) -> WorkflowLaunchResponse:
-    """Launch a workflow on the Seqera Platform."""
-    try:
-        dataset_id = payload.datasetId
+@router.post("/me/sync")
+async def sync_current_user(
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> dict[str, str]:
+    """Ensure authenticated user exists in app_users and return user id."""
+    return {"message": "User synced", "userId": str(current_user_id)}
 
-        # Use the dataset created from /datasets/upload endpoint
-        result: BindflowLaunchResult = await launch_bindflow_workflow(payload.launch, dataset_id)
+
+@router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
+async def launch_workflow(
+    payload: WorkflowLaunchPayload,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> WorkflowLaunchResponse:
+    """Launch a workflow on the Seqera Platform."""
+    requested_tool_raw = payload.launch.tool
+    requested_tool = requested_tool_raw.strip().lower()
+    if requested_tool != "bindcraft":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                f"Tool '{requested_tool_raw}' is not available for workflow launch yet. "
+                "Only BindCraft is supported at the moment."
+            ),
+        )
+
+    dataset_id = payload.datasetId.strip()
+    if not dataset_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="datasetId is required and must not be empty.",
+        )
+
+    run_name = payload.launch.runName
+    workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Workflow '{requested_tool_raw}' is not configured in workflows table. "
+                "Seed the workflows catalog before launching."
+            ),
+        )
+
+    if not workflow.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Workflow '{workflow.name}' is missing repo_url in workflows table.",
+        )
+
+    if not workflow.default_revision:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
+        )
+    resolved_revision = workflow.default_revision
+
+    run_id = uuid4()
+    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
+    run_work_dir = f"{base_work_dir}/{run_id}"
+
+    # Reserve DB row first so a launched workflow always has a DB entry.
+    # Use local run UUID as a temporary seqera_run_id placeholder.
+    workflow_run = WorkflowRun(
+        id=run_id,
+        workflow_id=workflow.id,
+        owner_user_id=current_user_id,
+        seqera_dataset_id=payload.datasetId,
+        seqera_run_id=str(run_id),
+        run_name=run_name,
+        work_dir=run_work_dir,
+    )
+
+    db.add(workflow_run)
+    db.commit()
+
+    try:
+        # Use workflow config from DB (repo_url/default_revision) and selected dataset.
+        result: BindflowLaunchResult = await launch_bindflow_workflow(
+            payload.launch,
+            dataset_id,
+            pipeline=workflow.repo_url,
+            revision=resolved_revision,
+            output_id=str(run_id),
+        )
+        workflow_run.seqera_run_id = result.workflow_id
+        db.commit()
     except BindflowConfigurationError as exc:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
     except BindflowExecutorError as exc:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update local workflow run after launch.",
+        ) from exc
 
     return WorkflowLaunchResponse(
         message="Workflow launched successfully",
@@ -81,107 +156,6 @@ async def list_runs(
     """List workflow runs (placeholder until Seqera list API integration)."""
     _ = (status_filter, workspace)  # Reserved for future Seqera integration
     return ListRunsResponse(runs=[], total=0, limit=limit, offset=offset)
-
-
-@router.get("/jobs", response_model=JobListResponse)
-async def list_jobs(
-    search: str | None = Query(None, description="Search by job name or workflow type"),
-    status_filter: list[str]
-    | None = Query(
-        None, alias="status", description="Filter by status (Completed, Stopped, Failed)"
-    ),
-    limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
-    offset: int = Query(0, ge=0, description="Number of results to skip"),
-    current_user_id: UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> JobListResponse:
-    """
-    Retrieve a paginated list of the current user's jobs with search and filtering.
-    Requires authentication via Bearer token.
-
-    Query Parameters:
-    - search: Search by job name or workflow type
-    - status: Filter by status values (Completed, Stopped, Failed, In progress, In queue)
-    - limit: Maximum number of results per page
-    - offset: Number of results to skip for pagination
-
-    Returns:
-    - Paginated list of jobs owned by the authenticated user
-    """
-    try:
-        # Get only the workflows owned by the current user
-        owned_run_ids = get_owned_run_ids(db, current_user_id)
-        score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
-        workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
-
-        search_text = (search or "").strip().lower()
-        allowed_statuses = set(status_filter or [])
-
-        jobs: list[JobListItem] = []
-
-        for run_id in owned_run_ids:
-            # Fetch workflow details from Seqera
-            payload = await describe_workflow(run_id)
-            wf = coerce_workflow_payload(payload)
-            pipeline_status = extract_pipeline_status(payload)
-            ui_status = map_pipeline_status_to_ui(pipeline_status)
-
-            # Apply status filter
-            if allowed_statuses and ui_status not in allowed_statuses:
-                continue
-
-            # Get workflow type and job name
-            workflow_type = workflow_type_by_run_id.get(run_id)
-            job_name = wf.get("runName") or run_id
-
-            # Apply search filter
-            if (
-                search_text
-                and search_text not in str(job_name).lower()
-                and search_text not in str(workflow_type or "").lower()
-            ):
-                continue
-
-            # Get or compute score
-            score = score_by_run_id.get(run_id)
-            owned_run = get_owned_run(db, current_user_id, run_id)
-            if score is None and owned_run:
-                score = await ensure_completed_run_score(db, owned_run, ui_status)
-
-            # Parse submission date
-            submitted_at = parse_submit_datetime(payload) or datetime.now(timezone.utc)
-
-            jobs.append(
-                JobListItem(
-                    id=run_id,
-                    jobName=job_name,
-                    workflowType=workflow_type,
-                    status=ui_status,
-                    submittedAt=submitted_at,
-                    score=score,
-                )
-            )
-
-        # Apply pagination
-        total = len(jobs)
-        paginated_jobs = jobs[offset : offset + limit]
-
-        return JobListResponse(
-            jobs=paginated_jobs,
-            total=total,
-            limit=limit,
-            offset=offset,
-        )
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
 
 
 @router.get("/{run_id}/logs", response_model=LaunchLogs)
@@ -231,8 +205,12 @@ async def get_details(run_id: str) -> LaunchDetails:
 
 
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
-async def upload_dataset(payload: DatasetUploadRequest) -> DatasetUploadResponse:
+async def upload_dataset(
+    payload: DatasetUploadRequest,
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
+    _ = current_user_id  # Authentication guard for dataset creation endpoint.
     try:
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription

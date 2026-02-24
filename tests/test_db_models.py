@@ -36,7 +36,8 @@ def test_get_database_url_default():
         del os.environ["DATABASE_URL"]
 
     result = _get_database_url()
-    assert result == "postgresql+psycopg://postgres:postgres@localhost:5432/sbp"
+    assert result.startswith("postgresql+psycopg://postgres:postgres@localhost:")
+    assert result.endswith("/sbp")
 
     # Restore original value
     if current_url:

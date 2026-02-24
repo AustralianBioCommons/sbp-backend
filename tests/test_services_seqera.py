@@ -41,12 +41,15 @@ async def test_launch_success_minimal():
     )
 
     # Create form
-    form = WorkflowLaunchForm(
-        pipeline="https://github.com/test/repo",
-    )
+    form = WorkflowLaunchForm(tool="BindCraft")
 
     # Execute
-    result = await launch_bindflow_workflow(form)
+    result = await launch_bindflow_workflow(
+        form,
+        dataset_id="dataset_min_001",
+        pipeline="https://github.com/test/repo",
+        output_id="run-out-1",
+    )
 
     # Verify result
     assert isinstance(result, BindflowLaunchResult)
@@ -70,14 +73,19 @@ async def test_launch_success_with_all_params():
     )
 
     form = WorkflowLaunchForm(
-        pipeline="https://github.com/test/repo",
-        revision="main",
+        tool="BindCraft",
         runName="my-custom-run",
         configProfiles=["docker", "test"],
         paramsText="custom_param: value",
     )
 
-    result = await launch_bindflow_workflow(form, dataset_id="dataset_789")
+    result = await launch_bindflow_workflow(
+        form,
+        dataset_id="dataset_789",
+        pipeline="https://github.com/test/repo",
+        revision="main",
+        output_id="run-out-2",
+    )
 
     assert result.workflow_id == "wf_full_456"
 
@@ -100,9 +108,14 @@ async def test_launch_includes_default_params():
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm(tool="BindCraft")
 
-    await launch_bindflow_workflow(form)
+    await launch_bindflow_workflow(
+        form,
+        dataset_id="dataset_defaults_001",
+        pipeline="https://github.com/test/repo",
+        output_id="run-out-3",
+    )
 
     # Check request payload
     request = route.calls.last.request
@@ -125,9 +138,14 @@ async def test_launch_with_dataset_adds_input_url():
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm(tool="BindCraft")
 
-    await launch_bindflow_workflow(form, dataset_id="ds_abc")
+    await launch_bindflow_workflow(
+        form,
+        dataset_id="ds_abc",
+        pipeline="https://github.com/test/repo",
+        output_id="run-out-4",
+    )
 
     # Verify request payload
     request = route.calls.last.request
@@ -149,10 +167,15 @@ async def test_launch_api_error_response():
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm(tool="BindCraft")
 
     with pytest.raises(BindflowExecutorError, match="400"):
-        await launch_bindflow_workflow(form)
+        await launch_bindflow_workflow(
+            form,
+            dataset_id="dataset_error_001",
+            pipeline="https://github.com/test/repo",
+            output_id="run-out-5",
+        )
 
 
 @pytest.mark.asyncio
@@ -163,15 +186,20 @@ async def test_launch_missing_workflow_id_in_response():
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm(tool="BindCraft")
 
     with pytest.raises(BindflowExecutorError, match="workflowId"):
-        await launch_bindflow_workflow(form)
+        await launch_bindflow_workflow(
+            form,
+            dataset_id="dataset_error_002",
+            pipeline="https://github.com/test/repo",
+            output_id="run-out-6",
+        )
 
 
 def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(pipeline="https://github.com/test/repo")
+    form = WorkflowLaunchForm(tool="BindCraft")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.delenv("SEQERA_API_URL", raising=False)
@@ -181,7 +209,14 @@ def test_launch_missing_env_vars():
         with pytest.raises(BindflowConfigurationError):
             import asyncio
 
-            asyncio.run(launch_bindflow_workflow(form))
+            asyncio.run(
+                launch_bindflow_workflow(
+                    form,
+                    dataset_id="dataset_env_001",
+                    pipeline="https://github.com/test/repo",
+                    output_id="run-out-7",
+                )
+            )
 
 
 @pytest.mark.asyncio
@@ -193,11 +228,16 @@ async def test_launch_with_custom_params_text():
     )
 
     form = WorkflowLaunchForm(
-        pipeline="https://github.com/test/repo",
+        tool="BindCraft",
         paramsText="my_custom_param: 42\nanother_param: test",
     )
 
-    await launch_bindflow_workflow(form)
+    await launch_bindflow_workflow(
+        form,
+        dataset_id="dataset_params_001",
+        pipeline="https://github.com/test/repo",
+        output_id="run-out-8",
+    )
 
     # Verify request payload
     request = route.calls.last.request
