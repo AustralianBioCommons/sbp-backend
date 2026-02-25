@@ -282,7 +282,7 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
             },
         ),
         patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
+            "app.routes.workflow.jobs.ensure_completed_bindcraft_score",
             new_callable=AsyncMock,
             return_value=0.95,
         ),
@@ -329,7 +329,7 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
             return_value={"workflow": {"status": "RUNNING"}},
         ),
         patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
+            "app.routes.workflow.jobs.ensure_completed_bindcraft_score",
             new_callable=AsyncMock,
             return_value=0.95,
         ),
@@ -386,7 +386,7 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mocker):
         ),
         patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
+            "app.routes.workflow.jobs.ensure_completed_bindcraft_score",
             new_callable=AsyncMock,
             return_value=0.88,
         ) as mock_ensure_score,

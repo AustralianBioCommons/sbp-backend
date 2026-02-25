@@ -243,22 +243,22 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_run_score_branches():
+async def test_ensure_completed_bindcraft_score_branches():
     run = SimpleNamespace(id="rid", seqera_run_id="wf-1")
 
     # non-completed status
-    assert await job_utils.ensure_completed_run_score(_DB(), run, "Failed") is None
+    assert await job_utils.ensure_completed_bindcraft_score(_DB(), run, "Failed") is None
 
     # existing score path
     db_existing = _DB(scalar=SimpleNamespace(max_score=0.9))
-    assert await job_utils.ensure_completed_run_score(db_existing, run, "Completed") == 0.9
+    assert await job_utils.ensure_completed_bindcraft_score(db_existing, run, "Completed") == 0.9
 
     # calculate + add path
     db_new = _DB(scalar=None)
     with patch(
         "app.services.job_utils.calculate_csv_column_max", new_callable=AsyncMock, return_value=1.23
     ):
-        score = await job_utils.ensure_completed_run_score(db_new, run, "Completed")
+        score = await job_utils.ensure_completed_bindcraft_score(db_new, run, "Completed")
     assert score == 1.0
     assert db_new.added is not None
     assert db_new.committed is True
@@ -270,11 +270,11 @@ async def test_ensure_completed_run_score_branches():
         new_callable=AsyncMock,
         side_effect=ValueError("bad"),
     ):
-        assert await job_utils.ensure_completed_run_score(db_fail, run, "Completed") is None
+        assert await job_utils.ensure_completed_bindcraft_score(db_fail, run, "Completed") is None
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_run_score_uses_run_outputs_file_key(test_db):
+async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_db):
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|score-user",
@@ -300,7 +300,7 @@ async def test_ensure_completed_run_score_uses_run_outputs_file_key(test_db):
         new_callable=AsyncMock,
         return_value=0.88,
     ) as mocked_max:
-        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
+        score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
 
     assert score == 0.88
     mocked_max.assert_awaited_once_with(
@@ -310,7 +310,8 @@ async def test_ensure_completed_run_score_uses_run_outputs_file_key(test_db):
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(test_db):
+async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_stats(test_db):
+    sample_id = "Anne_test"
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|sample-user",
@@ -321,7 +322,7 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
         id=uuid4(),
         owner_user_id=user.id,
         seqera_run_id="seqera-456",
-        sample_id="Anne_test",
+        sample_id=sample_id,
         work_dir="workdir-score-2",
     )
     test_db.add_all([user, run])
@@ -332,10 +333,10 @@ async def test_ensure_completed_run_score_uses_sample_name_final_design_stats(te
         new_callable=AsyncMock,
         return_value=0.91,
     ) as mocked_max:
-        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
+        score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
 
     assert score == 0.91
     mocked_max.assert_awaited_once_with(
-        file_key="seqera-456/Anne_test_final_design_stats.csv",
+        file_key=f"{sample_id}/ranker/{sample_id}_final_design_stats.csv",
         column_name="Average_i_pTM",
     )

@@ -85,7 +85,7 @@ async def test_get_job_details_success(test_db):
             },
         ),
         patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
+            "app.routes.workflow.jobs.ensure_completed_bindcraft_score",
             new_callable=AsyncMock,
             return_value=0.912,
         ),
