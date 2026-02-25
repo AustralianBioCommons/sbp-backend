@@ -117,7 +117,7 @@ def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
     return value or None
 
 
-def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
+def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     candidates: list[str] = []
     sample_id = _get_sample_id_for_score(run)
     prefixes = []
@@ -172,7 +172,9 @@ def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     return candidates
 
 
-async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+async def ensure_completed_bindcraft_score(
+    db: Session, run: WorkflowRun, ui_status: str
+) -> float | None:
     if ui_status != "Completed":
         return None
 
@@ -181,7 +183,7 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         return _round_score(existing.max_score)
 
     max_score: float | None = None
-    for file_key in _build_score_file_candidates(db, run):
+    for file_key in _build_bindcraft_score_file_candidates(db, run):
         try:
             max_score = await calculate_csv_column_max(
                 file_key=file_key, column_name="Average_i_pTM"
@@ -208,3 +210,7 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         db.add(RunMetric(run_id=run.id, max_score=bounded_score))
     db.commit()
     return _round_score(bounded_score)
+
+
+# Backward-compatible alias. Prefer `ensure_completed_bindcraft_score`.
+ensure_completed_run_score = ensure_completed_bindcraft_score
