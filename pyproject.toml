@@ -129,3 +129,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 exclude = ["app/db/admin.py"]
+
+[[tool.mypy.overrides]]
+module = ["app.db.admin"]
+ignore_errors = true

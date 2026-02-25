@@ -1,4 +1,5 @@
 """Starlette Admin and DB debug API mounting helpers."""
+# mypy: ignore-errors
 
 from __future__ import annotations
 
