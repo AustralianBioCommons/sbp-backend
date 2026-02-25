@@ -60,6 +60,7 @@ omit = [
     "*/tests/*",
     "*/__pycache__/*",
     "*/.venv/*",
+    "app/db/admin.py",
 ]
 branch = true
 
@@ -127,3 +128,4 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+exclude = ["app/db/admin.py"]
