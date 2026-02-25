@@ -103,6 +103,7 @@ async def list_jobs(
         allowed_statuses = set(status_filter or [])
         jobs: list[JobListItem] = []
         for run_id in owned_run_ids:
+            owned_run = get_owned_run(db, current_user_id, run_id)
             payload = await describe_workflow(run_id)
             wf = coerce_workflow_payload(payload)
             pipeline_status = extract_pipeline_status(payload)
@@ -112,7 +113,6 @@ async def list_jobs(
                 continue
 
             workflow_type = workflow_type_by_run_id.get(run_id)
-            owned_run = get_owned_run(db, current_user_id, run_id)
             job_name = _resolve_job_name(run_id, wf, owned_run)
             if (
                 search_text

@@ -20,6 +20,7 @@ dependencies = [
     "psycopg[binary]~=3.1",
     "cachetools~=5.3",
     "python-jose[cryptography]~=3.3",
+    "starlette-admin~=0.14",
 ]
 
 [tool.setuptools]
@@ -59,6 +60,7 @@ omit = [
     "*/tests/*",
     "*/__pycache__/*",
     "*/.venv/*",
+    "app/db/admin.py",
 ]
 branch = true
 
@@ -126,3 +128,8 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+exclude = ["app/db/admin.py"]
+
+[[tool.mypy.overrides]]
+module = ["app.db.admin"]
+ignore_errors = true

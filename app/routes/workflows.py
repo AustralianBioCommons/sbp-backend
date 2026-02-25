@@ -146,7 +146,6 @@ async def launch_workflow(
     db.commit()
 
     try:
-        # Use workflow config from DB (repo_url/default_revision) and selected dataset.
         result: BindflowLaunchResult = await launch_bindflow_workflow(
             payload.launch,
             dataset_id,
@@ -187,7 +186,7 @@ async def list_runs(
     offset: int = Query(0, ge=0),
 ) -> ListRunsResponse:
     """List workflow runs (placeholder until Seqera list API integration)."""
-    _ = (status_filter, workspace)  # Reserved for future Seqera integration
+    _ = (status_filter, workspace)
     return ListRunsResponse(runs=[], total=0, limit=limit, offset=offset)
 
 
@@ -244,7 +243,7 @@ async def upload_dataset(
     current_user_id: UUID = Depends(get_current_user_id),
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
-    _ = current_user_id  # Authentication guard for dataset creation endpoint.
+    _ = current_user_id
     try:
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription
@@ -256,7 +255,6 @@ async def upload_dataset(
     except BindflowExecutorError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    # Allow Seqera time to finish dataset initialization before uploading
     await asyncio.sleep(2)
 
     try:

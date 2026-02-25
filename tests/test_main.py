@@ -60,6 +60,25 @@ def test_workflow_router_included(app: FastAPI):
     assert "/api/jobs" in route_paths
 
 
+def test_admin_debug_router_included_when_enabled():
+    """Test that debug admin endpoints are mounted when ENABLE_DB_ADMIN=true."""
+    from app.main import create_app
+
+    with patch.dict(
+        os.environ,
+        {
+            "ALLOWED_ORIGINS": "http://localhost:3000",
+            "ENABLE_DB_ADMIN": "true",
+        },
+    ):
+        app = create_app()
+
+    route_paths = [route.path for route in app.routes]
+    assert "/admin/debug/s3-objects" in route_paths
+    assert "/admin/debug/run-inputs" in route_paths
+    assert "/admin/debug/run-outputs" in route_paths
+
+
 def test_exception_handler(client: TestClient):
     """Test that global exception handler works."""
     # Try to access a non-existent endpoint
