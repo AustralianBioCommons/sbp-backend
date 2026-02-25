@@ -19,18 +19,17 @@ import sys
 # Add the project root to the path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy_data_model_visualizer import generate_data_model_diagram, add_web_font_and_interactivity
+from sqlalchemy_data_model_visualizer import generate_data_model_diagram
 
-from app.db import Base, engine
 # Import all models to ensure they're registered with Base
 from app.db.models.core import (
     AppUser,
+    RunInput,
+    RunMetric,
+    RunOutput,
+    S3Object,
     Workflow,
     WorkflowRun,
-    S3Object,
-    RunInput,
-    RunOutput,
-    RunMetric,
 )
 
 
@@ -38,24 +37,24 @@ def main():
     """Generate the schema diagram."""
     # Ensure docs directory exists
     os.makedirs("docs", exist_ok=True)
-    
+
     output_file = "docs/schema_diagram"  # Extension will be added automatically
-    
+
     print("Generating database schema diagram...")
-    
+
     # Collect all models
     models = [AppUser, Workflow, WorkflowRun, S3Object, RunInput, RunOutput, RunMetric]
-    
+
     print(f"Models found: {len(models)} tables")
     for model in models:
         print(f"  - {model.__tablename__}")
-    
+
     # Generate the diagram
     generate_data_model_diagram(
         models,
         output_file=output_file
     )
-    
+
     print(f"\n✓ Schema diagram generated: {output_file}.png")
     print("\nThe diagram shows:")
     print("  • All tables with their columns and data types")

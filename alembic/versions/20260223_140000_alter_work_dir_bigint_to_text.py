@@ -1,7 +1,7 @@
 """alter workflow_runs.work_dir from bigint to text for existing DBs
 
 Revision ID: d3e9d6428af1
-Revises: acd29f674da4
+Revises: f91c8ab4d302
 Create Date: 2026-02-23 14:00:00.000000
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "d3e9d6428af1"
-down_revision = "acd29f674da4"
+down_revision = "f91c8ab4d302"
 branch_labels = None
 depends_on = None
 

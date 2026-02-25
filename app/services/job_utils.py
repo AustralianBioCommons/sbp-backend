@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 
 from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from .s3 import S3ConfigurationError, S3ServiceError, calculate_csv_column_max
+
+logger = logging.getLogger(__name__)
 
 
 def coerce_workflow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -101,8 +104,46 @@ def _s3_uri_to_key(uri: str | None) -> str | None:
     return parts[3].strip() or None
 
 
-def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
+def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
+    # Form schema `id` should be persisted on the run model as metadata.
+    sample_id = (
+        getattr(run, "sample_id", None)
+        or getattr(run, "binder_name", None)
+        or getattr(run, "form_id", None)
+    )
+    if not sample_id:
+        return None
+    value = str(sample_id).strip()
+    return value or None
+
+
+def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     candidates: list[str] = []
+    sample_id = _get_sample_id_for_score(run)
+    prefixes: list[str] = []
+    run_uuid = str(getattr(run, "id", "")).strip()
+    if run_uuid:
+        prefixes.append(run_uuid)
+    seqera_run_id = str(getattr(run, "seqera_run_id", "")).strip()
+    if seqera_run_id and seqera_run_id not in prefixes:
+        prefixes.append(seqera_run_id)
+
+    if sample_id:
+        for key in (
+            f"{sample_id}/ranker/{sample_id}_final_design_stats.csv",
+            f"{sample_id}/{sample_id}_final_design_stats.csv",
+        ):
+            if key not in candidates:
+                candidates.append(key)
+
+        for prefix in prefixes:
+            for key in (
+                f"{prefix}/{sample_id}_final_design_stats.csv",
+                f"{prefix}/ranker/{sample_id}_final_design_stats.csv",
+            ):
+                if key not in candidates:
+                    candidates.append(key)
+
     rows = db.execute(
         select(S3Object.object_key, S3Object.uri)
         .join(RunOutput, RunOutput.s3_object_id == S3Object.object_key)
@@ -110,7 +151,10 @@ def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     ).all()
 
     for object_key, uri in rows:
-        for key in (object_key, _s3_uri_to_key(uri)):
+        for raw_key in (object_key, _s3_uri_to_key(uri)):
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
             if not key:
                 continue
             if (
@@ -121,13 +165,16 @@ def _build_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
                 if key not in candidates:
                     candidates.append(key)
 
-    fallback = f"results/{run.seqera_run_id}/ranker/s1_final_design_stats.csv"
-    if fallback not in candidates:
-        candidates.append(fallback)
+    for prefix in prefixes:
+        fallback = f"results/{prefix}/ranker/s1_final_design_stats.csv"
+        if fallback not in candidates:
+            candidates.append(fallback)
     return candidates
 
 
-async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+async def ensure_completed_bindcraft_score(
+    db: Session, run: WorkflowRun, ui_status: str
+) -> float | None:
     if ui_status != "Completed":
         return None
 
@@ -136,11 +183,22 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         return _round_score(existing.max_score)
 
     max_score: float | None = None
-    for file_key in _build_score_file_candidates(db, run):
+    for file_key in _build_bindcraft_score_file_candidates(db, run):
         try:
-            max_score = await calculate_csv_column_max(file_key=file_key, column_name="Average_i_pTM")
+            max_score = await calculate_csv_column_max(
+                file_key=file_key, column_name="Average_i_pTM"
+            )
             break
-        except (S3ConfigurationError, S3ServiceError, ValueError):
+        except (S3ConfigurationError, S3ServiceError, ValueError) as exc:
+            logger.warning(
+                "Failed to read score CSV candidate",
+                extra={
+                    "runId": str(run.id),
+                    "seqeraRunId": run.seqera_run_id,
+                    "fileKey": file_key,
+                    "error": str(exc),
+                },
+            )
             continue
     if max_score is None:
         return None
@@ -152,3 +210,7 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         db.add(RunMetric(run_id=run.id, max_score=bounded_score))
     db.commit()
     return _round_score(bounded_score)
+
+
+# Backward-compatible alias. Prefer `ensure_completed_bindcraft_score`.
+ensure_completed_run_score = ensure_completed_bindcraft_score
