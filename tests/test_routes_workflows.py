@@ -42,7 +42,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"id": "PDL1", "number_of_final_designs": 20},
+        "formData": {"id": "s1", "binder_name": "PDL1", "number_of_final_designs": 20},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -72,7 +72,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         assert created_run.seqera_dataset_id == "dataset_123"
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
-        assert created_run.sample_id == "PDL1"
+        assert created_run.sample_id == "s1"
         metric = db.execute(
             select(RunMetric).where(RunMetric.run_id == created_run.id)
         ).scalar_one()

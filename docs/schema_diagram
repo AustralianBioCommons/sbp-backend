@@ -59,6 +59,9 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">seqera_run_id</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">binder_name</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
                          <TD BGCOLOR="#BBDEFB">run_name</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
