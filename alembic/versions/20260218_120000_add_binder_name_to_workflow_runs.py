@@ -5,8 +5,6 @@ Revises: acd29f674da4
 Create Date: 2026-02-18 12:00:00.000000
 """
 
-import sqlalchemy as sa
-
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -17,8 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("workflow_runs", sa.Column("binder_name", sa.Text(), nullable=True))
+    # Keep this migration idempotent so it can coexist with later binder_name migrations.
+    op.execute("ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS binder_name TEXT")
 
 
 def downgrade() -> None:
-    op.drop_column("workflow_runs", "binder_name")
+    op.execute("ALTER TABLE workflow_runs DROP COLUMN IF EXISTS binder_name")
