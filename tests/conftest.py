@@ -18,6 +18,7 @@ os.environ["WORK_SPACE"] = "test_workspace_id"
 os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
+os.environ["ENABLE_DB_ADMIN"] = "false"
 
 from uuid import UUID, uuid4
 

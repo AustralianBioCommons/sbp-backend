@@ -149,12 +149,22 @@ Required entries in `.env`:
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
 - `ENABLE_DB_ADMIN` — (Optional) set to `true` to enable Starlette Admin at `/admin`
 - `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
+- `DB_ADMIN_SESSION_SECRET` — Required when `ENABLE_DB_ADMIN=true`
+- `DB_ADMIN_AUTH_DOMAIN` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_DOMAIN`)
+- `DB_ADMIN_AUTH_CLIENT_ID` — Required when `ENABLE_DB_ADMIN=true`
+- `DB_ADMIN_AUTH_AUDIENCE` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_AUDIENCE`)
+- `DB_ADMIN_AUTH_REDIRECT_URI` — Required when `ENABLE_DB_ADMIN=true`
 
 ## DB Debug UI (Starlette Admin)
 
 Enable local DB debugging UI:
 
 ```bash
+export DB_ADMIN_AUTH_DOMAIN="your-auth-domain.example.com"
+export DB_ADMIN_AUTH_CLIENT_ID="your-auth-client-id"
+export DB_ADMIN_AUTH_AUDIENCE="https://your-auth-audience.example.com"
+export DB_ADMIN_AUTH_REDIRECT_URI="http://localhost:3000/admin/login"
+export DB_ADMIN_SESSION_SECRET="replace-with-long-random-secret"
 ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
 ```
 

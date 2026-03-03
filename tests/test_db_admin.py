@@ -6,6 +6,7 @@ import os
 from collections.abc import Generator
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,6 +19,14 @@ from app.db.admin import (
 )
 from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
+
+DB_ADMIN_REQUIRED_ENV = {
+    "DB_ADMIN_AUTH_DOMAIN": "example.auth.test",
+    "DB_ADMIN_AUTH_CLIENT_ID": "test-client-id",
+    "DB_ADMIN_AUTH_AUDIENCE": "https://example.api.test",
+    "DB_ADMIN_AUTH_REDIRECT_URI": "http://localhost:3000/admin/login",
+    "DB_ADMIN_SESSION_SECRET": "test-session-secret",
+}
 
 
 def test_is_db_admin_enabled_false_by_default(mocker):
@@ -48,11 +57,19 @@ def test_mount_db_admin_mounts_both_when_enabled(mocker):
     mount_admin = mocker.patch("app.db.admin._mount_starlette_admin")
     mount_debug = mocker.patch("app.db.admin._mount_db_debug_api")
 
-    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true"})
+    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true", **DB_ADMIN_REQUIRED_ENV})
     mount_db_admin(app)
 
     mount_admin.assert_called_once_with(app)
     mount_debug.assert_called_once_with(app)
+
+
+def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):
+    app = FastAPI()
+    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true"}, clear=True)
+
+    with pytest.raises(RuntimeError, match="required DB admin env vars are missing"):
+        mount_db_admin(app)
 
 
 def test_mount_db_debug_api_endpoints(test_db) -> None:

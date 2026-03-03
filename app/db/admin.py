@@ -35,9 +35,6 @@ from .models.core import (
 
 DEFAULT_DB_ADMIN_ROLE_CLAIM = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
-DEFAULT_DB_ADMIN_AUTH_DOMAIN = "dev.login.aai.test.biocommons.org.au"
-DEFAULT_DB_ADMIN_AUTH_AUDIENCE = "https://dev.api.aai.test.biocommons.org.au"
-DEFAULT_DB_ADMIN_AUTH_CLIENT_ID = "VgTSGK8Ph92r8mVhmVvQDrxGzbWX0vCm"
 
 
 def _is_db_admin_enabled() -> bool:
@@ -49,36 +46,25 @@ def _is_db_admin_cookie_secure() -> bool:
 
 
 def _get_db_admin_home_url() -> str:
-    return (
-        os.getenv("DB_ADMIN_FORBIDDEN_HOME_URL", "https://dev.sbp.test.biocommons.org.au/").strip()
-        or "https://dev.sbp.test.biocommons.org.au/"
-    )
+    return os.getenv("DB_ADMIN_FORBIDDEN_HOME_URL", "/").strip() or "/"
 
 
 def _get_admin_auth_domain() -> str | None:
-    value = (
-        os.getenv("DB_ADMIN_AUTH_DOMAIN")
-        or os.getenv("AUTH0_DOMAIN")
-        or DEFAULT_DB_ADMIN_AUTH_DOMAIN
-    )
+    value = os.getenv("DB_ADMIN_AUTH_DOMAIN") or os.getenv("AUTH0_DOMAIN")
     if not value:
         return None
     return value.strip()
 
 
 def _get_admin_auth_client_id() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_CLIENT_ID") or DEFAULT_DB_ADMIN_AUTH_CLIENT_ID
+    value = os.getenv("DB_ADMIN_AUTH_CLIENT_ID")
     if not value:
         return None
     return value.strip()
 
 
 def _get_admin_auth_audience() -> str | None:
-    value = (
-        os.getenv("DB_ADMIN_AUTH_AUDIENCE")
-        or os.getenv("AUTH0_AUDIENCE")
-        or DEFAULT_DB_ADMIN_AUTH_AUDIENCE
-    )
+    value = os.getenv("DB_ADMIN_AUTH_AUDIENCE") or os.getenv("AUTH0_AUDIENCE")
     if not value:
         return None
     return value.strip()
@@ -92,8 +78,27 @@ def _get_admin_session_secret() -> str:
     value = os.getenv("DB_ADMIN_SESSION_SECRET")
     if value and value.strip():
         return value.strip()
-    # Fallback for local/dev. Set DB_ADMIN_SESSION_SECRET in deployed environments.
-    return "sbp-admin-dev-session-secret-change-me"
+    raise RuntimeError("DB_ADMIN_SESSION_SECRET is required when ENABLE_DB_ADMIN=true")
+
+
+def _validate_db_admin_config() -> None:
+    missing: list[str] = []
+    if not _get_admin_auth_domain():
+        missing.append("DB_ADMIN_AUTH_DOMAIN or AUTH0_DOMAIN")
+    if not _get_admin_auth_client_id():
+        missing.append("DB_ADMIN_AUTH_CLIENT_ID")
+    if not _get_admin_auth_audience():
+        missing.append("DB_ADMIN_AUTH_AUDIENCE or AUTH0_AUDIENCE")
+    if not os.getenv("DB_ADMIN_AUTH_REDIRECT_URI", "").strip():
+        missing.append("DB_ADMIN_AUTH_REDIRECT_URI")
+    if not os.getenv("DB_ADMIN_SESSION_SECRET", "").strip():
+        missing.append("DB_ADMIN_SESSION_SECRET")
+
+    if missing:
+        missing_text = ", ".join(missing)
+        raise RuntimeError(
+            f"ENABLE_DB_ADMIN=true but required DB admin env vars are missing: {missing_text}"
+        )
 
 
 def _b64url_encode(value: bytes) -> str:
@@ -285,6 +290,7 @@ def mount_db_admin(app: FastAPI) -> None:
     if not _is_db_admin_enabled():
         return
 
+    _validate_db_admin_config()
     _mount_starlette_admin(app)
     _mount_db_debug_api(app)
 

@@ -69,6 +69,11 @@ def test_admin_debug_router_included_when_enabled():
         {
             "ALLOWED_ORIGINS": "http://localhost:3000",
             "ENABLE_DB_ADMIN": "true",
+            "DB_ADMIN_AUTH_DOMAIN": "example.auth.test",
+            "DB_ADMIN_AUTH_CLIENT_ID": "test-client-id",
+            "DB_ADMIN_AUTH_AUDIENCE": "https://example.api.test",
+            "DB_ADMIN_AUTH_REDIRECT_URI": "http://localhost:3000/admin/login",
+            "DB_ADMIN_SESSION_SECRET": "test-session-secret",
         },
     ):
         app = create_app()
