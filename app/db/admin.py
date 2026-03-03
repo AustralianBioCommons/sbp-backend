@@ -33,7 +33,8 @@ from .models.core import (
     WorkflowRun,
 )
 
-DEFAULT_DB_ADMIN_ROLE_CLAIM = "biocommons/role/sbp/admin"
+DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
+DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 
 
@@ -197,55 +198,17 @@ def _mask_email(value: str | None) -> str | None:
     return f"{masked_local}@{domain}"
 
 
-def _is_truthy_claim_value(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "admin", "sbp_admin"}
-    if isinstance(value, (list, tuple, set)):
-        return any(_is_truthy_claim_value(item) for item in value)
-    return False
-
-
-def _claim_contains_required_role(value: object, required_role: str) -> bool:
-    if isinstance(value, str):
-        return value.strip() == required_role
-    if isinstance(value, (list, tuple, set)):
-        return any(str(item).strip() == required_role for item in value)
-    return False
-
-
 def _claims_has_admin_role(claims: dict[str, object]) -> bool:
-    required_role = os.getenv("DB_ADMIN_ROLE_CLAIM", DEFAULT_DB_ADMIN_ROLE_CLAIM).strip()
-    if not required_role:
+    required_role = os.getenv("DB_ADMIN_REQUIRED_ROLE", DEFAULT_DB_ADMIN_REQUIRED_ROLE).strip()
+    roles_claim_name = os.getenv("DB_ADMIN_ROLES_CLAIM", DEFAULT_DB_ADMIN_ROLES_CLAIM).strip()
+    if not required_role or not roles_claim_name:
         return False
 
-    # 1) Direct custom claim as boolean/string/list.
-    direct_value = claims.get(required_role)
-    if _is_truthy_claim_value(direct_value) or _claim_contains_required_role(
-        direct_value, required_role
-    ):
-        return True
+    claim_value = claims.get(roles_claim_name)
+    if not isinstance(claim_value, (list, tuple, set)):
+        return False
 
-    # 2) Standard top-level arrays.
-    permissions = claims.get("permissions")
-    if _claim_contains_required_role(permissions, required_role):
-        return True
-
-    roles = claims.get("roles")
-    if _claim_contains_required_role(roles, required_role):
-        return True
-
-    # 3) Namespaced roles/permissions claims (common in Auth0 Actions).
-    for claim_key, claim_value in claims.items():
-        if not isinstance(claim_key, str):
-            continue
-        key = claim_key.lower()
-        if key.endswith("/roles") or key.endswith("/permissions"):
-            if _claim_contains_required_role(claim_value, required_role):
-                return True
-
-    return False
+    return any(str(item).strip() == required_role for item in claim_value)
 
 
 def _extract_admin_token_from_request(request: StarletteRequest) -> str | None:
@@ -348,7 +311,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                 value=_create_admin_session_value(claims),
                 httponly=True,
                 secure=_is_db_admin_cookie_secure(),
-                samesite="lax",
+                samesite="strict",
                 path="/admin",
             )
             return response
@@ -365,62 +328,42 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                 auth_client_id = _get_admin_auth_client_id()
                 auth_audience = _get_admin_auth_audience()
                 redirect_uri = os.getenv("DB_ADMIN_AUTH_REDIRECT_URI") or str(request.url)
-                auth_url: str | None = None
-                if auth_domain and auth_client_id and auth_audience:
-                    query = urlencode(
-                        {
-                            "response_type": "token",
-                            "client_id": auth_client_id,
-                            "audience": auth_audience,
-                            "scope": "openid profile email",
-                            "redirect_uri": redirect_uri,
-                        }
-                    )
-                    auth_url = f"https://{auth_domain}/authorize?{query}"
-
-                if auth_url:
-                    html = f"""
-                    <html>
-                      <head><title>SBP Admin Login</title></head>
-                      <body>
-                        <h2>SBP Admin Login</h2>
-                        <p>Redirecting to AAI login...</p>
-                        <form id="token-form" method="post">
-                          <input id="username" name="username" type="hidden" />
-                          <input name="password" type="hidden" value="unused" />
-                        </form>
-                        <script>
-                          (function () {{
-                            const hash = window.location.hash || "";
-                            const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
-                            const token = params.get("access_token");
-                            if (token) {{
-                              document.getElementById("username").value = token;
-                              document.getElementById("token-form").submit();
-                              return;
-                            }}
-                            window.location.assign("{auth_url}");
-                          }})();
-                        </script>
-                      </body>
-                    </html>
-                    """
-                else:
-                    html = """
-                    <html>
-                      <head><title>SBP Admin Login</title></head>
-                      <body>
-                        <h2>SBP Admin Login</h2>
-                        <p>Paste a valid Auth0 access token with admin role.</p>
-                        <form method="post">
-                          <label for="username">Access Token</label><br/>
-                          <input id="username" name="username" type="password" style="width: 640px;" /><br/><br/>
-                          <input name="password" type="hidden" value="unused" />
-                          <button type="submit">Login</button>
-                        </form>
-                      </body>
-                    </html>
-                    """
+                query = urlencode(
+                    {
+                        "response_type": "token",
+                        "client_id": auth_client_id,
+                        "audience": auth_audience,
+                        "scope": "openid profile email",
+                        "redirect_uri": redirect_uri,
+                    }
+                )
+                auth_url = f"https://{auth_domain}/authorize?{query}"
+                html = f"""
+                <html>
+                  <head><title>SBP Admin Login</title></head>
+                  <body>
+                    <h2>SBP Admin Login</h2>
+                    <p>Redirecting to AAI login...</p>
+                    <form id="token-form" method="post">
+                      <input id="username" name="username" type="hidden" />
+                      <input name="password" type="hidden" value="unused" />
+                    </form>
+                    <script>
+                      (function () {{
+                        const hash = window.location.hash || "";
+                        const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+                        const token = params.get("access_token");
+                        if (token) {{
+                          document.getElementById("username").value = token;
+                          document.getElementById("token-form").submit();
+                          return;
+                        }}
+                        window.location.assign("{auth_url}");
+                      }})();
+                    </script>
+                  </body>
+                </html>
+                """
                 return HTMLResponse(html)
             return await super().render_login(request, admin)
 

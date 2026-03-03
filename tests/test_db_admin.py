@@ -139,20 +139,42 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
 
 
 def test_claims_has_admin_role_from_direct_claim(mocker) -> None:
-    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": "biocommons/role/sbp/admin"})
-    claims = {"biocommons/role/sbp/admin": True}
+    required_role = "biocommons/role/sbp/admin"
+    roles_claim_name = "https://biocommons.org.au/roles"
+    mocker.patch.dict(
+        os.environ,
+        {
+            "DB_ADMIN_REQUIRED_ROLE": required_role,
+            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
+        },
+    )
+    claims = {roles_claim_name: [required_role]}
     assert _claims_has_admin_role(claims) is True
 
 
-def test_claims_has_admin_role_from_permissions(mocker) -> None:
+def test_claims_has_admin_role_from_roles_claim_list(mocker) -> None:
     required = "biocommons/role/sbp/admin"
-    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": required})
-    claims = {"permissions": [required]}
+    roles_claim_name = "https://biocommons.org.au/roles"
+    mocker.patch.dict(
+        os.environ,
+        {
+            "DB_ADMIN_REQUIRED_ROLE": required,
+            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
+        },
+    )
+    claims = {roles_claim_name: [required, "biocommons/role/sbp/user"]}
     assert _claims_has_admin_role(claims) is True
 
 
 def test_claims_has_admin_role_missing(mocker) -> None:
     required = "biocommons/role/sbp/admin"
-    mocker.patch.dict(os.environ, {"DB_ADMIN_ROLE_CLAIM": required})
-    claims = {"permissions": ["something/else"]}
+    roles_claim_name = "https://biocommons.org.au/roles"
+    mocker.patch.dict(
+        os.environ,
+        {
+            "DB_ADMIN_REQUIRED_ROLE": required,
+            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
+        },
+    )
+    claims = {roles_claim_name: ["something/else"]}
     assert _claims_has_admin_role(claims) is False
