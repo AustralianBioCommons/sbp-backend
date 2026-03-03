@@ -8,14 +8,16 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 from time import time
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette_admin._types import RequestAction
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.fields import StringField
@@ -262,6 +264,9 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     from starlette_admin.contrib.sqla import Admin, ModelView
 
     session_cookie_name = _get_admin_session_cookie_name()
+    oauth_state_cookie_name = "sbp_admin_oauth_state"
+    oauth_verifier_cookie_name = "sbp_admin_oauth_verifier"
+    oauth_next_cookie_name = "sbp_admin_oauth_next"
 
     class Auth0AdminAuthProvider(AuthProvider):
         async def login(
@@ -328,43 +333,122 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                 auth_client_id = _get_admin_auth_client_id()
                 auth_audience = _get_admin_auth_audience()
                 redirect_uri = os.getenv("DB_ADMIN_AUTH_REDIRECT_URI") or str(request.url)
+                auth_base = (
+                    auth_domain.rstrip("/")
+                    if auth_domain.startswith(("http://", "https://"))
+                    else f"https://{auth_domain.strip('/')}"
+                )
+
+                # OAuth callback from auth provider: exchange code for access token.
+                code = request.query_params.get("code")
+                callback_state = request.query_params.get("state")
+                if code:
+                    expected_state = request.cookies.get(oauth_state_cookie_name)
+                    if not expected_state or callback_state != expected_state:
+                        raise LoginFailed("Invalid OAuth state.")
+
+                    code_verifier = request.cookies.get(oauth_verifier_cookie_name)
+                    if not code_verifier:
+                        raise LoginFailed("Missing OAuth verifier.")
+
+                    token_payload = {
+                        "grant_type": "authorization_code",
+                        "client_id": auth_client_id,
+                        "code": code,
+                        "redirect_uri": redirect_uri,
+                        "code_verifier": code_verifier,
+                    }
+                    client_secret = os.getenv("DB_ADMIN_AUTH_CLIENT_SECRET", "").strip()
+                    if client_secret:
+                        token_payload["client_secret"] = client_secret
+
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            token_resp = await client.post(
+                                f"{auth_base}/oauth/token",
+                                data=token_payload,
+                                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                            )
+                            token_resp.raise_for_status()
+                            token_data = token_resp.json()
+                    except Exception as exc:
+                        raise LoginFailed("Failed to complete OAuth login.") from exc
+
+                    access_token = str(token_data.get("access_token") or "").strip()
+                    if not access_token:
+                        raise LoginFailed("No access token returned by auth provider.")
+
+                    # Reuse existing token + role validation logic.
+                    response = RedirectResponse(
+                        url=request.cookies.get(oauth_next_cookie_name) or "/admin/",
+                        status_code=status.HTTP_303_SEE_OTHER,
+                    )
+                    response = await self.login(
+                        username=access_token,
+                        password="unused",
+                        remember_me=False,
+                        request=request,
+                        response=response,
+                    )
+                    response.delete_cookie(key=oauth_state_cookie_name, path="/admin")
+                    response.delete_cookie(key=oauth_verifier_cookie_name, path="/admin")
+                    response.delete_cookie(key=oauth_next_cookie_name, path="/admin")
+                    return response
+
+                # Begin OAuth authorization code flow with PKCE.
+                next_url = request.query_params.get("next") or "/admin/"
+                if not next_url.startswith("/"):
+                    next_url = "/admin/"
+
+                code_verifier = secrets.token_urlsafe(64)
+                code_challenge = _b64url_encode(
+                    hashlib.sha256(code_verifier.encode("utf-8")).digest()
+                )
+                oauth_state = secrets.token_urlsafe(32)
                 query = urlencode(
                     {
-                        "response_type": "token",
+                        "response_type": "code",
                         "client_id": auth_client_id,
                         "audience": auth_audience,
                         "scope": "openid profile email",
                         "redirect_uri": redirect_uri,
+                        "state": oauth_state,
+                        "code_challenge": code_challenge,
+                        "code_challenge_method": "S256",
                     }
                 )
-                auth_url = f"https://{auth_domain}/authorize?{query}"
-                html = f"""
-                <html>
-                  <head><title>SBP Admin Login</title></head>
-                  <body>
-                    <h2>SBP Admin Login</h2>
-                    <p>Redirecting to AAI login...</p>
-                    <form id="token-form" method="post">
-                      <input id="username" name="username" type="hidden" />
-                      <input name="password" type="hidden" value="unused" />
-                    </form>
-                    <script>
-                      (function () {{
-                        const hash = window.location.hash || "";
-                        const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
-                        const token = params.get("access_token");
-                        if (token) {{
-                          document.getElementById("username").value = token;
-                          document.getElementById("token-form").submit();
-                          return;
-                        }}
-                        window.location.assign("{auth_url}");
-                      }})();
-                    </script>
-                  </body>
-                </html>
-                """
-                return HTMLResponse(html)
+                response = RedirectResponse(
+                    url=f"{auth_base}/authorize?{query}",
+                    status_code=status.HTTP_303_SEE_OTHER,
+                )
+                response.set_cookie(
+                    key=oauth_state_cookie_name,
+                    value=oauth_state,
+                    httponly=True,
+                    secure=_is_db_admin_cookie_secure(),
+                    # OAuth callback is a cross-site top-level navigation; Lax is required.
+                    samesite="lax",
+                    path="/admin",
+                )
+                response.set_cookie(
+                    key=oauth_verifier_cookie_name,
+                    value=code_verifier,
+                    httponly=True,
+                    secure=_is_db_admin_cookie_secure(),
+                    # OAuth callback is a cross-site top-level navigation; Lax is required.
+                    samesite="lax",
+                    path="/admin",
+                )
+                response.set_cookie(
+                    key=oauth_next_cookie_name,
+                    value=next_url,
+                    httponly=True,
+                    secure=_is_db_admin_cookie_secure(),
+                    # OAuth callback is a cross-site top-level navigation; Lax is required.
+                    samesite="lax",
+                    path="/admin",
+                )
+                return response
             return await super().render_login(request, admin)
 
         async def is_authenticated(self, request: StarletteRequest) -> bool:
