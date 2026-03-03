@@ -296,10 +296,7 @@ def mount_db_admin(app: FastAPI) -> None:
 
 
 def _mount_starlette_admin(app: FastAPI) -> None:
-    try:
-        from starlette_admin.contrib.sqla import Admin, ModelView
-    except ImportError as exc:  # pragma: no cover - dependency issue
-        raise RuntimeError("ENABLE_DB_ADMIN=true but starlette-admin is not installed.") from exc
+    from starlette_admin.contrib.sqla import Admin, ModelView
 
     session_cookie_name = _get_admin_session_cookie_name()
 
