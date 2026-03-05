@@ -120,7 +120,7 @@ def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
 def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
     candidates: list[str] = []
     sample_id = _get_sample_id_for_score(run)
-    prefixes = []
+    prefixes: list[str] = []
     run_uuid = str(getattr(run, "id", "")).strip()
     if run_uuid:
         prefixes.append(run_uuid)

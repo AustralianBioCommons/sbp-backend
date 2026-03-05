@@ -58,6 +58,7 @@ FastAPI backend for handling Seqera Platform workflow launches.
 - `GET /files` — List S3 files
 - `GET /csv/{file_key}` — Read CSV rows from S3
 - `GET /run/{run_id}/max-score` — Fetch max score for a run
+- `GET /admin` — Optional Starlette Admin UI for database debugging (disabled by default)
 
 ## Database Schema
 
@@ -146,6 +147,30 @@ Required entries in `.env`:
 - `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
+- `ENABLE_DB_ADMIN` — (Optional) set to `true` to enable Starlette Admin at `/admin`
+- `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
+- `DB_ADMIN_SESSION_SECRET` — Required when `ENABLE_DB_ADMIN=true`
+- `DB_ADMIN_AUTH_DOMAIN` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_DOMAIN`)
+- `DB_ADMIN_AUTH_CLIENT_ID` — Required when `ENABLE_DB_ADMIN=true`
+- `DB_ADMIN_AUTH_AUDIENCE` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_AUDIENCE`)
+- `DB_ADMIN_AUTH_REDIRECT_URI` — Required when `ENABLE_DB_ADMIN=true`
+
+## DB Debug UI (Starlette Admin)
+
+Enable local DB debugging UI:
+
+```bash
+export DB_ADMIN_AUTH_DOMAIN="your-auth-domain.example.com"
+export DB_ADMIN_AUTH_CLIENT_ID="your-auth-client-id"
+export DB_ADMIN_AUTH_AUDIENCE="https://your-auth-audience.example.com"
+export DB_ADMIN_AUTH_REDIRECT_URI="http://localhost:3000/admin/login"
+export DB_ADMIN_SESSION_SECRET="replace-with-long-random-secret"
+ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
+```
+
+Then open `http://localhost:3000/admin`.
+
+Use this only in trusted/internal environments.
 
 ## Containerization
 

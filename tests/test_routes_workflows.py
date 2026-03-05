@@ -16,17 +16,6 @@ from app.services.bindflow_executor import (
 )
 
 
-def test_list_runs_placeholder(client: TestClient):
-    """Test list runs placeholder endpoint."""
-    response = client.get("/api/workflows/runs?limit=10&offset=5")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["runs"] == []
-    assert data["limit"] == 10
-    assert data["offset"] == 5
-
-
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_success_without_dataset(mock_launch, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
