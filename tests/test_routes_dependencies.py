@@ -52,6 +52,31 @@ def test_get_current_user_id_missing_header():
     assert exc.value.status_code == 401
 
 
+def test_get_current_user_id_success(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims", return_value={"sub": "auth0|x"}
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    user = SimpleNamespace(id="u-1", name="Existing User", email="existing@example.com")
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    assert get_current_user_id(credentials, _DB(user)) == "u-1"
+
+
+def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "auth0|x", "name": "Test User", "email": "Test@Example.com"},
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    db = _DB(None)
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    _ = get_current_user_id(credentials, db)
+    assert db.committed is True
+    assert len(db.added) == 1
+    created_user = db.added[0]
+    assert created_user.auth0_user_id == "auth0|x"
+    assert created_user.name == "Test User"
+    assert created_user.email == "test@example.com"
 def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: MockerFixture):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",

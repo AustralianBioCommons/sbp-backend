@@ -1549,7 +1549,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.14" },
     { name = "sqlalchemy", specifier = "~=2.0" },
     { name = "sqlalchemy-data-model-visualizer", marker = "extra == 'dev'", specifier = "~=0.1" },
-    { name = "starlette-admin", specifier = "~=0.14" },
+    { name = "starlette-admin", specifier = "~=0.16" },
     { name = "uvicorn", extras = ["standard"], specifier = "~=0.29" },
 ]
 provides-extras = ["dev"]
