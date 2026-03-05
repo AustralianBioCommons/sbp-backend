@@ -187,6 +187,7 @@ Use this only in trusted/internal environments.
    ```
 
    Override `PORT` or uvicorn flags in the env file if you need different bindings. Any value defined in `.env` becomes available to the app inside the container.
+   The container enables uvicorn proxy headers so deployments behind ALB preserve HTTPS URL generation for admin assets and redirects.
 
 ## Notes
 
