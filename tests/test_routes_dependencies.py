@@ -77,6 +77,8 @@ def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
     assert created_user.auth0_user_id == "auth0|x"
     assert created_user.name == "Test User"
     assert created_user.email == "test@example.com"
+
+
 def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: MockerFixture):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
