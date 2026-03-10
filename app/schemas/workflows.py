@@ -221,6 +221,30 @@ class JobSettingParamsResponse(BaseModel):
     settingParams: dict[str, Any] | None = None
 
 
+class ResultLogEntry(BaseModel):
+    """Frontend-friendly representation of a single log line."""
+
+    index: int
+    raw: str
+    message: str
+    level: str = "INFO"
+    timestamp: str | None = None
+
+
+class ResultLogsResponse(BaseModel):
+    """Workflow logs for a result view."""
+
+    runId: str
+    truncated: bool
+    pending: bool
+    message: str
+    rewindToken: str
+    forwardToken: str
+    downloads: list[dict[str, str]] = Field(default_factory=list)
+    entries: list[str] = Field(default_factory=list)
+    formattedEntries: list[ResultLogEntry] = Field(default_factory=list)
+
+
 class DeleteJobResponse(BaseModel):
     """Response for single job deletion."""
 
