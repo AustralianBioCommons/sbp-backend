@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -54,18 +55,30 @@ async def get_result_logs(
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    entries = payload.get("entries")
+    # Seqera may return either the log object directly or wrapped under a top-level "log" key.
+    log_payload: dict[str, Any]
+    nested_log = payload.get("log")
+    if isinstance(nested_log, dict):
+        log_payload = nested_log
+    else:
+        log_payload = payload
+
+    entries = log_payload.get("entries")
     normalized_entries = [str(item) for item in entries] if isinstance(entries, list) else []
 
     return ResultLogsResponse(
         runId=run_id,
-        truncated=bool(payload.get("truncated", False)),
-        pending=bool(payload.get("pending", False)),
-        message=str(payload.get("message", "")),
-        rewindToken=str(payload.get("rewindToken", "")),
-        forwardToken=str(payload.get("forwardToken", "")),
-        downloads=payload.get("downloads", [])
-        if isinstance(payload.get("downloads"), list)
+        truncated=bool(log_payload.get("truncated", False)),
+        pending=bool(log_payload.get("pending", False)),
+        message="" if log_payload.get("message") is None else str(log_payload.get("message", "")),
+        rewindToken=""
+        if log_payload.get("rewindToken") is None
+        else str(log_payload.get("rewindToken", "")),
+        forwardToken=""
+        if log_payload.get("forwardToken") is None
+        else str(log_payload.get("forwardToken", "")),
+        downloads=log_payload.get("downloads", [])
+        if isinstance(log_payload.get("downloads"), list)
         else [],
         entries=normalized_entries,
         formattedEntries=format_log_entries(normalized_entries),
