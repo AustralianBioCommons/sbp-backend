@@ -25,9 +25,9 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     from .db.admin import mount_db_admin
     from .routes.pdb_upload import router as pdb_router
-    from .routes.results import router as results_router
     from .routes.s3_files import router as s3_router
     from .routes.workflow.jobs import router as workflow_jobs_router
+    from .routes.workflow.results import router as results_router
     from .routes.workflows import router as workflow_router
 
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
