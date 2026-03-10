@@ -73,4 +73,6 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
         "id": "s2",
         "binder_name": "PDL2",
         "number_of_final_designs": 25,
+        "_source": "fallback_local",
+        "_warning": "submitted_form_data_missing",
     }
