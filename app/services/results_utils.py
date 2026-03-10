@@ -12,6 +12,7 @@ _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\
 _LOG_TIMESTAMP_PATTERN = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ][0-9:.+-]+Z?)\s*(?P<rest>.*)$"
 )
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 
 def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
@@ -39,7 +40,7 @@ def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:
     formatted: list[ResultLogEntry] = []
     for index, raw_entry in enumerate(entries or []):
         raw = str(raw_entry)
-        line = raw.strip()
+        line = _ANSI_ESCAPE_PATTERN.sub("", raw).strip()
         timestamp: str | None = None
         message = line
 

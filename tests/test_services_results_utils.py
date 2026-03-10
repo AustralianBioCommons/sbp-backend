@@ -11,10 +11,11 @@ def test_format_log_entries_extracts_timestamp_and_level():
             "2026-03-10T10:00:00Z INFO Starting workflow",
             "plain line without metadata",
             "2026-03-10 10:01:00 WARNING Queue is full",
+            "  \u001b[0;34mworkDir                   : \u001b[0;32m/scratch/yz52/sbp/workdir\u001b[0m",
         ]
     )
 
-    assert len(result) == 3
+    assert len(result) == 4
     assert result[0].timestamp == "2026-03-10T10:00:00Z"
     assert result[0].level == "INFO"
     assert result[0].message == "INFO Starting workflow"
@@ -22,3 +23,5 @@ def test_format_log_entries_extracts_timestamp_and_level():
     assert result[1].level == "INFO"
     assert result[1].message == "plain line without metadata"
     assert result[2].level == "WARN"
+    assert "\u001b[" not in result[3].message
+    assert result[3].message == "workDir                   : /scratch/yz52/sbp/workdir"
