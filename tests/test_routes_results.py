@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.db.models.core import AppUser, RunMetric, WorkflowRun
-from app.routes.results import get_result_setting_params
+from app.routes.workflow.results import get_result_setting_params
 
 
 @pytest.mark.asyncio
