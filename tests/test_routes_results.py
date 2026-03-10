@@ -5,9 +5,10 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.db.models.core import AppUser, RunMetric, WorkflowRun
-from app.routes.workflow.results import get_result_setting_params
+from app.routes.workflow.results import get_result_logs, get_result_setting_params
 
 
 @pytest.mark.asyncio
@@ -74,3 +75,21 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
         "binder_name": "PDL2",
         "number_of_final_designs": 25,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-3",
+        name="Results User 3",
+        email="results3@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_logs("wf-logs-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
