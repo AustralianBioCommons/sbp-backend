@@ -1,6 +1,14 @@
 """Core database models for workflows and run metadata."""
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, Numeric, PrimaryKeyConstraint, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    ForeignKey,
+    Numeric,
+    PrimaryKeyConstraint,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
