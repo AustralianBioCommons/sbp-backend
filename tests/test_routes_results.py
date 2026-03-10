@@ -45,7 +45,6 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
         "number_of_final_designs": 100,
     }
 
-
 @pytest.mark.asyncio
 async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
     user = AppUser(
