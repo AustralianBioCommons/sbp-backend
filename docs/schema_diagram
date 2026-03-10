@@ -62,8 +62,14 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">binder_name</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">sample_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
                          <TD BGCOLOR="#BBDEFB">run_name</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">submitted_form_data</TD>
+                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">work_dir</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
@@ -124,6 +130,9 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">max_score</TD>
                          <TD BGCOLOR="#BBDEFB">NUMERIC(8, 2) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">final_design_count</TD>
+                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
                          </TR></TABLE>> URL="http://RunMetric_details.html"]
 	RunMetric -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
 }

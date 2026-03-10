@@ -1,6 +1,14 @@
 """Core database models for workflows and run metadata."""
 
-from sqlalchemy import BigInteger, ForeignKey, Numeric, PrimaryKeyConstraint, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    ForeignKey,
+    Numeric,
+    PrimaryKeyConstraint,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,6 +53,7 @@ class WorkflowRun(Base):
     binder_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     sample_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_form_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")

@@ -148,6 +148,7 @@ async def launch_workflow(
         binder_name=binder_name,
         sample_id=form_id,
         run_name=run_name,
+        submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
     )
 

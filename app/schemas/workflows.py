@@ -214,6 +214,13 @@ class JobDetailsResponse(BaseModel):
     finalDesignCount: int | None = Field(None, description="Number of final designs")
 
 
+class JobSettingParamsResponse(BaseModel):
+    """Submitted form settings for a job result view."""
+
+    runId: str
+    settingParams: dict[str, Any] | None = None
+
+
 class DeleteJobResponse(BaseModel):
     """Response for single job deletion."""
 
