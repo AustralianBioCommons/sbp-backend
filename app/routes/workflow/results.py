@@ -64,6 +64,9 @@ async def get_result_logs(
         log_payload = payload
 
     entries = log_payload.get("entries")
+    # Seqera log items are expected to be text lines, but defensive normalization
+    # handles non-string values (e.g. null/number/object) and keeps a stable
+    # `list[str]` response contract for the frontend.
     normalized_entries = [str(item) for item in entries] if isinstance(entries, list) else []
 
     return ResultLogsResponse(
