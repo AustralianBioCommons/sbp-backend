@@ -504,21 +504,9 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     class AppUserAdmin(ModelView):
         fields = [
             "id",
-            MaskedAuth0UserIdField(
-                "auth0_user_id",
-                label="Auth0 User ID",
-                read_only=True,
-                exclude_from_create=True,
-                exclude_from_edit=True,
-            ),
+            "auth0_user_id",
             "name",
-            MaskedEmailField(
-                "email",
-                label="Email",
-                read_only=True,
-                exclude_from_create=True,
-                exclude_from_edit=True,
-            ),
+            "email",
         ]
 
     class WorkflowAdmin(ModelView):
