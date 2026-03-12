@@ -261,12 +261,18 @@ class ResultDownloadsResponse(BaseModel):
     downloads: list[ResultDownloadItem] = Field(default_factory=list)
 
 
+class ResultSnapshotsResponse(BaseModel):
+    """Snapshot download links for a result view."""
+
+    runId: str
+    snapshots: list[ResultDownloadItem] = Field(default_factory=list)
+
+
 class ResultReportResponse(BaseModel):
     """Primary HTML report link for a result view."""
 
     runId: str
     report: ResultDownloadItem | None = None
-    snapshot: ResultDownloadItem | None = None
 
 
 class DeleteJobResponse(BaseModel):

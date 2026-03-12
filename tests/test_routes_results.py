@@ -14,6 +14,7 @@ from app.routes.workflow.results import (
     get_result_logs,
     get_result_report,
     get_result_setting_params,
+    get_result_snapshots,
 )
 from app.services.s3 import S3ConfigurationError, S3ServiceError
 from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
@@ -301,6 +302,10 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
             object_key="demo2/Accepted/Animation/PDL1_l100_s975117.html",
             uri="s3://bucket/demo2/Accepted/Animation/PDL1_l100_s975117.html",
         ),
+        S3Object(
+            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
+            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
+        ),
     ]
     test_db.add_all([user, run, *outputs])
     test_db.commit()
@@ -325,6 +330,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         "demo2_final_design_stats.csv",
         "1_PDL1_model1.pdb",
     ]
+    assert all(item.category != "snapshot" for item in result.downloads)
     assert (
         result.downloads[1].url
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
@@ -401,6 +407,126 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
     ):
         with pytest.raises(HTTPException) as exc_info:
             await get_result_downloads("wf-downloads-service-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream failed"
+
+
+@pytest.mark.asyncio
+async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-snapshots-1",
+        name="Results User Snapshots 1",
+        email="results-snapshots1@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-snapshots-1",
+        sample_id="demo2",
+        work_dir="/tmp/wf-snapshots-1",
+    )
+    outputs = [
+        S3Object(
+            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
+            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
+        ),
+        S3Object(
+            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview_2.png",
+            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview_2.png",
+        ),
+    ]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.commit()
+
+    with patch(
+        "app.services.job_utils.generate_presigned_url",
+        new_callable=AsyncMock,
+        side_effect=lambda key: f"https://signed.example/{key}",
+    ), patch(
+        "app.services.job_utils.list_s3_files",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = await get_result_snapshots("wf-snapshots-1", user.id, test_db)
+
+    assert result.runId == "wf-snapshots-1"
+    assert [item.category for item in result.snapshots] == ["snapshot", "snapshot"]
+    assert [item.label for item in result.snapshots] == ["demo2_preview.png", "demo2_preview_2.png"]
+
+
+@pytest.mark.asyncio
+async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-snapshots-missing",
+        name="Results User Snapshots Missing",
+        email="results-snapshots-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_snapshots("wf-snapshots-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-snapshots-config-error",
+        name="Results User Snapshots Config",
+        email="results-snapshots-config@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-snapshots-config-error",
+        work_dir="/tmp/wf-snapshots-config-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_snapshot_downloads",
+        new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_snapshots("wf-snapshots-config-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "missing s3 config"
+
+
+@pytest.mark.asyncio
+async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-snapshots-service-error",
+        name="Results User Snapshots Service",
+        email="results-snapshots-service@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-snapshots-service-error",
+        work_dir="/tmp/wf-snapshots-service-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_snapshot_downloads",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_snapshots("wf-snapshots-service-error", user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
@@ -513,77 +639,6 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_returns_snapshot_for_run_uuid_bindcraft_png(test_db):
-    user = AppUser(
-        id=uuid4(),
-        auth0_user_id="auth0|results-user-report-snapshot",
-        name="Results User Report Snapshot",
-        email="results-report-snapshot@example.com",
-    )
-    run_id = uuid4()
-    run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
-        seqera_run_id="wf-report-snapshot",
-        sample_id="s1",
-        work_dir="/tmp/wf-report-snapshot",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    report_key = f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/PDL1_l79_s800698.html"
-    snapshot_key = f"{run_id}/bindcraft/s1_0_output/PDL1_l79_s800698.png"
-
-    def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/bindcraft/s1_0_output/":
-            return [
-                {
-                    "key": snapshot_key,
-                    "size": 456,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        if prefix == f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/":
-            return [
-                {
-                    "key": report_key,
-                    "size": 123,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        return []
-
-    with (
-        patch(
-            "app.services.job_utils.list_s3_files",
-            new_callable=AsyncMock,
-            side_effect=_list_side_effect,
-        ),
-        patch(
-            "app.services.job_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
-        ),
-    ):
-        result = await get_result_report("wf-report-snapshot", user.id, test_db)
-
-    assert result.report is not None
-    assert result.report.key == report_key
-    assert result.snapshot is not None
-    assert result.snapshot.category == "snapshot"
-    assert result.snapshot.key == snapshot_key
-
-    synced_output = test_db.get(S3Object, snapshot_key)
-    assert synced_output is not None
-    synced_link = (
-        test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
-    )
-    assert synced_link is not None
-
-
-@pytest.mark.asyncio
 async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
         id=uuid4(),
@@ -677,12 +732,8 @@ async def test_get_result_report_allows_missing_report_payload(test_db):
     with patch(
         "app.routes.workflow.results.get_result_report_download",
         new=AsyncMock(return_value=None),
-    ), patch(
-        "app.routes.workflow.results.get_result_snapshot_download",
-        new=AsyncMock(return_value=None),
     ):
         result = await get_result_report("wf-report-none", user.id, test_db)
 
     assert result.runId == "wf-report-none"
     assert result.report is None
-    assert result.snapshot is None

@@ -292,7 +292,7 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
 
 
 async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dict[str, str]]:
-    """Return pre-signed links for the result artifacts shown in the UI."""
+    """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
     await sync_bindcraft_outputs(db, run)
     matched: dict[str, tuple[str, str]] = {}
 
@@ -302,7 +302,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
             matched[key] = classified
 
     found_categories = {category for category, _label in matched.values()}
-    missing_categories = {"stats_csv", "pdb", "report", "snapshot"} - found_categories
+    missing_categories = {"stats_csv", "pdb", "report"} - found_categories
 
     if missing_categories:
         for prefix in _build_bindcraft_output_listing_prefixes(run):
@@ -315,13 +315,15 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
                 if classified:
                     matched[key] = classified
 
-    category_order = {"report": 0, "snapshot": 1, "stats_csv": 2, "pdb": 3}
+    category_order = {"report": 0, "stats_csv": 1, "pdb": 2}
     downloads: list[dict[str, str]] = []
 
     for key, (category, label) in sorted(
         matched.items(),
         key=lambda item: (category_order.get(item[1][0], 99), item[1][1].lower(), item[0]),
     ):
+        if category == "snapshot":
+            continue
         downloads.append(
             {
                 "label": label,
@@ -368,8 +370,8 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> dict[str,
     }
 
 
-async def get_result_snapshot_download(db: Session, run: WorkflowRun) -> dict[str, str] | None:
-    """Return a single pre-signed snapshot image for the result view."""
+async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[dict[str, str]]:
+    """Return pre-signed snapshot image links for the result view."""
     await sync_bindcraft_outputs(db, run)
     snapshot_keys: list[str] = []
 
@@ -389,17 +391,17 @@ async def get_result_snapshot_download(db: Session, run: WorkflowRun) -> dict[st
                 if classified and classified[0] == "snapshot":
                     snapshot_keys.append(key)
 
-    if not snapshot_keys:
-        return None
-
-    snapshot_key = sorted(snapshot_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key))[0]
-    label = snapshot_key.rsplit("/", 1)[-1]
-    return {
-        "label": label,
-        "key": snapshot_key,
-        "url": await generate_presigned_url(snapshot_key),
-        "category": "snapshot",
-    }
+    downloads: list[dict[str, str]] = []
+    for snapshot_key in sorted(snapshot_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key)):
+        downloads.append(
+            {
+                "label": snapshot_key.rsplit("/", 1)[-1],
+                "key": snapshot_key,
+                "url": await generate_presigned_url(snapshot_key),
+                "category": "snapshot",
+            }
+        )
+    return downloads
 
 
 async def ensure_completed_bindcraft_score(
