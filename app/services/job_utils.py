@@ -217,41 +217,16 @@ def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
 
 def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     sample_id = _get_sample_id_for_score(run)
-    prefixes: list[str] = []
     run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not sample_id or not run_uuid:
+        return []
 
-    def _add(value: str) -> None:
-        cleaned = value.strip().strip("/")
-        if cleaned and cleaned not in prefixes:
-            prefixes.append(cleaned)
-
-    for identifier in (
-        sample_id,
-        str(getattr(run, "seqera_run_id", "") or "").strip(),
-        str(getattr(run, "id", "") or "").strip(),
-    ):
-        if not identifier:
-            continue
-        _add(f"{identifier}/ranker")
-        _add(f"{identifier}/Accepted/Animation")
-        _add(f"results/{identifier}/ranker")
-        _add(f"results/{identifier}/Accepted/Animation")
-
-    if sample_id:
-        _add(f"bindcraft/{sample_id}_0_output/Accepted/Animation")
-        _add(f"{sample_id}_0_output/Accepted/Animation")
-        _add(f"bindcraft/{sample_id}_0_output")
-        _add(f"{sample_id}_0_output")
-        if run_uuid:
-            _add(f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation")
-            _add(f"{run_uuid}/{sample_id}_0_output/Accepted/Animation")
-            _add(f"{run_uuid}/bindcraft/{sample_id}_0_output")
-            _add(f"{run_uuid}/{sample_id}_0_output")
-
-    if run_uuid:
-        _add(run_uuid)
-
-    return [f"{prefix}/" for prefix in prefixes]
+    return [
+        f"{run_uuid}/ranker/",
+        f"{run_uuid}/Accepted/Animation/",
+        f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation/",
+        f"{run_uuid}/bindcraft/{sample_id}_0_output/",
+    ]
 
 
 def _build_s3_uri(key: str) -> str:

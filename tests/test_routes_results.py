@@ -333,58 +333,6 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_falls_back_to_bindcraft_animation_prefix(test_db):
-    user = AppUser(
-        id=uuid4(),
-        auth0_user_id="auth0|results-user-6",
-        name="Results User 6",
-        email="results6@example.com",
-    )
-    run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
-        seqera_run_id="wf-downloads-2",
-        sample_id="demo2",
-        work_dir="/tmp/wf-downloads-2",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == "bindcraft/demo2_0_output/Accepted/Animation/":
-            return [
-                {
-                    "key": "bindcraft/demo2_0_output/Accepted/Animation/PDL1_l100_s975117.html",
-                    "size": 123,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        return []
-
-    with (
-        patch(
-            "app.services.job_utils.list_s3_files",
-            new_callable=AsyncMock,
-            side_effect=_list_side_effect,
-        ) as mock_list,
-        patch(
-            "app.services.job_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
-        ),
-    ):
-        result = await get_result_downloads("wf-downloads-2", user.id, test_db)
-
-    assert len(result.downloads) == 1
-    assert result.downloads[0].category == "report"
-    assert result.downloads[0].key == (
-        "bindcraft/demo2_0_output/Accepted/Animation/PDL1_l100_s975117.html"
-    )
-    assert mock_list.await_count >= 1
-
-
-@pytest.mark.asyncio
 async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
         id=uuid4(),
@@ -505,56 +453,6 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_falls_back_to_bindcraft_animation_prefix(test_db):
-    user = AppUser(
-        id=uuid4(),
-        auth0_user_id="auth0|results-user-8",
-        name="Results User 8",
-        email="results8@example.com",
-    )
-    run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
-        seqera_run_id="wf-report-2",
-        sample_id="demo2",
-        work_dir="/tmp/wf-report-2",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == "bindcraft/demo2_0_output/Accepted/Animation/":
-            return [
-                {
-                    "key": "bindcraft/demo2_0_output/Accepted/Animation/PDL1_l70_s151467.html",
-                    "size": 123,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        return []
-
-    with (
-        patch(
-            "app.services.job_utils.list_s3_files",
-            new_callable=AsyncMock,
-            side_effect=_list_side_effect,
-        ),
-        patch(
-            "app.services.job_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
-        ),
-    ):
-        result = await get_result_report("wf-report-2", user.id, test_db)
-
-    assert result.report is not None
-    assert result.report.key == (
-        "bindcraft/demo2_0_output/Accepted/Animation/PDL1_l70_s151467.html"
-    )
-
-
-@pytest.mark.asyncio
 async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_db):
     user = AppUser(
         id=uuid4(),
@@ -576,7 +474,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
     real_key = f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/PDL1_l79_s800698.html"
 
     def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/":
+        if prefix == f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/":
             return [
                 {
                     "key": real_key,
