@@ -13,7 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
-from .s3 import S3ConfigurationError, S3ServiceError, calculate_csv_column_max
+from .results_utils import _s3_uri_to_key, get_sample_id_for_result, sync_bindcraft_outputs
+from .s3 import (
+    S3ConfigurationError,
+    S3ServiceError,
+    calculate_csv_column_max,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,32 +94,8 @@ def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, 
     return {seqera_run_id: workflow_name for seqera_run_id, workflow_name in rows if workflow_name}
 
 
-def _s3_uri_to_key(uri: str | None) -> str | None:
-    if not uri:
-        return None
-    value = uri.strip()
-    if not value:
-        return None
-    if not value.startswith("s3://"):
-        return value
-    # s3://bucket/key -> key
-    parts = value.split("/", 3)
-    if len(parts) < 4:
-        return None
-    return parts[3].strip() or None
-
-
 def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
-    # Form schema `id` should be persisted on the run model as metadata.
-    sample_id = (
-        getattr(run, "sample_id", None)
-        or getattr(run, "binder_name", None)
-        or getattr(run, "form_id", None)
-    )
-    if not sample_id:
-        return None
-    value = str(sample_id).strip()
-    return value or None
+    return get_sample_id_for_result(run)
 
 
 def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> list[str]:
@@ -177,6 +158,8 @@ async def ensure_completed_bindcraft_score(
 ) -> float | None:
     if ui_status != "Completed":
         return None
+
+    await sync_bindcraft_outputs(db, run)
 
     existing = db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).scalar_one_or_none()
     if existing and existing.max_score is not None:
