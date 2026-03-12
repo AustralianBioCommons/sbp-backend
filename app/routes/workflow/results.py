@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ...schemas.workflows import (
     JobSettingParamsResponse,
+    ResultDownloadItem,
     ResultDownloadsResponse,
     ResultLogsResponse,
     ResultReportResponse,
@@ -118,7 +119,10 @@ async def get_result_downloads(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultDownloadsResponse(runId=run_id, downloads=downloads)
+    return ResultDownloadsResponse(
+        runId=run_id,
+        downloads=[ResultDownloadItem(**download) for download in downloads],
+    )
 
 
 @router.get("/{run_id}/report", response_model=ResultReportResponse)
@@ -141,4 +145,7 @@ async def get_result_report(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultReportResponse(runId=run_id, report=report)
+    return ResultReportResponse(
+        runId=run_id,
+        report=ResultDownloadItem(**report) if report is not None else None,
+    )
