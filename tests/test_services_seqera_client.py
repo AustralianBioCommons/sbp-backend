@@ -12,6 +12,7 @@ from app.services.seqera_client import (
     delete_workflow_raw,
     delete_workflows_raw,
     describe_workflow_raw,
+    get_workflow_logs_raw,
     list_workflows_raw,
 )
 from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
@@ -36,6 +37,7 @@ async def test_describe_and_list_success(monkeypatch):
     with patch("httpx.AsyncClient.get", return_value=ok):
         assert await list_workflows_raw() == {"ok": True}
         assert await describe_workflow_raw("wf-1") == {"ok": True}
+        assert await get_workflow_logs_raw("wf-1") == {"ok": True}
 
 
 @pytest.mark.asyncio

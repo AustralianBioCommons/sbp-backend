@@ -64,6 +64,22 @@ async def describe_workflow_raw(
     return cast(dict[str, Any], response.json())
 
 
+async def get_workflow_logs_raw(
+    workflow_id: str,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    api_url, token, params = _get_api_context(workspace_id)
+    url = f"{api_url}/workflow/{workflow_id}/log"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
+        response = await client.get(url, headers=_headers(token), params=params)
+
+    if response.is_error:
+        raise SeqeraAPIError(
+            f"Failed to retrieve workflow logs: {response.status_code} {response.text}"
+        )
+    return cast(dict[str, Any], response.json())
+
+
 async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
     api_url, token, params = _get_api_context(workspace_id)
     url = f"{api_url}/workflow/{workflow_id}/cancel"
