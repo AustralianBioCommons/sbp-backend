@@ -255,8 +255,17 @@ async def test_ensure_completed_bindcraft_score_branches():
 
     # calculate + add path
     db_new = _DB(scalar=None)
-    with patch(
-        "app.services.job_utils.calculate_csv_column_max", new_callable=AsyncMock, return_value=1.23
+    with (
+        patch(
+            "app.services.job_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.job_utils.calculate_csv_column_max",
+            new_callable=AsyncMock,
+            return_value=1.23,
+        ),
     ):
         score = await job_utils.ensure_completed_bindcraft_score(db_new, run, "Completed")
     assert score == 1.0
@@ -265,10 +274,17 @@ async def test_ensure_completed_bindcraft_score_branches():
 
     # calculate failure path
     db_fail = _DB(scalar=None)
-    with patch(
-        "app.services.job_utils.calculate_csv_column_max",
-        new_callable=AsyncMock,
-        side_effect=ValueError("bad"),
+    with (
+        patch(
+            "app.services.job_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.job_utils.calculate_csv_column_max",
+            new_callable=AsyncMock,
+            side_effect=ValueError("bad"),
+        ),
     ):
         assert await job_utils.ensure_completed_bindcraft_score(db_fail, run, "Completed") is None
 
@@ -295,11 +311,18 @@ async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_d
     test_db.add_all([user, run, output, run_output])
     test_db.commit()
 
-    with patch(
-        "app.services.job_utils.calculate_csv_column_max",
-        new_callable=AsyncMock,
-        return_value=0.88,
-    ) as mocked_max:
+    with (
+        patch(
+            "app.services.job_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.job_utils.calculate_csv_column_max",
+            new_callable=AsyncMock,
+            return_value=0.88,
+        ) as mocked_max,
+    ):
         score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
 
     assert score == 0.88
@@ -328,11 +351,18 @@ async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_st
     test_db.add_all([user, run])
     test_db.commit()
 
-    with patch(
-        "app.services.job_utils.calculate_csv_column_max",
-        new_callable=AsyncMock,
-        return_value=0.91,
-    ) as mocked_max:
+    with (
+        patch(
+            "app.services.job_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.job_utils.calculate_csv_column_max",
+            new_callable=AsyncMock,
+            return_value=0.91,
+        ) as mocked_max,
+    ):
         score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
 
     assert score == 0.91
