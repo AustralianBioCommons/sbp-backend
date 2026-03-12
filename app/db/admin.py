@@ -488,6 +488,19 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         ) -> str | None:
             return _mask_email(str(value) if value is not None else None)
 
+    class OwnerEmailField(StringField):
+        async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
+            owner = getattr(obj, "owner", None)
+            if owner is None:
+                return None
+            email = getattr(owner, "email", None)
+            return str(email) if email is not None else None
+
+        async def serialize_value(
+            self, request: StarletteRequest, value: object, action: RequestAction
+        ) -> str | None:
+            return str(value) if value is not None else None
+
     class AppUserAdmin(ModelView):
         fields = [
             "id",
@@ -516,6 +529,13 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             "id",
             "workflow_id",
             "owner_user_id",
+            OwnerEmailField(
+                "owner_email",
+                label="Owner Email",
+                read_only=True,
+                exclude_from_create=True,
+                exclude_from_edit=True,
+            ),
             "seqera_dataset_id",
             "seqera_run_id",
             "run_name",
