@@ -313,11 +313,11 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
     test_db.commit()
 
     with patch(
-        "app.services.job_utils.generate_presigned_url",
+        "app.services.results_utils.generate_presigned_url",
         new_callable=AsyncMock,
         side_effect=lambda key: f"https://signed.example/{key}",
     ) as mock_presign, patch(
-        "app.services.job_utils.list_s3_files",
+        "app.services.results_utils.list_s3_files",
         new_callable=AsyncMock,
         return_value=[],
     ):
@@ -443,11 +443,11 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
     test_db.commit()
 
     with patch(
-        "app.services.job_utils.generate_presigned_url",
+        "app.services.results_utils.generate_presigned_url",
         new_callable=AsyncMock,
         side_effect=lambda key: f"https://signed.example/{key}",
     ), patch(
-        "app.services.job_utils.list_s3_files",
+        "app.services.results_utils.list_s3_files",
         new_callable=AsyncMock,
         return_value=[],
     ):
@@ -557,11 +557,11 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     test_db.commit()
 
     with patch(
-        "app.services.job_utils.generate_presigned_url",
+        "app.services.results_utils.generate_presigned_url",
         new_callable=AsyncMock,
         side_effect=lambda key: f"https://signed.example/{key}",
     ) as mock_presign, patch(
-        "app.services.job_utils.list_s3_files",
+        "app.services.results_utils.list_s3_files",
         new_callable=AsyncMock,
         return_value=[],
     ):
@@ -613,12 +613,12 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 
     with (
         patch(
-            "app.services.job_utils.list_s3_files",
+            "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
             side_effect=_list_side_effect,
         ),
         patch(
-            "app.services.job_utils.generate_presigned_url",
+            "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
             side_effect=lambda key: f"https://signed.example/{key}",
         ),

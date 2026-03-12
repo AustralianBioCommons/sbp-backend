@@ -16,13 +16,14 @@ from ...schemas.workflows import (
     ResultReportResponse,
     ResultSnapshotsResponse,
 )
-from ...services.job_utils import (
-    get_owned_run,
+from ...services.job_utils import get_owned_run
+from ...services.results_utils import (
+    format_log_entries,
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
+    resolve_submitted_form_data,
 )
-from ...services.results_utils import format_log_entries, resolve_submitted_form_data
 from ...services.s3 import S3ConfigurationError, S3ServiceError
 from ...services.seqera_client import get_workflow_logs_raw
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
