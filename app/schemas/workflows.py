@@ -266,6 +266,7 @@ class ResultReportResponse(BaseModel):
 
     runId: str
     report: ResultDownloadItem | None = None
+    snapshot: ResultDownloadItem | None = None
 
 
 class DeleteJobResponse(BaseModel):

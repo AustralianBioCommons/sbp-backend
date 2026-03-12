@@ -615,6 +615,77 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 
 
 @pytest.mark.asyncio
+async def test_get_result_report_returns_snapshot_for_run_uuid_bindcraft_png(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-report-snapshot",
+        name="Results User Report Snapshot",
+        email="results-report-snapshot@example.com",
+    )
+    run_id = uuid4()
+    run = WorkflowRun(
+        id=run_id,
+        owner_user_id=user.id,
+        seqera_run_id="wf-report-snapshot",
+        sample_id="s1",
+        work_dir="/tmp/wf-report-snapshot",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    report_key = f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/PDL1_l79_s800698.html"
+    snapshot_key = f"{run_id}/bindcraft/s1_0_output/PDL1_l79_s800698.png"
+
+    def _list_side_effect(prefix: str, file_extension=None):
+        if prefix == f"{run_id}/bindcraft/s1_0_output/":
+            return [
+                {
+                    "key": snapshot_key,
+                    "size": 456,
+                    "last_modified": "2026-03-12T00:00:00Z",
+                    "bucket": "test-bucket",
+                }
+            ]
+        if prefix == f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/":
+            return [
+                {
+                    "key": report_key,
+                    "size": 123,
+                    "last_modified": "2026-03-12T00:00:00Z",
+                    "bucket": "test-bucket",
+                }
+            ]
+        return []
+
+    with (
+        patch(
+            "app.services.job_utils.list_s3_files",
+            new_callable=AsyncMock,
+            side_effect=_list_side_effect,
+        ),
+        patch(
+            "app.services.job_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key: f"https://signed.example/{key}",
+        ),
+    ):
+        result = await get_result_report("wf-report-snapshot", user.id, test_db)
+
+    assert result.report is not None
+    assert result.report.key == report_key
+    assert result.snapshot is not None
+    assert result.snapshot.category == "snapshot"
+    assert result.snapshot.key == snapshot_key
+
+    synced_output = test_db.get(S3Object, snapshot_key)
+    assert synced_output is not None
+    synced_link = (
+        test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
+    )
+    assert synced_link is not None
+
+
+@pytest.mark.asyncio
 async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
         id=uuid4(),
@@ -708,8 +779,12 @@ async def test_get_result_report_allows_missing_report_payload(test_db):
     with patch(
         "app.routes.workflow.results.get_result_report_download",
         new=AsyncMock(return_value=None),
+    ), patch(
+        "app.routes.workflow.results.get_result_snapshot_download",
+        new=AsyncMock(return_value=None),
     ):
         result = await get_result_report("wf-report-none", user.id, test_db)
 
     assert result.runId == "wf-report-none"
     assert result.report is None
+    assert result.snapshot is None

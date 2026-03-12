@@ -208,6 +208,8 @@ def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
         return ("stats_csv", basename)
     if "/accepted/animation/" in lowered and basename.lower().endswith(".html"):
         return ("report", basename)
+    if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
+        return ("snapshot", basename)
     if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
         return ("pdb", basename)
     return None
@@ -238,9 +240,13 @@ def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     if sample_id:
         _add(f"bindcraft/{sample_id}_0_output/Accepted/Animation")
         _add(f"{sample_id}_0_output/Accepted/Animation")
+        _add(f"bindcraft/{sample_id}_0_output")
+        _add(f"{sample_id}_0_output")
         if run_uuid:
             _add(f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation")
             _add(f"{run_uuid}/{sample_id}_0_output/Accepted/Animation")
+            _add(f"{run_uuid}/bindcraft/{sample_id}_0_output")
+            _add(f"{run_uuid}/{sample_id}_0_output")
 
     if run_uuid:
         _add(run_uuid)
@@ -321,7 +327,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
             matched[key] = classified
 
     found_categories = {category for category, _label in matched.values()}
-    missing_categories = {"stats_csv", "pdb", "report"} - found_categories
+    missing_categories = {"stats_csv", "pdb", "report", "snapshot"} - found_categories
 
     if missing_categories:
         for prefix in _build_bindcraft_output_listing_prefixes(run):
@@ -334,7 +340,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
                 if classified:
                     matched[key] = classified
 
-    category_order = {"report": 0, "stats_csv": 1, "pdb": 2}
+    category_order = {"report": 0, "snapshot": 1, "stats_csv": 2, "pdb": 3}
     downloads: list[dict[str, str]] = []
 
     for key, (category, label) in sorted(
@@ -384,6 +390,40 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> dict[str,
         "key": report_key,
         "url": await generate_presigned_url(report_key),
         "category": "report",
+    }
+
+
+async def get_result_snapshot_download(db: Session, run: WorkflowRun) -> dict[str, str] | None:
+    """Return a single pre-signed snapshot image for the result view."""
+    await sync_bindcraft_outputs(db, run)
+    snapshot_keys: list[str] = []
+
+    for key in _get_run_output_keys(db, run):
+        classified = _classify_bindcraft_output_key(key)
+        if classified and classified[0] == "snapshot" and key not in snapshot_keys:
+            snapshot_keys.append(key)
+
+    if not snapshot_keys:
+        for prefix in _build_bindcraft_output_listing_prefixes(run):
+            files = await list_s3_files(prefix=prefix)
+            for item in files:
+                key = str(item.get("key", "")).strip()
+                if not key or key in snapshot_keys:
+                    continue
+                classified = _classify_bindcraft_output_key(key)
+                if classified and classified[0] == "snapshot":
+                    snapshot_keys.append(key)
+
+    if not snapshot_keys:
+        return None
+
+    snapshot_key = sorted(snapshot_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key))[0]
+    label = snapshot_key.rsplit("/", 1)[-1]
+    return {
+        "label": label,
+        "key": snapshot_key,
+        "url": await generate_presigned_url(snapshot_key),
+        "category": "snapshot",
     }
 
 

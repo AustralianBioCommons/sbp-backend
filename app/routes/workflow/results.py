@@ -19,6 +19,7 @@ from ...services.job_utils import (
     get_owned_run,
     get_result_output_downloads,
     get_result_report_download,
+    get_result_snapshot_download,
 )
 from ...services.results_utils import format_log_entries, resolve_submitted_form_data
 from ...services.s3 import S3ConfigurationError, S3ServiceError
@@ -138,6 +139,7 @@ async def get_result_report(
 
     try:
         report = await get_result_report_download(db, owned_run)
+        snapshot = await get_result_snapshot_download(db, owned_run)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -148,4 +150,5 @@ async def get_result_report(
     return ResultReportResponse(
         runId=run_id,
         report=ResultDownloadItem(**report) if report is not None else None,
+        snapshot=ResultDownloadItem(**snapshot) if snapshot is not None else None,
     )

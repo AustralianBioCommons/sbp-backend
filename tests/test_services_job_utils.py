@@ -370,3 +370,53 @@ async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_st
         file_key=f"{sample_id}/ranker/{sample_id}_final_design_stats.csv",
         column_name="Average_i_pTM",
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|snapshot-user",
+        name="Snapshot User",
+        email="snapshot-user@example.com",
+    )
+    run_id = uuid4()
+    run = WorkflowRun(
+        id=run_id,
+        owner_user_id=user.id,
+        seqera_run_id="seqera-snapshot-1",
+        sample_id="sampleA",
+        work_dir="workdir-snapshot-1",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    snapshot_key = f"{run_id}/bindcraft/sampleA_0_output/sampleA_preview.png"
+
+    def _list_side_effect(prefix: str, file_extension=None):
+        if prefix == f"{run_id}/bindcraft/sampleA_0_output/":
+            return [
+                {
+                    "key": snapshot_key,
+                    "size": 2048,
+                    "last_modified": "2026-03-12T00:00:00Z",
+                    "bucket": "test-bucket",
+                }
+            ]
+        return []
+
+    with patch(
+        "app.services.job_utils.list_s3_files",
+        new_callable=AsyncMock,
+        side_effect=_list_side_effect,
+    ):
+        discovered = await job_utils.sync_bindcraft_outputs(test_db, run)
+
+    assert snapshot_key in discovered
+    persisted = test_db.get(S3Object, snapshot_key)
+    assert persisted is not None
+    assert persisted.uri.endswith(snapshot_key)
+    link = (
+        test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
+    )
+    assert link is not None
