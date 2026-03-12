@@ -15,6 +15,8 @@ from app.routes.workflow.results import (
     get_result_report,
     get_result_setting_params,
 )
+from app.services.s3 import S3ConfigurationError, S3ServiceError
+from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 
 @pytest.mark.asyncio
@@ -86,6 +88,24 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
 
 
 @pytest.mark.asyncio
+async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-setting-missing",
+        name="Results User Missing",
+        email="results-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_setting_params("wf-setting-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
 async def test_get_result_logs_returns_formatted_entries(test_db):
     user = AppUser(
         id=uuid4(),
@@ -152,6 +172,105 @@ async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-logs-top-level",
+        name="Results User Logs",
+        email="results-logs@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-logs-top-level",
+        work_dir="/tmp/wf-logs-top-level",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    payload = {
+        "truncated": 1,
+        "pending": 0,
+        "message": None,
+        "rewindToken": None,
+        "forwardToken": None,
+        "downloads": "not-a-list",
+        "entries": None,
+    }
+
+    with patch(
+        "app.routes.workflow.results.get_workflow_logs_raw",
+        new=AsyncMock(return_value=payload),
+    ):
+        result = await get_result_logs("wf-logs-top-level", user.id, test_db)
+
+    assert result.truncated is True
+    assert result.pending is False
+    assert result.message == ""
+    assert result.rewindToken == ""
+    assert result.forwardToken == ""
+    assert result.downloads == []
+    assert result.entries == []
+    assert result.formattedEntries == []
+
+
+@pytest.mark.asyncio
+async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-logs-config-error",
+        name="Results User Logs Config",
+        email="results-logs-config@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-logs-config-error",
+        work_dir="/tmp/wf-logs-config-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_workflow_logs_raw",
+        new=AsyncMock(side_effect=SeqeraConfigurationError("missing seqera config")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_logs("wf-logs-config-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "missing seqera config"
+
+
+@pytest.mark.asyncio
+async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-logs-api-error",
+        name="Results User Logs API",
+        email="results-logs-api@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-logs-api-error",
+        work_dir="/tmp/wf-logs-api-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_workflow_logs_raw",
+        new=AsyncMock(side_effect=SeqeraAPIError("seqera upstream failed")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_logs("wf-logs-api-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "seqera upstream failed"
 
 
 @pytest.mark.asyncio
@@ -263,6 +382,80 @@ async def test_get_result_downloads_falls_back_to_bindcraft_animation_prefix(tes
         "bindcraft/demo2_0_output/Accepted/Animation/PDL1_l100_s975117.html"
     )
     assert mock_list.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-downloads-missing",
+        name="Results User Downloads Missing",
+        email="results-downloads-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_downloads("wf-downloads-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-downloads-config-error",
+        name="Results User Downloads Config",
+        email="results-downloads-config@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-downloads-config-error",
+        work_dir="/tmp/wf-downloads-config-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_downloads("wf-downloads-config-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "missing s3 config"
+
+
+@pytest.mark.asyncio
+async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-downloads-service-error",
+        name="Results User Downloads Service",
+        email="results-downloads-service@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-downloads-service-error",
+        work_dir="/tmp/wf-downloads-service-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_downloads("wf-downloads-service-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream failed"
 
 
 @pytest.mark.asyncio
@@ -419,3 +612,104 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
         test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=real_key).one_or_none()
     )
     assert synced_link is not None
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-report-missing",
+        name="Results User Report Missing",
+        email="results-report-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_report("wf-report-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-report-config-error",
+        name="Results User Report Config",
+        email="results-report-config@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-report-config-error",
+        work_dir="/tmp/wf-report-config-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_report("wf-report-config-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "missing s3 config"
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_maps_s3_service_error_to_502(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-report-service-error",
+        name="Results User Report Service",
+        email="results-report-service@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-report-service-error",
+        work_dir="/tmp/wf-report-service-error",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_report("wf-report-service-error", user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream failed"
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_allows_missing_report_payload(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-user-report-none",
+        name="Results User Report None",
+        email="results-report-none@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-report-none",
+        work_dir="/tmp/wf-report-none",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(return_value=None),
+    ):
+        result = await get_result_report("wf-report-none", user.id, test_db)
+
+    assert result.runId == "wf-report-none"
+    assert result.report is None
