@@ -8,9 +8,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from ...schemas.workflows import JobSettingParamsResponse, ResultLogsResponse
-from ...services.job_utils import get_owned_run
+from ...schemas.workflows import (
+    JobSettingParamsResponse,
+    ResultDownloadsResponse,
+    ResultLogsResponse,
+    ResultReportResponse,
+)
+from ...services.job_utils import (
+    get_owned_run,
+    get_result_output_downloads,
+    get_result_report_download,
+)
 from ...services.results_utils import format_log_entries, resolve_submitted_form_data
+from ...services.s3 import S3ConfigurationError, S3ServiceError
 from ...services.seqera_client import get_workflow_logs_raw
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
@@ -86,3 +96,49 @@ async def get_result_logs(
         entries=normalized_entries,
         formattedEntries=format_log_entries(normalized_entries),
     )
+
+
+@router.get("/{run_id}/downloads", response_model=ResultDownloadsResponse)
+async def get_result_downloads(
+    run_id: str,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> ResultDownloadsResponse:
+    """Return pre-signed output download links for a workflow result view."""
+    owned_run = get_owned_run(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    try:
+        downloads = await get_result_output_downloads(db, owned_run)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return ResultDownloadsResponse(runId=run_id, downloads=downloads)
+
+
+@router.get("/{run_id}/report", response_model=ResultReportResponse)
+async def get_result_report(
+    run_id: str,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> ResultReportResponse:
+    """Return one pre-signed HTML report link for a workflow result view."""
+    owned_run = get_owned_run(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    try:
+        report = await get_result_report_download(db, owned_run)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return ResultReportResponse(runId=run_id, report=report)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -13,7 +14,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
-from .s3 import S3ConfigurationError, S3ServiceError, calculate_csv_column_max
+from .s3 import (
+    S3ConfigurationError,
+    S3ServiceError,
+    calculate_csv_column_max,
+    generate_presigned_url,
+    list_s3_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +179,221 @@ def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> lis
     return candidates
 
 
+def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
+    rows = db.execute(
+        select(S3Object.object_key, S3Object.uri)
+        .join(RunOutput, RunOutput.s3_object_id == S3Object.object_key)
+        .where(RunOutput.run_id == run.id)
+    ).all()
+    keys: list[str] = []
+    for object_key, uri in rows:
+        for raw_key in (object_key, _s3_uri_to_key(uri)):
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
+            if key and key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+
+    basename = normalized.rsplit("/", 1)[-1]
+    lowered = normalized.lower()
+
+    if basename.endswith("_final_design_stats.csv"):
+        return ("stats_csv", basename)
+    if "/accepted/animation/" in lowered and basename.lower().endswith(".html"):
+        return ("report", basename)
+    if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
+        return ("pdb", basename)
+    return None
+
+
+def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    sample_id = _get_sample_id_for_score(run)
+    prefixes: list[str] = []
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+
+    def _add(value: str) -> None:
+        cleaned = value.strip().strip("/")
+        if cleaned and cleaned not in prefixes:
+            prefixes.append(cleaned)
+
+    for identifier in (
+        sample_id,
+        str(getattr(run, "seqera_run_id", "") or "").strip(),
+        str(getattr(run, "id", "") or "").strip(),
+    ):
+        if not identifier:
+            continue
+        _add(f"{identifier}/ranker")
+        _add(f"{identifier}/Accepted/Animation")
+        _add(f"results/{identifier}/ranker")
+        _add(f"results/{identifier}/Accepted/Animation")
+
+    if sample_id:
+        _add(f"bindcraft/{sample_id}_0_output/Accepted/Animation")
+        _add(f"{sample_id}_0_output/Accepted/Animation")
+        if run_uuid:
+            _add(f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation")
+            _add(f"{run_uuid}/{sample_id}_0_output/Accepted/Animation")
+
+    if run_uuid:
+        _add(run_uuid)
+
+    return [f"{prefix}/" for prefix in prefixes]
+
+
+def _build_s3_uri(key: str) -> str:
+    bucket_name = os.getenv("AWS_S3_BUCKET")
+    if bucket_name:
+        return f"s3://{bucket_name}/{key}"
+    return key
+
+
+def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> None:
+    existing_keys = set(_get_run_output_keys(db, run))
+    changed = False
+
+    for key in keys:
+        normalized = key.strip()
+        if not normalized or normalized in existing_keys:
+            continue
+
+        s3_object = db.get(S3Object, normalized)
+        if s3_object is None:
+            s3_object = S3Object(
+                object_key=normalized,
+                uri=_build_s3_uri(normalized),
+            )
+            db.add(s3_object)
+
+        db.add(RunOutput(run_id=run.id, s3_object_id=normalized))
+        existing_keys.add(normalized)
+        changed = True
+
+    if changed:
+        db.commit()
+
+
+async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
+    """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
+    discovered: list[str] = []
+    for prefix in _build_bindcraft_output_listing_prefixes(run):
+        try:
+            files = await list_s3_files(prefix=prefix)
+        except (S3ConfigurationError, S3ServiceError) as exc:
+            logger.warning(
+                "Failed to list bindcraft outputs from S3",
+                extra={
+                    "runId": str(run.id),
+                    "seqeraRunId": run.seqera_run_id,
+                    "prefix": prefix,
+                    "error": str(exc),
+                },
+            )
+            continue
+        for item in files:
+            key = str(item.get("key", "")).strip()
+            if not key or key in discovered:
+                continue
+            if _classify_bindcraft_output_key(key):
+                discovered.append(key)
+
+    if discovered:
+        _sync_run_output_records(db, run, discovered)
+
+    return discovered
+
+
+async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dict[str, str]]:
+    """Return pre-signed links for the result artifacts shown in the UI."""
+    await sync_bindcraft_outputs(db, run)
+    matched: dict[str, tuple[str, str]] = {}
+
+    for key in _get_run_output_keys(db, run):
+        classified = _classify_bindcraft_output_key(key)
+        if classified and key not in matched:
+            matched[key] = classified
+
+    found_categories = {category for category, _label in matched.values()}
+    missing_categories = {"stats_csv", "pdb", "report"} - found_categories
+
+    if missing_categories:
+        for prefix in _build_bindcraft_output_listing_prefixes(run):
+            files = await list_s3_files(prefix=prefix)
+            for item in files:
+                key = str(item.get("key", "")).strip()
+                if not key or key in matched:
+                    continue
+                classified = _classify_bindcraft_output_key(key)
+                if classified:
+                    matched[key] = classified
+
+    category_order = {"report": 0, "stats_csv": 1, "pdb": 2}
+    downloads: list[dict[str, str]] = []
+
+    for key, (category, label) in sorted(
+        matched.items(),
+        key=lambda item: (category_order.get(item[1][0], 99), item[1][1].lower(), item[0]),
+    ):
+        downloads.append(
+            {
+                "label": label,
+                "key": key,
+                "url": await generate_presigned_url(key),
+                "category": category,
+            }
+        )
+
+    return downloads
+
+
+async def get_result_report_download(db: Session, run: WorkflowRun) -> dict[str, str] | None:
+    """Return a single pre-signed HTML report link for the result view."""
+    await sync_bindcraft_outputs(db, run)
+    report_keys: list[str] = []
+
+    for key in _get_run_output_keys(db, run):
+        classified = _classify_bindcraft_output_key(key)
+        if classified and classified[0] == "report" and key not in report_keys:
+            report_keys.append(key)
+
+    if not report_keys:
+        for prefix in _build_bindcraft_output_listing_prefixes(run):
+            files = await list_s3_files(prefix=prefix)
+            for item in files:
+                key = str(item.get("key", "")).strip()
+                if not key or key in report_keys:
+                    continue
+                classified = _classify_bindcraft_output_key(key)
+                if classified and classified[0] == "report":
+                    report_keys.append(key)
+
+    if not report_keys:
+        return None
+
+    report_key = sorted(report_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key))[0]
+    label = report_key.rsplit("/", 1)[-1]
+    return {
+        "label": label,
+        "key": report_key,
+        "url": await generate_presigned_url(report_key),
+        "category": "report",
+    }
+
+
 async def ensure_completed_bindcraft_score(
     db: Session, run: WorkflowRun, ui_status: str
 ) -> float | None:
     if ui_status != "Completed":
         return None
+
+    await sync_bindcraft_outputs(db, run)
 
     existing = db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).scalar_one_or_none()
     if existing and existing.max_score is not None:
