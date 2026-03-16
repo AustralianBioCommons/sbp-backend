@@ -158,19 +158,27 @@ def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
 
 
 def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
-    sample_id = get_sample_id_for_result(run)
     run_uuid = str(getattr(run, "id", "") or "").strip()
-    if not sample_id or not run_uuid:
+    if not run_uuid:
         return []
 
-    return [
+    # Always include run-UUID-only prefixes; these do not depend on sample_id.
+    prefixes: list[str] = [
         f"{run_uuid}/ranker/",
         f"{run_uuid}/Accepted/Animation/",
-        f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation/",
-        f"{run_uuid}/bindcraft/{sample_id}_0_output/",
     ]
 
+    # Append bindcraft sample-specific prefixes only when a sample_id is available.
+    sample_id = get_sample_id_for_result(run)
+    if sample_id:
+        prefixes.extend(
+            [
+                f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation/",
+                f"{run_uuid}/bindcraft/{sample_id}_0_output/",
+            ]
+        )
 
+    return prefixes
 def _build_s3_uri(key: str) -> str:
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if bucket_name:
