@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
-from .results_utils import _s3_uri_to_key, get_sample_id_for_result, sync_bindcraft_outputs
+from .results_utils import get_sample_id_for_result, s3_uri_to_key, sync_bindcraft_outputs
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -132,7 +132,7 @@ def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> lis
     ).all()
 
     for object_key, uri in rows:
-        for raw_key in (object_key, _s3_uri_to_key(uri)):
+        for raw_key in (object_key, s3_uri_to_key(uri)):
             if not isinstance(raw_key, str):
                 continue
             key = raw_key.strip()

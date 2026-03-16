@@ -95,7 +95,7 @@ def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:
     return formatted
 
 
-def _s3_uri_to_key(uri: str | None) -> str | None:
+def s3_uri_to_key(uri: str | None) -> str | None:
     if not uri:
         return None
     value = uri.strip()
@@ -129,7 +129,7 @@ def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
     ).all()
     keys: list[str] = []
     for object_key, uri in rows:
-        for raw_key in (object_key, _s3_uri_to_key(uri)):
+        for raw_key in (object_key, s3_uri_to_key(uri)):
             if not isinstance(raw_key, str):
                 continue
             key = raw_key.strip()
