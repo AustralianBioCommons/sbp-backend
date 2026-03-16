@@ -179,6 +179,8 @@ def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
         )
 
     return prefixes
+
+
 def _build_s3_uri(key: str) -> str:
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if bucket_name:
