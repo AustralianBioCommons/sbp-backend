@@ -567,7 +567,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **kwargs: f"https://signed.example/{key}",
         ) as mocked_presign,
     ):
         result = await results_utils.get_result_report_download(test_db, run)
@@ -576,7 +576,11 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
     assert result["category"] == "report"
     assert result["key"] == report_key
     assert result["url"] == f"https://signed.example/{report_key}"
-    mocked_presign.assert_awaited_once_with(report_key)
+    mocked_presign.assert_awaited_once_with(
+        report_key,
+        response_content_type="text/html",
+        response_content_disposition="inline",
+    )
 
 
 @pytest.mark.asyncio
@@ -621,7 +625,7 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **kwargs: f"https://signed.example/{key}",
         ),
     ):
         result = await results_utils.get_result_report_download(test_db, run)
@@ -655,7 +659,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **kwargs: f"https://signed.example/{key}",
         ),
     ):
         result = await results_utils.get_result_report_download(test_db, run)
