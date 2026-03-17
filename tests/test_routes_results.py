@@ -559,7 +559,7 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     with patch(
         "app.services.results_utils.generate_presigned_url",
         new_callable=AsyncMock,
-        side_effect=lambda key: f"https://signed.example/{key}",
+        side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
     ) as mock_presign, patch(
         "app.services.results_utils.list_s3_files",
         new_callable=AsyncMock,
@@ -575,7 +575,11 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         result.report.url
         == "https://signed.example/demo2/Accepted/Animation/PDL1_l100_s975117.html"
     )
-    mock_presign.assert_awaited_once_with("demo2/Accepted/Animation/PDL1_l100_s975117.html")
+    mock_presign.assert_awaited_once_with(
+        "demo2/Accepted/Animation/PDL1_l100_s975117.html",
+        response_content_type="text/html",
+        response_content_disposition="inline",
+    )
 
 
 @pytest.mark.asyncio
@@ -620,7 +624,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
     ):
         result = await get_result_report("wf-report-3", user.id, test_db)

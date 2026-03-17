@@ -317,7 +317,11 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> dict[str,
     return {
         "label": label,
         "key": report_key,
-        "url": await generate_presigned_url(report_key),
+        "url": await generate_presigned_url(
+            report_key,
+            response_content_type="text/html",
+            response_content_disposition="inline",
+        ),
         "category": "report",
     }
 
