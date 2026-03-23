@@ -51,8 +51,11 @@ FastAPI backend for handling Seqera Platform workflow launches.
 - `POST /api/jobs/{run_id}/cancel` — Cancel a workflow run (requires `Authorization: Bearer <access_token>`)
 - `DELETE /api/jobs/{run_id}` — Delete one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `POST /api/jobs/bulk-delete` — Delete multiple jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
-- `GET /api/workflows/{runId}/logs` — Placeholder log endpoint
-- `GET /api/workflows/{runId}/details` — Placeholder details endpoint
+- `GET /api/results/{run_id}/settingParams` — Get submitted settings for one result view (requires `Authorization: Bearer <access_token>`)
+- `GET /api/results/{run_id}/logs` — Get Seqera logs for one result view (requires `Authorization: Bearer <access_token>`)
+- `GET /api/results/{run_id}/report` — Get the primary HTML animation/report link for portal display (requires `Authorization: Bearer <access_token>`)
+- `GET /api/results/{run_id}/downloads` — Get non-snapshot result download links such as reports, CSV outputs, and PDB files (requires `Authorization: Bearer <access_token>`)
+- `GET /api/results/{run_id}/snapshots` — Get snapshot image download links only (requires `Authorization: Bearer <access_token>`)
 - `POST /api/workflows/datasets/upload` — Create a Seqera dataset and upload submitted form data as a CSV
 - `POST /api/workflows/pdb/upload` — Upload a PDB file
 - `GET /files` — List S3 files

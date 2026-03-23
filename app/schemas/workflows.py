@@ -245,6 +245,36 @@ class ResultLogsResponse(BaseModel):
     formattedEntries: list[ResultLogEntry] = Field(default_factory=list)
 
 
+class ResultDownloadItem(BaseModel):
+    """Single pre-signed download link for a result artifact."""
+
+    label: str
+    key: str
+    url: str
+    category: str
+
+
+class ResultDownloadsResponse(BaseModel):
+    """Download links for result artifacts."""
+
+    runId: str
+    downloads: list[ResultDownloadItem] = Field(default_factory=list)
+
+
+class ResultSnapshotsResponse(BaseModel):
+    """Snapshot download links for a result view."""
+
+    runId: str
+    snapshots: list[ResultDownloadItem] = Field(default_factory=list)
+
+
+class ResultReportResponse(BaseModel):
+    """Primary HTML report link for a result view."""
+
+    runId: str
+    report: ResultDownloadItem | None = None
+
+
 class DeleteJobResponse(BaseModel):
     """Response for single job deletion."""
 
