@@ -584,6 +584,35 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
 
 
 @pytest.mark.asyncio
+async def test_get_result_report_download_skips_sync_when_report_is_already_tracked(test_db):
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        seqera_run_id="seqera-report-fast-path-1",
+        sample_id="sampleFast",
+        work_dir="workdir-report-fast-path-1",
+    )
+    report_key = (
+        f"{run.id}/bindcraft/sampleFast_0_output/Accepted/Animation/sampleFast_report.html"
+    )
+
+    with (
+        patch("app.services.results_utils._get_run_output_keys", return_value=[report_key]),
+        patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock()) as mocked_sync,
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key, **kwargs: f"https://signed.example/{key}",
+        ),
+    ):
+        result = await results_utils.get_result_report_download(test_db, run)
+
+    assert result is not None
+    assert result["key"] == report_key
+    mocked_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_result_report_download_discovers_report_from_s3(test_db):
     user = AppUser(
         id=uuid4(),

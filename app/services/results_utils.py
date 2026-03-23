@@ -290,13 +290,19 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
 
 async def get_result_report_download(db: Session, run: WorkflowRun) -> dict[str, str] | None:
     """Return a single pre-signed HTML report link for the result view."""
-    await sync_bindcraft_outputs(db, run)
     report_keys: list[str] = []
 
     for key in _get_run_output_keys(db, run):
         classified = _classify_bindcraft_output_key(key)
         if classified and classified[0] == "report" and key not in report_keys:
             report_keys.append(key)
+
+    if not report_keys:
+        await sync_bindcraft_outputs(db, run)
+        for key in _get_run_output_keys(db, run):
+            classified = _classify_bindcraft_output_key(key)
+            if classified and classified[0] == "report" and key not in report_keys:
+                report_keys.append(key)
 
     if not report_keys:
         for prefix in _build_bindcraft_output_listing_prefixes(run):
