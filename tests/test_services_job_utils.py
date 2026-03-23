@@ -592,9 +592,7 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
         sample_id="sampleFast",
         work_dir="workdir-report-fast-path-1",
     )
-    report_key = (
-        f"{run.id}/bindcraft/sampleFast_0_output/Accepted/Animation/sampleFast_report.html"
-    )
+    report_key = f"{run.id}/bindcraft/sampleFast_0_output/Accepted/Animation/sampleFast_report.html"
 
     with (
         patch("app.services.results_utils._get_run_output_keys", return_value=[report_key]),
