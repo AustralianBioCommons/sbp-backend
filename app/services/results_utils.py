@@ -110,14 +110,22 @@ def s3_uri_to_key(uri: str | None) -> str | None:
 
 
 def get_sample_id_for_result(run: WorkflowRun) -> str | None:
+    """Return the best available result identifier for artifact path discovery.
+
+    The lookup order is:
+    1. `run.sample_id`
+    2. `run.binder_name`
+    3. `run.form_id`
+
+    The first non-empty value is stripped and returned as a string. Returns `None`
+    when all candidate fields are missing or blank.
+    """
     sample_id = (
         getattr(run, "sample_id", None)
         or getattr(run, "binder_name", None)
         or getattr(run, "form_id", None)
     )
-    if not sample_id:
-        return None
-    value = str(sample_id).strip()
+    value = str(sample_id).strip() if sample_id is not None else ""
     return value or None
 
 
