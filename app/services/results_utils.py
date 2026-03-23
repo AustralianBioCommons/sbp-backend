@@ -253,7 +253,6 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
 
 async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dict[str, str]]:
     """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
-    await sync_bindcraft_outputs(db, run)
     matched: dict[str, tuple[str, str]] = {}
 
     for key in _get_run_output_keys(db, run):
@@ -263,6 +262,15 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[dic
 
     found_categories = {category for category, _label in matched.values()}
     missing_categories = {"stats_csv", "pdb", "report"} - found_categories
+
+    if missing_categories:
+        await sync_bindcraft_outputs(db, run)
+        for key in _get_run_output_keys(db, run):
+            classified = _classify_bindcraft_output_key(key)
+            if classified and key not in matched:
+                matched[key] = classified
+        found_categories = {category for category, _label in matched.values()}
+        missing_categories = {"stats_csv", "pdb", "report"} - found_categories
 
     if missing_categories:
         for prefix in _build_bindcraft_output_listing_prefixes(run):
