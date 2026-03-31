@@ -125,6 +125,8 @@ async def upload_file_to_s3(
 async def generate_presigned_url(
     file_key: str,
     expiration: int = 3600,
+    response_content_type: str | None = None,
+    response_content_disposition: str | None = None,
 ) -> str:
     """
     Generate a pre-signed URL for private S3 object access.
@@ -132,6 +134,8 @@ async def generate_presigned_url(
     Args:
         file_key: S3 object key
         expiration: URL expiration time in seconds (default 1 hour)
+        response_content_type: Override the Content-Type header in the S3 response
+        response_content_disposition: Override the Content-Disposition header (e.g. "inline")
 
     Returns:
         Pre-signed URL string
@@ -146,11 +150,16 @@ async def generate_presigned_url(
 
     try:
         s3_client = get_s3_client()
+        params: dict[str, str] = {"Bucket": bucket_name, "Key": file_key}
+        if response_content_type is not None:
+            params["ResponseContentType"] = response_content_type
+        if response_content_disposition is not None:
+            params["ResponseContentDisposition"] = response_content_disposition
         url = cast(
             str,
             s3_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket_name, "Key": file_key},
+                Params=params,
                 ExpiresIn=expiration,
             ),
         )
