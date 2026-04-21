@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+
+import pytest
 
 from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
@@ -12,6 +15,7 @@ from app.services.results_utils import (
     _classify_bindcraft_output_key,
     format_log_entries,
     get_sample_id_for_result,
+    resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
 )
@@ -126,3 +130,38 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_replaces_starting_pdb_s3_uri():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/target.pdb?X-Amz-Signature=test"
+    form_data = {"binder_name": "PDL1", "starting_pdb": "s3://my-bucket/uploads/target.pdb"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ):
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result["binder_name"] == "PDL1"
+    assert result["starting_pdb"] == presigned
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_passthrough_when_no_starting_pdb():
+    form_data = {"binder_name": "PDL1", "min_length": 60}
+    result = await resolve_pdb_presigned_urls(form_data)
+    assert result == form_data
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_passthrough_when_not_s3_uri():
+    form_data = {"starting_pdb": "https://cdn.example.com/target.pdb"}
+    result = await resolve_pdb_presigned_urls(form_data)
+    assert result == form_data
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_returns_none_for_none_input():
+    result = await resolve_pdb_presigned_urls(None)
+    assert result is None

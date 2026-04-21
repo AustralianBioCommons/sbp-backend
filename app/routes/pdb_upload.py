@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import os
-from uuid import UUID
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-
-from ..schemas.workflows import PdbDownloadResponse, PdbUploadResponse
+from ..schemas.workflows import PdbUploadResponse
 from ..services.s3 import (
     S3ConfigurationError,
     S3ServiceError,
-    generate_presigned_url,
     upload_file_to_s3,
 )
-from .dependencies import get_current_user_id
 
 router = APIRouter(tags=["pdb"])
 
@@ -99,69 +94,4 @@ async def upload_pdb_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error during file upload: {str(exc)}",
-        ) from exc
-
-
-@router.get("/download", response_model=PdbDownloadResponse)
-async def get_pdb_download_url(
-    uri: str = Query(..., description="S3 URI of the PDB file (s3://bucket/key)"),
-    _current_user_id: UUID = Depends(get_current_user_id),
-) -> PdbDownloadResponse:
-    """Return a presigned download URL for a PDB file stored in S3."""
-    if not uri.startswith("s3://"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="URI must be a valid S3 URI (s3://bucket/key)",
-        )
-
-    # Strip "s3://" and split into bucket and key
-    uri_body = uri[5:]
-    slash_idx = uri_body.find("/")
-    if slash_idx == -1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid S3 URI: missing object key",
-        )
-
-    bucket = uri_body[:slash_idx]
-    file_key = uri_body[slash_idx + 1:]
-
-    if not file_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid S3 URI: empty object key",
-        )
-
-    # Validate that the bucket matches the configured bucket
-    expected_bucket = os.getenv("AWS_S3_BUCKET")
-    if expected_bucket and bucket != expected_bucket:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access to the specified S3 bucket is not permitted",
-        )
-
-    filename = file_key.split("/")[-1] if "/" in file_key else file_key
-
-    try:
-        presigned_url = await generate_presigned_url(
-            file_key=file_key,
-            expiration=3600,
-            response_content_disposition=f'attachment; filename="{filename}"',
-        )
-        return PdbDownloadResponse(url=presigned_url, fileName=filename)
-
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {str(exc)}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to generate download URL: {str(exc)}",
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error generating download URL: {str(exc)}",
         ) from exc
