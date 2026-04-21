@@ -1,0 +1,78 @@
+"""Tests for FASTA file upload routes."""
+
+from __future__ import annotations
+
+from io import BytesIO
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi import status
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.services.s3 import S3UploadResult
+
+
+@pytest.fixture
+def client():
+    app = create_app()
+    return TestClient(app)
+
+
+@pytest.fixture
+def mock_s3_upload_result():
+    return S3UploadResult(
+        success=True,
+        file_key="input/20260421_120000_single_prediction.fasta",
+        bucket="test-bucket",
+        file_url="s3://test-bucket/input/20260421_120000_single_prediction.fasta",
+    )
+
+
+def test_upload_fasta_file_success(client, mock_s3_upload_result):
+    with (
+        patch("app.routes.fasta_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload,
+        patch(
+            "app.routes.fasta_upload.generate_presigned_url",
+            new_callable=AsyncMock,
+            return_value="https://signed.example/input/single_prediction.fasta",
+        ) as mock_presign,
+    ):
+        mock_upload.return_value = mock_s3_upload_result
+
+        response = client.post(
+            "/api/workflows/fasta/upload",
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+        )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    data = response.json()
+    assert data["success"] is True
+    assert data["message"] == "FASTA file uploaded successfully"
+    assert data["fileId"] == "input/20260421_120000_single_prediction.fasta"
+    assert data["presignedUrl"] == "https://signed.example/input/single_prediction.fasta"
+    mock_presign.assert_awaited_once_with(
+        "input/20260421_120000_single_prediction.fasta",
+        response_content_type="text/plain",
+        response_content_disposition="inline",
+    )
+
+
+def test_upload_fasta_file_rejects_invalid_extension(client):
+    response = client.post(
+        "/api/workflows/fasta/upload",
+        files={"file": ("single_prediction.txt", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert ".fasta" in response.json()["detail"]
+
+
+def test_upload_fasta_file_rejects_non_fasta_content(client):
+    response = client.post(
+        "/api/workflows/fasta/upload",
+        files={"file": ("single_prediction.fasta", BytesIO(b"ACDEF\n"), "text/plain")},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "must start with" in response.json()["detail"]

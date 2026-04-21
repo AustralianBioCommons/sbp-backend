@@ -179,6 +179,18 @@ class PdbUploadResponse(BaseModel):
     details: dict[str, Any] | None = Field(default=None, description="Additional upload details")
 
 
+class FastaUploadResponse(BaseModel):
+    """Response model for FASTA file upload."""
+
+    message: str
+    success: bool
+    fileId: str = Field(..., description="S3 file key/identifier")
+    fileName: str = Field(..., description="Original filename")
+    s3Uri: str = Field(..., description="Full S3 URI (s3://bucket/key)")
+    presignedUrl: str = Field(..., description="Pre-signed HTTPS URL for the FASTA file")
+    details: dict[str, Any] | None = Field(default=None, description="Additional upload details")
+
+
 class JobListItem(BaseModel):
     """Individual job item in the job listing."""
 
