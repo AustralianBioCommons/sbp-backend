@@ -42,7 +42,7 @@ def _format_attachment_content_disposition(filename: str) -> str:
     ascii_fallback = _FILENAME_FALLBACK_UNSAFE_CHARS.sub("_", ascii_fallback).strip("._")
     ascii_fallback = ascii_fallback or "download"
     encoded_filename = quote(sanitized, safe="")
-    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_filename}'
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
