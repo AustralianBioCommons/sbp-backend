@@ -45,14 +45,7 @@ async def get_result_setting_params(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     form_data = resolve_submitted_form_data(owned_run)
-    try:
-        resolved = await resolve_pdb_presigned_urls(form_data)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    resolved = await resolve_pdb_presigned_urls(form_data)
 
     return JobSettingParamsResponse(
         runId=run_id,
