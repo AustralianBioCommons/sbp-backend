@@ -19,6 +19,7 @@ from app.services.results_utils import (
     resolve_submitted_form_data,
     s3_uri_to_key,
 )
+from app.services.s3 import S3ServiceError
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -145,6 +146,47 @@ async def test_resolve_pdb_presigned_urls_replaces_starting_pdb_s3_uri():
 
     assert result["binder_name"] == "PDL1"
     assert result["starting_pdb"] == presigned
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_sanitizes_content_disposition_filename():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/target.pdb?X-Amz-Signature=test"
+    form_data = {
+        "starting_pdb": 's3://my-bucket/uploads/bad"name\r\nX-Injected: yes.pdb',
+    }
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ) as mocked_presign:
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result["starting_pdb"] == presigned
+    mocked_presign.assert_awaited_once()
+    content_disposition = mocked_presign.await_args.kwargs["response_content_disposition"]
+    assert content_disposition.startswith('attachment; filename="')
+    assert "\r" not in content_disposition
+    assert "\n" not in content_disposition
+    assert '"name' not in content_disposition
+    assert "X-Injected: yes" not in content_disposition
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_logs_presign_failures(caplog):
+    form_data = {"starting_pdb": "s3://my-bucket/uploads/target.pdb"}
+
+    with (
+        caplog.at_level("WARNING", logger="app.services.results_utils"),
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new=AsyncMock(side_effect=S3ServiceError("presign failed")),
+        ),
+    ):
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result == form_data
+    assert "Failed to generate presigned starting_pdb URL" in caplog.text
+    assert "uploads/target.pdb" in caplog.text
 
 
 @pytest.mark.asyncio
