@@ -179,13 +179,6 @@ class PdbUploadResponse(BaseModel):
     details: dict[str, Any] | None = Field(default=None, description="Additional upload details")
 
 
-class PdbDownloadResponse(BaseModel):
-    """Response model for PDB file presigned download URL."""
-
-    url: str = Field(..., description="Presigned S3 URL for downloading the PDB file")
-    fileName: str = Field(..., description="Original filename")
-
-
 class JobListItem(BaseModel):
     """Individual job item in the job listing."""
 

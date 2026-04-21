@@ -107,6 +107,67 @@ async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_
 
 
 @pytest.mark.asyncio
+async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-pdb-user",
+        name="PDB User",
+        email="pdb@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-pdb-1",
+        submitted_form_data={
+            "binder_name": "PDL1",
+            "starting_pdb": "s3://my-bucket/uploads/target.pdb",
+        },
+        work_dir="/tmp/wf-pdb-1",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/target.pdb?X-Amz-Signature=test"
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ):
+        result = await get_result_setting_params("wf-pdb-1", user.id, test_db)
+
+    assert result.settingParams["binder_name"] == "PDL1"
+    assert result.settingParams["starting_pdb"] == presigned
+
+
+@pytest.mark.asyncio
+async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|results-pdb-err-user",
+        name="PDB Err User",
+        email="pdberr@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-pdb-err",
+        submitted_form_data={
+            "starting_pdb": "s3://my-bucket/uploads/target.pdb",
+        },
+        work_dir="/tmp/wf-pdb-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(side_effect=S3ServiceError("presign failed")),
+    ):
+        result = await get_result_setting_params("wf-pdb-err", user.id, test_db)
+
+    assert result.settingParams["starting_pdb"] == "s3://my-bucket/uploads/target.pdb"
+
+
+@pytest.mark.asyncio
 async def test_get_result_logs_returns_formatted_entries(test_db):
     user = AppUser(
         id=uuid4(),
