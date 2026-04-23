@@ -28,6 +28,11 @@ from ..services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
 )
+from ..services.proteinfold_executor import (
+    ProteinfoldConfigurationError,
+    ProteinfoldExecutorError,
+    launch_proteinfold_workflow,
+)
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
@@ -85,19 +90,10 @@ async def sync_current_user(
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
     current_user_id: UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
-    requested_tool_raw = payload.launch.tool
-    requested_tool = requested_tool_raw.strip().lower()
-    if requested_tool != "bindcraft":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=(
-                f"Tool '{requested_tool_raw}' is not available for workflow launch yet. "
-                "Only BindCraft is supported at the moment."
-            ),
-        )
+    requested_tool = payload.launch.tool.strip().lower()
 
     dataset_id = payload.datasetId.strip()
     if not dataset_id:
@@ -106,16 +102,17 @@ async def launch_workflow(
             detail="datasetId is required and must not be empty.",
         )
 
-    run_name = payload.launch.runName
     form_id = _extract_form_id(payload.formData)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
-    workflow = db.scalar(select(Workflow).where(func.lower(Workflow.name) == requested_tool))
+    workflow = db_session.scalar(
+        select(Workflow).where(func.lower(Workflow.name) == requested_tool)
+    )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{requested_tool_raw}' is not configured in workflows table. "
+                f"Workflow '{payload.launch.tool}' is not configured in workflows table. "
                 "Seed the workflows catalog before launching."
             ),
         )
@@ -131,11 +128,9 @@ async def launch_workflow(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
-    resolved_revision = workflow.default_revision
 
     run_id = uuid4()
-    base_work_dir = _get_required_env("WORK_DIR").rstrip("/")
-    run_work_dir = f"{base_work_dir}/{run_id}"
+    run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
 
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
@@ -147,36 +142,48 @@ async def launch_workflow(
         seqera_run_id=str(run_id),
         binder_name=binder_name,
         sample_id=form_id,
-        run_name=run_name,
+        run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
     )
 
-    db.add(workflow_run)
+    db_session.add(workflow_run)
     if final_design_count is not None:
-        db.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
-    db.commit()
+        db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
+    db_session.commit()
 
     try:
-        result: BindflowLaunchResult = await launch_bindflow_workflow(
-            payload.launch,
-            dataset_id,
-            pipeline=workflow.repo_url,
-            revision=resolved_revision,
-            output_id=str(run_id),
-        )
+        if requested_tool == "proteinfold":
+            mode = str((payload.formData or {}).get("mode", "alphafold2"))
+            result = await launch_proteinfold_workflow(
+                payload.launch,
+                dataset_id,
+                pipeline=workflow.repo_url,
+                revision=workflow.default_revision,
+                output_id=str(run_id),
+                mode=mode,
+                form_data=payload.formData,
+            )
+        else:
+            result = await launch_bindflow_workflow(
+                payload.launch,
+                dataset_id,
+                pipeline=workflow.repo_url,
+                revision=workflow.default_revision,
+                output_id=str(run_id),
+            )
         workflow_run.seqera_run_id = result.workflow_id
-        db.commit()
-    except BindflowConfigurationError as exc:
-        db.rollback()
+        db_session.commit()
+    except (BindflowConfigurationError, ProteinfoldConfigurationError) as exc:
+        db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except BindflowExecutorError as exc:
-        db.rollback()
+    except (BindflowExecutorError, ProteinfoldExecutorError) as exc:
+        db_session.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:
-        db.rollback()
+        db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update local workflow run after launch.",
