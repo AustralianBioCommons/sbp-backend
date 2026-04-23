@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,8 +25,24 @@ _LOG_TIMESTAMP_PATTERN = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ][0-9:.+-]+Z?)\s*(?P<rest>.*)$"
 )
 _ANSI_ESCAPE_PATTERN = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+_HEADER_UNSAFE_FILENAME_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]+')
+_FILENAME_FALLBACK_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_content_disposition_filename(filename: str) -> str:
+    sanitized = _HEADER_UNSAFE_FILENAME_CHARS.sub("_", filename).strip()
+    return sanitized or "download"
+
+
+def _format_attachment_content_disposition(filename: str) -> str:
+    sanitized = _sanitize_content_disposition_filename(filename)
+    ascii_fallback = sanitized.encode("ascii", "ignore").decode("ascii")
+    ascii_fallback = _FILENAME_FALLBACK_UNSAFE_CHARS.sub("_", ascii_fallback).strip("._")
+    ascii_fallback = ascii_fallback or "download"
+    encoded_filename = quote(sanitized, safe="")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
@@ -61,6 +78,45 @@ def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
         fallback["_warning"] = "submitted_form_data_missing"
 
     return fallback or None
+
+
+async def resolve_pdb_presigned_urls(
+    form_data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Replace the ``starting_pdb`` S3 URI in form data with a presigned download URL.
+
+    If the ``starting_pdb`` field contains an ``s3://`` URI, it is resolved to a
+    time-limited presigned HTTPS download URL. All other fields are returned
+    unchanged. S3 errors are silently suppressed so the rest of the settings
+    remain visible even when presigning fails.
+    """
+    if not form_data:
+        return form_data
+
+    pdb_value = form_data.get("starting_pdb")
+    if not isinstance(pdb_value, str) or not pdb_value.startswith("s3://"):
+        return form_data
+
+    file_key = s3_uri_to_key(pdb_value)
+    if not file_key:
+        return form_data
+
+    filename = file_key.rsplit("/", 1)[-1] if "/" in file_key else file_key
+    try:
+        presigned_url = await generate_presigned_url(
+            file_key=file_key,
+            expiration=3600,
+            response_content_disposition=_format_attachment_content_disposition(filename),
+        )
+        return {**form_data, "starting_pdb": presigned_url}
+    except (S3ConfigurationError, S3ServiceError):
+        logger.warning(
+            "Failed to generate presigned starting_pdb URL for S3 key %r; "
+            "returning original form data",
+            file_key,
+            exc_info=True,
+        )
+        return form_data
 
 
 def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:

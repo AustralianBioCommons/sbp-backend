@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+
+import pytest
 
 from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
@@ -12,9 +15,11 @@ from app.services.results_utils import (
     _classify_bindcraft_output_key,
     format_log_entries,
     get_sample_id_for_result,
+    resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
 )
+from app.services.s3 import S3ServiceError
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -126,3 +131,79 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_replaces_starting_pdb_s3_uri():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/target.pdb?X-Amz-Signature=test"
+    form_data = {"binder_name": "PDL1", "starting_pdb": "s3://my-bucket/uploads/target.pdb"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ):
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result["binder_name"] == "PDL1"
+    assert result["starting_pdb"] == presigned
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_sanitizes_content_disposition_filename():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/target.pdb?X-Amz-Signature=test"
+    form_data = {
+        "starting_pdb": 's3://my-bucket/uploads/bad"name\r\nX-Injected: yes.pdb',
+    }
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ) as mocked_presign:
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result["starting_pdb"] == presigned
+    mocked_presign.assert_awaited_once()
+    content_disposition = mocked_presign.await_args.kwargs["response_content_disposition"]
+    assert content_disposition.startswith('attachment; filename="')
+    assert "\r" not in content_disposition
+    assert "\n" not in content_disposition
+    assert '"name' not in content_disposition
+    assert "X-Injected: yes" not in content_disposition
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_logs_presign_failures(caplog):
+    form_data = {"starting_pdb": "s3://my-bucket/uploads/target.pdb"}
+
+    with (
+        caplog.at_level("WARNING", logger="app.services.results_utils"),
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new=AsyncMock(side_effect=S3ServiceError("presign failed")),
+        ),
+    ):
+        result = await resolve_pdb_presigned_urls(form_data)
+
+    assert result == form_data
+    assert "Failed to generate presigned starting_pdb URL" in caplog.text
+    assert "uploads/target.pdb" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_passthrough_when_no_starting_pdb():
+    form_data = {"binder_name": "PDL1", "min_length": 60}
+    result = await resolve_pdb_presigned_urls(form_data)
+    assert result == form_data
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_passthrough_when_not_s3_uri():
+    form_data = {"starting_pdb": "https://cdn.example.com/target.pdb"}
+    result = await resolve_pdb_presigned_urls(form_data)
+    assert result == form_data
+
+
+@pytest.mark.asyncio
+async def test_resolve_pdb_presigned_urls_returns_none_for_none_input():
+    result = await resolve_pdb_presigned_urls(None)
+    assert result is None

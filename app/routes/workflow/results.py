@@ -22,6 +22,7 @@ from ...services.results_utils import (
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
+    resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
 )
 from ...services.s3 import S3ConfigurationError, S3ServiceError
@@ -43,9 +44,12 @@ async def get_result_setting_params(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
+    form_data = resolve_submitted_form_data(owned_run)
+    resolved = await resolve_pdb_presigned_urls(form_data)
+
     return JobSettingParamsResponse(
         runId=run_id,
-        settingParams=resolve_submitted_form_data(owned_run),
+        settingParams=resolved,
     )
 
 
