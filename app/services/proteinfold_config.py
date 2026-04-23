@@ -36,8 +36,9 @@ def get_proteinfold_default_params(
         f'boltz2_mols_path: "{_DB_BASE}/params/mols/"',
         'project: "yz52"',
         f'mode: "{mode}"',
-        'use_gpu: true',
+        "use_gpu: true",
     ]
+
 
 def get_proteinfold_executor_script(
     aws_access_key: str = "", aws_secret_key: str = "", aws_region: str = "ap-southeast-2"
@@ -49,6 +50,7 @@ export AWS_ACCESS_KEY_ID={aws_access_key}
 export AWS_SECRET_ACCESS_KEY={aws_secret_key}
 export AWS_REGION={aws_region}
 """
+
 
 def get_proteinfold_config_profiles() -> list[str]:
     """Get config profiles for proteinfold workflow."""

@@ -19,13 +19,15 @@ from .proteinfold_config import (
 logger = logging.getLogger(__name__)
 
 # Params forwarded from the frontend's Tool Settings (step 2)
-_TOOL_PARAM_KEYS = frozenset({
-    "alphafold2_random_seed",
-    "alphafold2_full_dbs",
-    "colabfold_num_recycles",
-    "colabfold_use_templates",
-    "boltz_use_potentials",
-})
+_TOOL_PARAM_KEYS = frozenset(
+    {
+        "alphafold2_random_seed",
+        "alphafold2_full_dbs",
+        "colabfold_num_recycles",
+        "colabfold_use_templates",
+        "boltz_use_potentials",
+    }
+)
 
 
 def _yaml_value(value: Any) -> str:
@@ -64,9 +66,7 @@ class ProteinfoldLaunchResult:
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise ProteinfoldConfigurationError(
-            f"Missing required environment variable: {key}"
-        )
+        raise ProteinfoldConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -144,14 +144,16 @@ async def launch_proteinfold_workflow(
     work_dir = _get_required_env("WORK_DIR")
 
     if not output_id or not output_id.strip():
-        raise ProteinfoldConfigurationError(
-            "Missing output identifier for workflow launch"
-        )
+        raise ProteinfoldConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
     sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     params_text = _build_params_text(
-        out_dir, sheet_url, mode, form_data, form.paramsText,
+        out_dir,
+        sheet_url,
+        mode,
+        form_data,
+        form.paramsText,
     )
 
     launch_payload: dict[str, Any] = {
