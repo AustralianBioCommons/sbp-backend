@@ -70,20 +70,21 @@ def _get_required_env(key: str) -> str:
     return value
 
 
+def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
+    return (
+        f"{seqera_api_url}/workspaces/{workspace_id}"
+        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
+    )
+
+
 def _build_params_text(
     out_dir: str,
-    seqera_api_url: str,
-    workspace_id: str,
-    dataset_id: str,
+    samplesheet_url: str,
     mode: str,
     form_data: dict[str, Any] | None,
     custom_params: str | None,
 ) -> str:
     """Build the YAML params string for the Seqera launch payload."""
-    samplesheet_url = (
-        f"{seqera_api_url}/workspaces/{workspace_id}"
-        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
     lines = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
     if form_data:
         lines.extend(_tool_param_lines(form_data))
@@ -148,9 +149,9 @@ async def launch_proteinfold_workflow(
         )
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
+    sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     params_text = _build_params_text(
-        out_dir, seqera_api_url, workspace_id, dataset_id,
-        mode, form_data, form.paramsText,
+        out_dir, sheet_url, mode, form_data, form.paramsText,
     )
 
     launch_payload: dict[str, Any] = {
