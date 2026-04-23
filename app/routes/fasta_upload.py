@@ -67,8 +67,7 @@ async def upload_fasta_file(
             success=upload_result.success,
             fileId=upload_result.file_key,
             fileName=file.filename,
-            s3Uri=upload_result.file_url
-            or f"s3://{upload_result.bucket}/{upload_result.file_key}",
+            s3Uri=upload_result.file_url or f"s3://{upload_result.bucket}/{upload_result.file_key}",
             presignedUrl=presigned_url,
             details={
                 "bucket": upload_result.bucket,
