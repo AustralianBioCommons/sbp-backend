@@ -75,13 +75,21 @@ def get_proteinfold_config_text() -> str:
     return f"""\
 params {{
     use_gpu = true
+    project = System.getenv("PROJECT")
+    db = "{_DB_BASE}"
+    colabfold_alphafold2_params_tags = [
+        "alphafold2_multimer_v1" : "alphafold_params_colab_2021-10-27",
+        "alphafold2_multimer_v2" : "alphafold_params_colab_2022-03-02",
+        "alphafold2_multimer_v3" : "alphafold_params_colab_2022-12-06",
+        "alphafold2_ptm"         : "alphafold_params_2022-12-06"
+    ]
 }}
 
+// Enable use of Singularity to run containers
 singularity {{
     enabled = true
     autoMounts = true
-    cacheDir = '{_SINGULARITY_CACHE_DIR}'
-    runOptions = '--bind /g/data'
+    cacheDir = "{_SINGULARITY_CACHE_DIR}"
 }}
 
 executor {{
@@ -91,9 +99,10 @@ executor {{
     submitRateLimit = '20 min'
 }}
 
+// Define process resource limits
 process {{
     executor = 'pbspro'
-    storage = 'gdata/if89+gdata/li87'
+    storage = "gdata/ll61+gdata/if89+gdata/li87"
     module = 'singularity'
     cache = 'lenient'
     stageInMode = 'symlink'
@@ -109,4 +118,13 @@ process {{
         cpus = 12
         gpus = 1
     }}
+}}
+
+// Write custom trace file with outputs required for SU calculation
+def trace_timestamp = new java.util.Date().format('yyyy-MM-dd_HH-mm-ss')
+trace {{
+    enabled = true
+    overwrite = false
+    file = "./gadi-nf-core-trace-${{trace_timestamp}}.txt"
+    fields = 'name,status,exit,duration,realtime,cpus,%cpu,memory,%mem,rss'
 }}"""
