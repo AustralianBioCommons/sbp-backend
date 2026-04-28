@@ -20,7 +20,9 @@ def client():
     from app.routes.dependencies import get_current_user_id
 
     app = create_app()
-    app.dependency_overrides[get_current_user_id] = lambda: UUID("11111111-1111-1111-1111-111111111111")
+    app.dependency_overrides[get_current_user_id] = lambda: UUID(
+        "11111111-1111-1111-1111-111111111111"
+    )
     return TestClient(app)
 
 
