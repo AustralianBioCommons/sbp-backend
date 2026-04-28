@@ -17,9 +17,12 @@ from app.services.s3 import S3UploadResult
 def client():
     app = create_app()
     # Patch dependency to always return a test user id
-    app.dependency_overrides = getattr(app, 'dependency_overrides', {})
+    app.dependency_overrides = getattr(app, "dependency_overrides", {})
     from uuid import UUID
-    app.dependency_overrides["app.routes.dependencies.get_current_user_id"] = lambda: UUID("11111111-1111-1111-1111-111111111111")
+
+    app.dependency_overrides["app.routes.dependencies.get_current_user_id"] = lambda: UUID(
+        "11111111-1111-1111-1111-111111111111"
+    )
     return TestClient(app)
 
 
