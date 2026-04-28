@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+
+from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
+
 
 from ..schemas.workflows import FastaUploadResponse
 from ..services.s3 import (
@@ -11,17 +13,28 @@ from ..services.s3 import (
     generate_presigned_url,
     upload_file_to_s3,
 )
+from .dependencies import get_current_user_id
 
 router = APIRouter(tags=["fasta"])
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
+def _human_readable_size(size_bytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024.0:
+            return f"{size_bytes:g}{unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:g}TB"
+
+
 @router.post("/upload", response_model=FastaUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_fasta_file(
     file: UploadFile = File(..., description="FASTA file to upload"),
+    _current_user_id=Depends(get_current_user_id),
 ) -> FastaUploadResponse:
     """Upload a FASTA file to S3 and return a pre-signed URL."""
+
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -34,20 +47,20 @@ async def upload_fasta_file(
             detail="File must have .fa, .fasta, .faa, or .fna extension",
         )
 
-    file_content = await file.read()
-    if len(file_content) > MAX_FILE_SIZE:
+    if file.size is not None and file.size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size exceeds 10MB limit",
+            detail=f"File size exceeds {_human_readable_size(MAX_FILE_SIZE)} limit",
         )
 
-    if not file_content.strip().startswith(b">"):
+    chunk = await file.read(256)
+    await file.seek(0)
+
+    if not chunk.lstrip().startswith(b">"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="FASTA content must start with a header line beginning with >",
         )
-
-    await file.seek(0)
 
     try:
         upload_result = await upload_file_to_s3(
@@ -71,7 +84,7 @@ async def upload_fasta_file(
             presignedUrl=presigned_url,
             details={
                 "bucket": upload_result.bucket,
-                "size": len(file_content),
+                "size": file.size,
                 "content_type": file.content_type,
             },
         )
