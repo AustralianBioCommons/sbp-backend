@@ -12,6 +12,7 @@ import httpx
 from ..schemas.workflows import WorkflowLaunchForm
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
+    get_proteinfold_config_text,
     get_proteinfold_default_params,
     get_proteinfold_executor_script,
 )
@@ -166,6 +167,7 @@ async def launch_proteinfold_workflow(
             "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_proteinfold_config_profiles(),
+            "configText": get_proteinfold_config_text(),
             "preRunScript": get_proteinfold_executor_script(
                 os.getenv("AWS_ACCESS_KEY_ID", ""),
                 os.getenv("AWS_SECRET_ACCESS_KEY", ""),

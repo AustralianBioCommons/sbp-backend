@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 _DB_BASE = "/g/data/if89/proteinfold_dbs/proteinfold_minidbs/"
+_SINGULARITY_CACHE_DIR = "/g/data/if89/singularity_cache/"
 
 
 def get_proteinfold_default_params(
@@ -34,6 +35,7 @@ def get_proteinfold_default_params(
         f'boltz2_aff_path: "{_DB_BASE}/params/boltz2_aff.ckpt"',
         f'boltz2_conf_path: "{_DB_BASE}/params/boltz2_conf.ckpt"',
         f'boltz2_mols_path: "{_DB_BASE}/params/mols/"',
+        f'db: "{_DB_BASE}"',
         'project: "yz52"',
         f'mode: "{mode}"',
         "use_gpu: true",
@@ -55,3 +57,11 @@ export AWS_REGION={aws_region}
 def get_proteinfold_config_profiles() -> list[str]:
     """Get config profiles for proteinfold workflow."""
     return ["singularity"]
+
+
+def get_proteinfold_config_text() -> str:
+    """Get Nextflow configText for the Seqera launch payload."""
+    return (
+        f"singularity {{ cacheDir = '{_SINGULARITY_CACHE_DIR}' }}\n"
+        "process { beforeScript = 'module load singularity' }"
+    )
