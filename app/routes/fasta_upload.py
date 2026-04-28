@@ -19,11 +19,12 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
 def _human_readable_size(size_bytes: int) -> str:
+    value: float = size_bytes
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024.0:
-            return f"{size_bytes:g}{unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:g}TB"
+        if value < 1024.0:
+            return f"{value:g}{unit}"
+        value /= 1024.0
+    return f"{value:g}TB"
 
 
 @router.post("/upload", response_model=FastaUploadResponse, status_code=status.HTTP_201_CREATED)
