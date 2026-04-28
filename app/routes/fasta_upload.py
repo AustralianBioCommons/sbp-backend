@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-
-from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
-
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ..schemas.workflows import FastaUploadResponse
 from ..services.s3 import (

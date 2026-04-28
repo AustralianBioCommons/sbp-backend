@@ -16,6 +16,10 @@ from app.services.s3 import S3UploadResult
 @pytest.fixture
 def client():
     app = create_app()
+    # Patch dependency to always return a test user id
+    app.dependency_overrides = getattr(app, 'dependency_overrides', {})
+    from uuid import UUID
+    app.dependency_overrides["app.routes.dependencies.get_current_user_id"] = lambda: UUID("11111111-1111-1111-1111-111111111111")
     return TestClient(app)
 
 
@@ -39,12 +43,11 @@ def test_upload_fasta_file_success(client, mock_s3_upload_result):
         ) as mock_presign,
     ):
         mock_upload.return_value = mock_s3_upload_result
-
         response = client.post(
             "/api/workflows/fasta/upload",
             files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+            headers={"Authorization": "Bearer testtoken"},
         )
-
     assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     assert data["success"] is True
@@ -62,8 +65,8 @@ def test_upload_fasta_file_rejects_invalid_extension(client):
     response = client.post(
         "/api/workflows/fasta/upload",
         files={"file": ("single_prediction.txt", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+        headers={"Authorization": "Bearer testtoken"},
     )
-
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert ".fasta" in response.json()["detail"]
 
@@ -72,7 +75,7 @@ def test_upload_fasta_file_rejects_non_fasta_content(client):
     response = client.post(
         "/api/workflows/fasta/upload",
         files={"file": ("single_prediction.fasta", BytesIO(b"ACDEF\n"), "text/plain")},
+        headers={"Authorization": "Bearer testtoken"},
     )
-
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "must start with" in response.json()["detail"]
