@@ -5,14 +5,25 @@ from __future__ import annotations
 _DB_BASE = "/g/data/if89/proteinfold_dbs/proteinfold_minidbs/"
 _SINGULARITY_CACHE_DIR = "/g/data/if89/singularity_cache/"
 
+_COLABFOLD_ALPHAFOLD2_PARAMS_TAGS = {
+    "alphafold2_multimer_v1": "alphafold_params_colab_2021-10-27",
+    "alphafold2_multimer_v2": "alphafold_params_colab_2022-03-02",
+    "alphafold2_multimer_v3": "alphafold_params_colab_2022-12-06",
+    "alphafold2_ptm": "alphafold_params_2022-12-06",
+}
+
 
 def get_proteinfold_default_params(
     out_dir: str, samplesheet_url: str, mode: str = "alphafold2"
 ) -> list[str]:
     """Get default parameters for proteinfold workflow."""
+    tags_lines = "\n".join(
+        f'    {k}: "{v}"' for k, v in _COLABFOLD_ALPHAFOLD2_PARAMS_TAGS.items()
+    )
     return [
         f'outdir: "{out_dir}"',
         f'input: "{samplesheet_url}"',
+        f'db: "{_DB_BASE}"',
         f'alphafold2_db: "{_DB_BASE}"',
         f'alphafold2_bfd_path: "{_DB_BASE}/bfd/*"',
         f'alphafold2_small_bfd_path: "{_DB_BASE}/small_bfd/*"',
@@ -35,10 +46,10 @@ def get_proteinfold_default_params(
         f'boltz2_aff_path: "{_DB_BASE}/params/boltz2_aff.ckpt"',
         f'boltz2_conf_path: "{_DB_BASE}/params/boltz2_conf.ckpt"',
         f'boltz2_mols_path: "{_DB_BASE}/params/mols/"',
-        f'db: "{_DB_BASE}"',
         'project: "yz52"',
         f'mode: "{mode}"',
         "use_gpu: true",
+        f"colabfold_alphafold2_params_tags:\n{tags_lines}",
     ]
 
 
@@ -61,7 +72,41 @@ def get_proteinfold_config_profiles() -> list[str]:
 
 def get_proteinfold_config_text() -> str:
     """Get Nextflow configText for the Seqera launch payload."""
-    return (
-        f"singularity {{ cacheDir = '{_SINGULARITY_CACHE_DIR}' }}\n"
-        "process { beforeScript = 'module load singularity' }"
-    )
+    return f"""\
+params {{
+    use_gpu = true
+}}
+
+singularity {{
+    enabled = true
+    autoMounts = true
+    cacheDir = '{_SINGULARITY_CACHE_DIR}'
+    runOptions = '--bind /g/data'
+}}
+
+executor {{
+    queueSize = 300
+    pollInterval = '5 min'
+    queueStatInterval = '5 min'
+    submitRateLimit = '20 min'
+}}
+
+process {{
+    executor = 'pbspro'
+    storage = 'gdata/if89+gdata/li87'
+    module = 'singularity'
+    cache = 'lenient'
+    stageInMode = 'symlink'
+    queue = {{ task.memory < 128.GB ? 'normalbw' : (task.memory >= 128.GB && task.memory <= 190.GB ? 'normal' : (task.memory > 190.GB && task.memory <= 1020.GB ? 'hugemembw' : '')) }}
+    beforeScript = 'module load singularity'
+
+    withName: 'MMSEQS_COLABFOLDSEARCH' {{
+        memory = 256.GB
+    }}
+
+    withLabel: 'process_gpu' {{
+        queue = 'gpuvolta'
+        cpus = 12
+        gpus = 1
+    }}
+}}"""

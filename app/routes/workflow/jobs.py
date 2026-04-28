@@ -104,7 +104,11 @@ async def list_jobs(
         jobs: list[JobListItem] = []
         for run_id in owned_run_ids:
             owned_run = get_owned_run(db, current_user_id, run_id)
-            payload = await describe_workflow(run_id)
+            try:
+                payload = await describe_workflow(run_id)
+            except SeqeraAPIError:
+                # Run ID not known to Seqera (e.g. placeholder from a failed launch).
+                continue
             wf = coerce_workflow_payload(payload)
             pipeline_status = extract_pipeline_status(payload)
             ui_status = map_pipeline_status_to_ui(pipeline_status)
