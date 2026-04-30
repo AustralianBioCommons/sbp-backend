@@ -154,7 +154,9 @@ async def launch_workflow(
     try:
         if requested_tool == "proteinfold":
             mode = str((payload.formData or {}).get("mode", "alphafold2"))
-            seqera_run_name = str((payload.formData or {}).get("seqeraRunName") or payload.launch.runName or "")
+            seqera_run_name = str(
+                (payload.formData or {}).get("seqeraRunName") or payload.launch.runName or ""
+            )
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,

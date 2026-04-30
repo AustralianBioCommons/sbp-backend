@@ -191,9 +191,7 @@ def test_upload_fasta_s3_configuration_error(client):
     ):
         response = client.post(
             "/api/workflows/fasta/upload",
-            files={
-                "file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")
-            },
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
             headers={"Authorization": "Bearer testtoken"},
         )
 
@@ -212,9 +210,7 @@ def test_upload_fasta_s3_service_error(client):
     ):
         response = client.post(
             "/api/workflows/fasta/upload",
-            files={
-                "file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")
-            },
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
             headers={"Authorization": "Bearer testtoken"},
         )
 
@@ -231,9 +227,7 @@ def test_upload_fasta_generic_exception(client):
     ):
         response = client.post(
             "/api/workflows/fasta/upload",
-            files={
-                "file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")
-            },
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
             headers={"Authorization": "Bearer testtoken"},
         )
 

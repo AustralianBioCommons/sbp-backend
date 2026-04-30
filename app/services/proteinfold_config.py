@@ -17,9 +17,7 @@ def get_proteinfold_default_params(
     out_dir: str, samplesheet_url: str, mode: str = "alphafold2"
 ) -> list[str]:
     """Get default parameters for proteinfold workflow."""
-    tags_lines = "\n".join(
-        f'    {k}: "{v}"' for k, v in _COLABFOLD_ALPHAFOLD2_PARAMS_TAGS.items()
-    )
+    tags_lines = "\n".join(f'    {k}: "{v}"' for k, v in _COLABFOLD_ALPHAFOLD2_PARAMS_TAGS.items())
     return [
         f'outdir: "{out_dir}"',
         f'input: "{samplesheet_url}"',

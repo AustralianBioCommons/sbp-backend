@@ -434,9 +434,7 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
 def _add_proteinfold_workflow(test_engine):
     """Helper to add a proteinfold workflow to the test DB."""
     with Session(test_engine) as db:
-        existing = db.scalar(
-            select(Workflow).where(Workflow.name == "proteinfold")
-        )
+        existing = db.scalar(select(Workflow).where(Workflow.name == "proteinfold"))
         if not existing:
             db.add(
                 Workflow(
