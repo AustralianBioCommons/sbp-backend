@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -383,9 +382,6 @@ def test_extract_final_design_count_string_number():
 
 def test_launch_missing_repo_url(client: TestClient, app, test_engine):
     """Workflow missing repo_url should return 500."""
-    from sqlalchemy.orm import sessionmaker
-
-    SessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
     with Session(test_engine) as db:
         db.add(
             Workflow(

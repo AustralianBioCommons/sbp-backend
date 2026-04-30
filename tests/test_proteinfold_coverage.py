@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from app.schemas.workflows import WorkflowLaunchForm
@@ -25,7 +23,6 @@ from app.services.proteinfold_executor import (
     _yaml_value,
     launch_proteinfold_workflow,
 )
-
 
 # =============================================================================
 # Tests for _yaml_value()
