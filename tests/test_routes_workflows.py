@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models.core import RunMetric, WorkflowRun
+from app.db.models.core import RunMetric, Workflow, WorkflowRun
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
     BindflowLaunchResult,
+)
+from app.services.proteinfold_executor import (
+    ProteinfoldConfigurationError,
+    ProteinfoldExecutorError,
+    ProteinfoldLaunchResult,
 )
 
 
@@ -180,8 +187,8 @@ def test_launch_rejects_unavailable_tool(client: TestClient):
     }
 
     response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 501
-    assert "not available" in response.json()["detail"]
+    assert response.status_code == 500
+    assert "not configured" in response.json()["detail"]
 
 
 def test_launch_rejects_unknown_tool(client: TestClient):
@@ -194,8 +201,8 @@ def test_launch_rejects_unknown_tool(client: TestClient):
     }
 
     response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 501
-    assert "Only BindCraft is supported" in response.json()["detail"]
+    assert response.status_code == 500
+    assert "not configured" in response.json()["detail"]
 
 
 def test_get_logs_success(client: TestClient):
@@ -219,3 +226,286 @@ def test_get_details_success(client: TestClient):
     assert data["id"] == "run_123"
     assert "status" in data
     assert "runName" in data
+
+
+# =============================================================================
+# Tests for _extract_form_id()
+# =============================================================================
+
+
+def test_extract_form_id_none_input():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id(None) is None
+
+
+def test_extract_form_id_not_dict():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id("not a dict") is None  # type: ignore[arg-type]
+    assert _extract_form_id(42) is None  # type: ignore[arg-type]
+
+
+def test_extract_form_id_missing_keys():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id({"unrelated_key": "value"}) is None
+
+
+def test_extract_form_id_empty_string_value():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id({"id": "  ", "sample_id": ""}) is None
+
+
+def test_extract_form_id_uses_id_key():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id({"id": "sample_001"}) == "sample_001"
+
+
+def test_extract_form_id_falls_back_to_sample_id():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id({"sample_id": "s_002"}) == "s_002"
+
+
+def test_extract_form_id_strips_whitespace():
+    from app.routes.workflows import _extract_form_id
+
+    assert _extract_form_id({"id": "  s1  "}) == "s1"
+
+
+# =============================================================================
+# Tests for _extract_binder_name()
+# =============================================================================
+
+
+def test_extract_binder_name_none_input():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name(None) is None
+
+
+def test_extract_binder_name_not_dict():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name("not a dict") is None  # type: ignore[arg-type]
+
+
+def test_extract_binder_name_missing_key():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name({"other_key": "value"}) is None
+
+
+def test_extract_binder_name_blank_value():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name({"binder_name": "  "}) is None
+
+
+def test_extract_binder_name_valid():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name({"binder_name": "PDL1"}) == "PDL1"
+
+
+def test_extract_binder_name_strips_whitespace():
+    from app.routes.workflows import _extract_binder_name
+
+    assert _extract_binder_name({"binder_name": "  CTLA4  "}) == "CTLA4"
+
+
+# =============================================================================
+# Tests for _extract_final_design_count()
+# =============================================================================
+
+
+def test_extract_final_design_count_none_input():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count(None) is None
+
+
+def test_extract_final_design_count_not_dict():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count("not a dict") is None  # type: ignore[arg-type]
+
+
+def test_extract_final_design_count_missing_key():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"other_key": 5}) is None
+
+
+def test_extract_final_design_count_invalid_string():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": "not_a_number"}) is None
+
+
+def test_extract_final_design_count_negative():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": -5}) is None
+
+
+def test_extract_final_design_count_zero():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": 0}) is None
+
+
+def test_extract_final_design_count_valid():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": 10}) == 10
+
+
+def test_extract_final_design_count_one():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": 1}) == 1
+
+
+def test_extract_final_design_count_string_number():
+    from app.routes.workflows import _extract_final_design_count
+
+    assert _extract_final_design_count({"number_of_final_designs": "25"}) == 25
+
+
+# =============================================================================
+# Tests for missing repo_url / default_revision
+# =============================================================================
+
+
+def test_launch_missing_repo_url(client: TestClient, app, test_engine):
+    """Workflow missing repo_url should return 500."""
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
+    with Session(test_engine) as db:
+        db.add(
+            Workflow(
+                id=uuid4(),
+                name="norepo",
+                description="No repo workflow",
+                repo_url=None,
+                default_revision="dev",
+            )
+        )
+        db.commit()
+
+    payload = {
+        "launch": {"tool": "norepo", "runName": "test-run"},
+        "datasetId": "dataset_123",
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 500
+    assert "missing repo_url" in response.json()["detail"]
+
+
+def test_launch_missing_default_revision(client: TestClient, app, test_engine):
+    """Workflow missing default_revision should return 500."""
+    with Session(test_engine) as db:
+        db.add(
+            Workflow(
+                id=uuid4(),
+                name="norev",
+                description="No revision workflow",
+                repo_url="https://github.com/test/norev",
+                default_revision=None,
+            )
+        )
+        db.commit()
+
+    payload = {
+        "launch": {"tool": "norev", "runName": "test-run"},
+        "datasetId": "dataset_123",
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 500
+    assert "missing default_revision" in response.json()["detail"]
+
+
+# =============================================================================
+# Tests for proteinfold launch path
+# =============================================================================
+
+
+def _add_proteinfold_workflow(test_engine):
+    """Helper to add a proteinfold workflow to the test DB."""
+    with Session(test_engine) as db:
+        existing = db.scalar(
+            select(Workflow).where(Workflow.name == "proteinfold")
+        )
+        if not existing:
+            db.add(
+                Workflow(
+                    id=uuid4(),
+                    name="proteinfold",
+                    description="Proteinfold workflow",
+                    repo_url="https://github.com/nf-core/proteinfold",
+                    default_revision="dev",
+                )
+            )
+            db.commit()
+
+
+@patch("app.routes.workflows.launch_proteinfold_workflow")
+def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine):
+    """Test successful proteinfold workflow launch."""
+    _add_proteinfold_workflow(test_engine)
+    mock_launch.return_value = ProteinfoldLaunchResult(
+        workflow_id="pf_wf_001",
+        status="submitted",
+        message=None,
+    )
+
+    payload = {
+        "launch": {"tool": "proteinfold", "runName": "pf-run-1"},
+        "datasetId": "dataset_pf",
+        "formData": {"mode": "alphafold2", "seqeraRunName": "pf-run-1"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["runId"] == "pf_wf_001"
+    assert data["status"] == "submitted"
+    mock_launch.assert_called_once()
+
+
+@patch("app.routes.workflows.launch_proteinfold_workflow")
+def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient, test_engine):
+    """ProteinfoldConfigurationError should return 500."""
+    _add_proteinfold_workflow(test_engine)
+    mock_launch.side_effect = ProteinfoldConfigurationError("Missing SEQERA_API_URL")
+
+    payload = {
+        "launch": {"tool": "proteinfold", "runName": "pf-run-cfg-err"},
+        "datasetId": "dataset_pf",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 500
+    assert "Missing SEQERA_API_URL" in response.json()["detail"]
+
+
+@patch("app.routes.workflows.launch_proteinfold_workflow")
+def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test_engine):
+    """ProteinfoldExecutorError should return 502."""
+    _add_proteinfold_workflow(test_engine)
+    mock_launch.side_effect = ProteinfoldExecutorError("Seqera API 503")
+
+    payload = {
+        "launch": {"tool": "proteinfold", "runName": "pf-run-exec-err"},
+        "datasetId": "dataset_pf",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 502
+    assert "Seqera API 503" in response.json()["detail"]

@@ -24,18 +24,17 @@ from ..schemas.workflows import (
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
-    BindflowLaunchResult,
     _get_required_env,
     launch_bindflow_workflow,
+)
+from ..services.datasets import (
+    create_seqera_dataset,
+    upload_dataset_to_seqera,
 )
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
     ProteinfoldExecutorError,
     launch_proteinfold_workflow,
-)
-from ..services.datasets import (
-    create_seqera_dataset,
-    upload_dataset_to_seqera,
 )
 from .dependencies import get_current_user_id, get_db
 
@@ -155,8 +154,10 @@ async def launch_workflow(
     try:
         if requested_tool == "proteinfold":
             mode = str((payload.formData or {}).get("mode", "alphafold2"))
+            seqera_run_name = str((payload.formData or {}).get("seqeraRunName") or payload.launch.runName or "")
+            proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_proteinfold_workflow(
-                payload.launch,
+                proteinfold_launch_form,
                 dataset_id,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,

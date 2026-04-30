@@ -231,31 +231,33 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
 
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
-    """Test handling of Seqera API error."""
+    """Runs whose Seqera IDs are unknown are silently skipped (orphaned DB rows)."""
     from app.services.seqera_errors import SeqeraAPIError
+
+    mock_db.scalar.return_value = None  # get_owned_run returns None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             side_effect=SeqeraAPIError("API error"),
         ),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await list_jobs(
-                search=None,
-                status_filter=None,
-                limit=50,
-                offset=0,
-                current_user_id=mock_user_id,
-                db=mock_db,
-            )
+        result = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
 
-    assert exc_info.value.status_code == 502
-    assert "API error" in str(exc_info.value.detail)
+    assert result.jobs == []
+    assert result.total == 0
 
 
 @pytest.mark.asyncio
