@@ -30,7 +30,7 @@ from ...services.seqera_client import get_workflow_logs_raw
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
-router = APIRouter(tags=["results"])
+router = APIRouter(tags=["results"], dependencies=[Depends(get_current_user_id)])
 
 
 @router.get("/{run_id}/settingParams", response_model=JobSettingParamsResponse)

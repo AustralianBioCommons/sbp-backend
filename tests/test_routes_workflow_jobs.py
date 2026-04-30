@@ -231,7 +231,7 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
 
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
-    """Test handling of Seqera API error."""
+    """Runs not found in Seqera are silently skipped, not surfaced as errors."""
     from app.services.seqera_errors import SeqeraAPIError
 
     with (
@@ -244,18 +244,16 @@ async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
             side_effect=SeqeraAPIError("API error"),
         ),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await list_jobs(
-                search=None,
-                status_filter=None,
-                limit=50,
-                offset=0,
-                current_user_id=mock_user_id,
-                db=mock_db,
-            )
+        result = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
 
-    assert exc_info.value.status_code == 502
-    assert "API error" in str(exc_info.value.detail)
+    assert result.jobs == []
 
 
 @pytest.mark.asyncio
