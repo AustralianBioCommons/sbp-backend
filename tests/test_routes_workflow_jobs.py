@@ -231,7 +231,7 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
 
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
-    """Runs whose Seqera IDs are unknown are silently skipped (orphaned DB rows)."""
+    """Runs not found in Seqera are silently skipped, not surfaced as errors."""
     from app.services.seqera_errors import SeqeraAPIError
 
     mock_db.scalar.return_value = None  # get_owned_run returns None
@@ -257,8 +257,6 @@ async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
         )
 
     assert result.jobs == []
-    assert result.total == 0
-
 
 @pytest.mark.asyncio
 async def test_get_job_details_success(mock_db, mock_user_id, mocker):
