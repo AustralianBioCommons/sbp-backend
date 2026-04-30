@@ -35,7 +35,7 @@ from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, 
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
-router = APIRouter(tags=["jobs"])
+router = APIRouter(tags=["jobs"], dependencies=[Depends(get_current_user_id)])
 
 
 def _resolve_job_name(run_id: str, wf: dict[str, object], owned_run: WorkflowRun | None) -> str:

@@ -40,7 +40,7 @@ from ..services.proteinfold_executor import (
 )
 from .dependencies import get_current_user_id, get_db
 
-router = APIRouter(tags=["workflows"])
+router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
 
 def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
@@ -265,10 +265,8 @@ async def get_details(run_id: str) -> LaunchDetails:
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
     payload: DatasetUploadRequest,
-    current_user_id: UUID = Depends(get_current_user_id),
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
-    _ = current_user_id
     try:
         dataset = await create_seqera_dataset(
             name=payload.datasetName, description=payload.datasetDescription
