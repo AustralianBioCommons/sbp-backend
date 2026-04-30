@@ -24,6 +24,7 @@ from ..schemas.workflows import (
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
+    BindflowLaunchResult,
     _get_required_env,
     launch_bindflow_workflow,
 )
@@ -34,6 +35,7 @@ from ..services.datasets import (
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
     ProteinfoldExecutorError,
+    ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
 from .dependencies import get_current_user_id, get_db
@@ -152,6 +154,7 @@ async def launch_workflow(
     db_session.commit()
 
     try:
+        result: BindflowLaunchResult | ProteinfoldLaunchResult
         if requested_tool == "proteinfold":
             mode = str((payload.formData or {}).get("mode", "alphafold2"))
             seqera_run_name = str(
