@@ -230,8 +230,9 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
-    """Runs not found in Seqera are silently skipped, not surfaced as errors."""
+@pytest.mark.parametrize("seqera_status", [403, 404])
+async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status):
+    """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""
     from app.services.seqera_errors import SeqeraAPIError
 
     with (
@@ -241,7 +242,7 @@ async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
-            side_effect=SeqeraAPIError("API error"),
+            side_effect=SeqeraAPIError("Client error", status_code=seqera_status),
         ),
     ):
         result = await list_jobs(
@@ -254,6 +255,34 @@ async def test_list_jobs_seqera_api_error(mock_db, mock_user_id):
         )
 
     assert result.jobs == []
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_seqera_5xx_error_propagates(mock_db, mock_user_id):
+    """Seqera 5xx errors (server failures) are surfaced as 502."""
+    from app.services.seqera_errors import SeqeraAPIError
+
+    with (
+        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
+        patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            side_effect=SeqeraAPIError("Internal error", status_code=500),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await list_jobs(
+                search=None,
+                status_filter=None,
+                limit=50,
+                offset=0,
+                current_user_id=mock_user_id,
+                db=mock_db,
+            )
+
+    assert exc_info.value.status_code == 502
 
 
 @pytest.mark.asyncio

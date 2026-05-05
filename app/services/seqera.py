@@ -96,7 +96,10 @@ async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -
                 "body": body,
             },
         )
-        raise SeqeraAPIError(f"Failed to describe workflow: {response.status_code} {body}")
+        raise SeqeraAPIError(
+            f"Failed to describe workflow: {response.status_code} {body}",
+            status_code=response.status_code,
+        )
 
     result: dict[str, Any] = response.json()
     return result
