@@ -259,6 +259,7 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
 
     assert result.jobs == []
 
+
 @pytest.mark.asyncio
 async def test_list_jobs_seqera_5xx_error_propagates(mock_db, mock_user_id):
     """Seqera 5xx errors (server failures) are surfaced as 502."""
