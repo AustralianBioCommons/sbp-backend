@@ -106,8 +106,10 @@ async def list_jobs(
             owned_run = get_owned_run(db, current_user_id, run_id)
             try:
                 payload = await describe_workflow(run_id)
-            except SeqeraAPIError:
-                # Run ID not known to Seqera (e.g. placeholder from a failed launch).
+            except SeqeraAPIError as exc:
+                if exc.status_code is None or exc.status_code >= 500:
+                    raise
+                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
                 continue
             wf = coerce_workflow_payload(payload)
             pipeline_status = extract_pipeline_status(payload)

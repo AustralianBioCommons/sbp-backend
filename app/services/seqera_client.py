@@ -47,7 +47,10 @@ async def list_workflows_raw(
         response = await client.get(url, headers=_headers(token), params=params)
 
     if response.is_error:
-        raise SeqeraAPIError(f"Failed to list workflows: {response.status_code} {response.text}")
+        raise SeqeraAPIError(
+            f"Failed to list workflows: {response.status_code} {response.text}",
+            status_code=response.status_code,
+        )
     return cast(dict[str, Any] | list[Any], response.json())
 
 
@@ -60,7 +63,10 @@ async def describe_workflow_raw(
         response = await client.get(url, headers=_headers(token), params=params)
 
     if response.is_error:
-        raise SeqeraAPIError(f"Failed to describe workflow: {response.status_code} {response.text}")
+        raise SeqeraAPIError(
+            f"Failed to describe workflow: {response.status_code} {response.text}",
+            status_code=response.status_code,
+        )
     return cast(dict[str, Any], response.json())
 
 
@@ -75,7 +81,8 @@ async def get_workflow_logs_raw(
 
     if response.is_error:
         raise SeqeraAPIError(
-            f"Failed to retrieve workflow logs: {response.status_code} {response.text}"
+            f"Failed to retrieve workflow logs: {response.status_code} {response.text}",
+            status_code=response.status_code,
         )
     return cast(dict[str, Any], response.json())
 
@@ -91,7 +98,8 @@ async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None)
 
     if response.is_error:
         raise SeqeraAPIError(
-            f"Failed to cancel workflow {workflow_id}: {response.status_code} {response.text}"
+            f"Failed to cancel workflow {workflow_id}: {response.status_code} {response.text}",
+            status_code=response.status_code,
         )
 
 
@@ -105,7 +113,8 @@ async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None)
         return
     if response.is_error:
         raise SeqeraAPIError(
-            f"Failed to delete workflow {workflow_id}: {response.status_code} {response.text}"
+            f"Failed to delete workflow {workflow_id}: {response.status_code} {response.text}",
+            status_code=response.status_code,
         )
 
 
@@ -118,5 +127,6 @@ async def delete_workflows_raw(workflow_ids: list[str], workspace_id: str | None
 
     if response.is_error:
         raise SeqeraAPIError(
-            f"Failed to delete workflows {workflow_ids}: {response.status_code} {response.text}"
+            f"Failed to delete workflows {workflow_ids}: {response.status_code} {response.text}",
+            status_code=response.status_code,
         )
