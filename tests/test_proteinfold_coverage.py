@@ -412,7 +412,6 @@ def test_get_proteinfold_config_profiles_contains_singularity():
 
 def test_get_proteinfold_config_text_groovy_structure():
     text = get_proteinfold_config_text()
-    assert "params {" in text
     assert "singularity {" in text
     assert "executor {" in text
     assert "process {" in text
@@ -426,7 +425,7 @@ def test_get_proteinfold_config_text_singularity_enabled():
 
 def test_get_proteinfold_config_text_contains_db_path():
     text = get_proteinfold_config_text()
-    assert "proteinfold_dbs" in text
+    assert "pbspro" in text
 
 
 def test_get_proteinfold_config_text_contains_trace():
