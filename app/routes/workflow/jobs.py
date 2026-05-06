@@ -35,7 +35,7 @@ from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, 
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
-router = APIRouter(tags=["jobs"])
+router = APIRouter(tags=["jobs"], dependencies=[Depends(get_current_user_id)])
 
 
 def _resolve_job_name(run_id: str, wf: dict[str, object], owned_run: WorkflowRun | None) -> str:
@@ -104,7 +104,13 @@ async def list_jobs(
         jobs: list[JobListItem] = []
         for run_id in owned_run_ids:
             owned_run = get_owned_run(db, current_user_id, run_id)
-            payload = await describe_workflow(run_id)
+            try:
+                payload = await describe_workflow(run_id)
+            except SeqeraAPIError as exc:
+                if exc.status_code is None or exc.status_code >= 500:
+                    raise
+                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+                continue
             wf = coerce_workflow_payload(payload)
             pipeline_status = extract_pipeline_status(payload)
             ui_status = map_pipeline_status_to_ui(pipeline_status)
