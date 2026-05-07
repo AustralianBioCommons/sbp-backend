@@ -130,8 +130,7 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    app_user = db_session.scalar(select(AppUser).where(AppUser.id == current_user_id))
-    user_email = app_user.email if app_user else ""
+    user_email = db_session.scalar(select(AppUser.email).where(AppUser.id == current_user_id)) or ""
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
