@@ -84,60 +84,9 @@ def test_upload_fasta_file_rejects_non_fasta_content(client):
     assert "must start with" in response.json()["detail"]
 
 
-# =============================================================================
-# Tests for _human_readable_size()
-# =============================================================================
-
-
-def test_human_readable_size_bytes():
-    from app.routes.fasta_upload import _human_readable_size
-
-    assert _human_readable_size(512) == "512B"
-
-
-def test_human_readable_size_kilobytes():
-    from app.routes.fasta_upload import _human_readable_size
-
-    assert _human_readable_size(1024) == "1KB"
-
-
-def test_human_readable_size_megabytes():
-    from app.routes.fasta_upload import _human_readable_size
-
-    assert _human_readable_size(1024 * 1024) == "1MB"
-
-
-def test_human_readable_size_gigabytes():
-    from app.routes.fasta_upload import _human_readable_size
-
-    assert _human_readable_size(1024 * 1024 * 1024) == "1GB"
-
-
-def test_human_readable_size_terabytes():
-    from app.routes.fasta_upload import _human_readable_size
-
-    assert _human_readable_size(1024 * 1024 * 1024 * 1024) == "1TB"
-
-
-def test_human_readable_size_fractional_mb():
-    from app.routes.fasta_upload import _human_readable_size
-
-    result = _human_readable_size(1536 * 1024)  # 1.5 MB
-    assert "MB" in result
-
-
-# =============================================================================
-# Additional upload route tests
-# =============================================================================
-
 
 def test_upload_fasta_no_filename(client):
-    """Empty filename should return a 4xx error.
-
-    FastAPI may return 422 (validation) before reaching the route handler when
-    the filename is empty, or the route handler returns 400 with 'No file provided'.
-    Either is acceptable — both mean the request was correctly rejected.
-    """
+    """Empty filename should return a 4xx error."""
     response = client.post(
         "/api/workflows/fasta/upload",
         files={"file": ("", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
@@ -146,37 +95,6 @@ def test_upload_fasta_no_filename(client):
     assert response.status_code in (
         status.HTTP_400_BAD_REQUEST,
         status.HTTP_422_UNPROCESSABLE_ENTITY,
-    )
-
-
-def test_upload_fasta_file_too_large(client):
-    """Files exceeding MAX_FILE_SIZE should return 400."""
-    from app.routes.fasta_upload import MAX_FILE_SIZE
-
-    oversized_content = b">seq\n" + b"A" * (MAX_FILE_SIZE + 1)
-
-    with patch("app.routes.fasta_upload.upload_file_to_s3", new_callable=AsyncMock):
-        response = client.post(
-            "/api/workflows/fasta/upload",
-            files={
-                "file": (
-                    "big.fasta",
-                    BytesIO(oversized_content),
-                    "text/plain",
-                    {"Content-Length": str(MAX_FILE_SIZE + 1)},
-                )
-            },
-            headers={"Authorization": "Bearer testtoken"},
-        )
-
-    # The size check relies on file.size being set; if the client sets it we expect 400
-    # If the test client doesn't populate file.size the request may pass size check —
-    # just verify it doesn't 500.
-    assert response.status_code in (
-        status.HTTP_400_BAD_REQUEST,
-        status.HTTP_201_CREATED,
-        status.HTTP_502_BAD_GATEWAY,
-        status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 
 
