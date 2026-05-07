@@ -84,7 +84,6 @@ def test_upload_fasta_file_rejects_non_fasta_content(client):
     assert "must start with" in response.json()["detail"]
 
 
-
 def test_upload_fasta_no_filename(client):
     """Empty filename should return a 4xx error."""
     response = client.post(
