@@ -245,7 +245,9 @@ def test_get_details_success(client: TestClient):
 
 def test_list_runs_placeholder(client: TestClient):
     """List runs currently returns an empty placeholder response."""
-    response = client.get("/api/workflows/runs", params={"status": "RUNNING", "limit": 10, "offset": 5})
+    response = client.get(
+        "/api/workflows/runs", params={"status": "RUNNING", "limit": 10, "offset": 5}
+    )
 
     assert response.status_code == 200
     data = response.json()
