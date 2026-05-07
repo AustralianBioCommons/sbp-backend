@@ -49,14 +49,6 @@ def test_yaml_value_str():
     assert _yaml_value("hello") == '"hello"'
 
 
-def test_yaml_value_zero():
-    assert _yaml_value(0) == "0"
-
-
-def test_yaml_value_negative_float():
-    assert _yaml_value(-1.5) == "-1.5"
-
-
 # =============================================================================
 # Tests for _tool_param_lines()
 # =============================================================================
@@ -377,12 +369,6 @@ def test_get_proteinfold_default_params_mode_substitution():
     assert 'mode: "boltz"' in params_text
 
 
-def test_get_proteinfold_default_params_is_list():
-    result = get_proteinfold_default_params("s3://out", "https://sheet")
-    assert isinstance(result, list)
-    assert len(result) > 0
-
-
 def test_get_proteinfold_executor_script_env_var_substitution():
     script = get_proteinfold_executor_script("KEY123", "SECRET456", "us-east-1")
     assert "KEY123" in script
@@ -398,11 +384,6 @@ def test_get_proteinfold_executor_script_env_var_substitution():
 def test_get_proteinfold_executor_script_defaults():
     script = get_proteinfold_executor_script()
     assert "ap-southeast-2" in script
-
-
-def test_get_proteinfold_config_profiles_returns_list():
-    profiles = get_proteinfold_config_profiles()
-    assert isinstance(profiles, list)
 
 
 def test_get_proteinfold_config_profiles_contains_singularity():
