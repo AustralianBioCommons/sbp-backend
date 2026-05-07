@@ -170,7 +170,6 @@ async def test_post_to_seqera_nested_workflow_id():
             )
         )
         result = await _post_to_seqera("https://api.test/workflow/launch", {}, {})
-
     assert result.workflow_id == "wf_nested"
 
 
@@ -371,29 +370,35 @@ def test_get_proteinfold_executor_script_defaults():
     assert "ap-southeast-2" in script
 
 
+def test_get_proteinfold_config_profiles_returns_list():
+    profiles = get_proteinfold_config_profiles()
+    assert isinstance(profiles, list)
+
+
 def test_get_proteinfold_config_profiles_contains_singularity():
     profiles = get_proteinfold_config_profiles()
     assert "singularity" in profiles
 
 
 def test_get_proteinfold_config_text_groovy_structure():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    assert "params {" in text
     assert "singularity {" in text
     assert "executor {" in text
     assert "process {" in text
 
 
 def test_get_proteinfold_config_text_singularity_enabled():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
     assert "enabled = true" in text
     assert "autoMounts = true" in text
 
 
 def test_get_proteinfold_config_text_contains_pbspro():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
     assert "pbspro" in text
 
 
 def test_get_proteinfold_config_text_contains_trace():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
     assert "trace {" in text or "trace" in text

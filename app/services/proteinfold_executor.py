@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -136,6 +137,7 @@ async def launch_proteinfold_workflow(
     output_id: str | None = None,
     mode: str = "alphafold2",
     form_data: dict[str, Any] | None = None,
+    user_email: str = "",
 ) -> ProteinfoldLaunchResult:
     """Launch a proteinfold workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -148,6 +150,11 @@ async def launch_proteinfold_workflow(
         raise ProteinfoldConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    job_id = (form.runName or "").strip()
+    if not job_id:
+        raise ProteinfoldConfigurationError("Missing run name for workflow launch")
+
     sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     params_text = _build_params_text(
         out_dir,
@@ -155,6 +162,12 @@ async def launch_proteinfold_workflow(
         mode,
         form_data,
         form.paramsText,
+    )
+    params_text = (
+        f"{params_text}\n"
+        f'job_id: "{job_id}"\n'
+        f'user_name: "{user_email}"\n'
+        f'timestamp: "{timestamp}"'
     )
 
     launch_payload: dict[str, Any] = {
@@ -167,11 +180,11 @@ async def launch_proteinfold_workflow(
             "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_proteinfold_config_profiles(),
-            "configText": get_proteinfold_config_text(),
+            "configText": get_proteinfold_config_text(job_id, user_email, timestamp),
             "preRunScript": get_proteinfold_executor_script(
-                aws_access_key=_get_required_env("AWS_ACCESS_KEY_ID"),
-                aws_secret_key=_get_required_env("AWS_SECRET_ACCESS_KEY"),
-                aws_region=os.getenv("AWS_REGION", "ap-southeast-2"),
+                os.getenv("AWS_ACCESS_KEY_ID", ""),
+                os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+                os.getenv("AWS_REGION", "ap-southeast-2"),
             ),
             "resume": False,
             "datasetIds": [dataset_id],

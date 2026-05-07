@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ import httpx
 from ..schemas.workflows import WorkflowLaunchForm
 from .bindflow_config import (
     get_bindflow_config_profiles,
+    get_bindflow_config_text,
     get_bindflow_default_params,
     get_bindflow_executor_script,
 )
@@ -48,6 +50,7 @@ async def launch_bindflow_workflow(
     pipeline: str,
     revision: str | None = None,
     output_id: str | None = None,
+    user_email: str = "",
 ) -> BindflowLaunchResult:
     """Launch a bindflow workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -69,11 +72,21 @@ async def launch_bindflow_workflow(
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
     # Build default external parameters from config
     default_params = get_bindflow_default_params(out_dir)
 
     # Start with default parameters
     params_text = "\n".join(default_params)
+
+    # Append job metadata params
+    params_text = (
+        f"{params_text}\n"
+        f'job_id: "{run_name}"\n'
+        f'user_name: "{user_email}"\n'
+        f'timestamp: "{timestamp}"'
+    )
 
     # Add custom paramsText from frontend if provided
     if form.paramsText and form.paramsText.strip():
@@ -94,6 +107,7 @@ async def launch_bindflow_workflow(
             "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_bindflow_config_profiles(),
+            "configText": get_bindflow_config_text(run_name, user_email, timestamp),
             "preRunScript": get_bindflow_executor_script(
                 aws_access_key, aws_secret_key, aws_region
             ),
@@ -133,12 +147,10 @@ async def launch_bindflow_workflow(
     if response.is_error:
         body = response.text
         logger.error(
-            "Seqera API error",
-            extra={
-                "status": response.status_code,
-                "reason": response.reason_phrase,
-                "body": body,
-            },
+            "Seqera API error %s %s: %s",
+            response.status_code,
+            response.reason_phrase,
+            body,
         )
         raise BindflowExecutorError(
             f"Bindflow workflow launch failed: {response.status_code} {body}"

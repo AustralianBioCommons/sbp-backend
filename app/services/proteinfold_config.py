@@ -69,9 +69,22 @@ def get_proteinfold_config_profiles() -> list[str]:
     return ["singularity"]
 
 
-def get_proteinfold_config_text() -> str:
+def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
     return f"""\
+params {{
+    use_gpu = true
+    project = System.getenv("PROJECT")
+    db = "{_DB_BASE}"
+    colabfold_alphafold2_params_tags = [
+        "alphafold2_multimer_v1" : "alphafold_params_colab_2021-10-27",
+        "alphafold2_multimer_v2" : "alphafold_params_colab_2022-03-02",
+        "alphafold2_multimer_v3" : "alphafold_params_colab_2022-12-06",
+        "alphafold2_ptm"         : "alphafold_params_2022-12-06"
+    ]
+}}
+
+
 // Enable use of Singularity to run containers
 singularity {{
     enabled = true
@@ -89,6 +102,7 @@ executor {{
 // Define process resource limits
 process {{
     executor = 'pbspro'
+    clusterOptions = "-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
     storage = "gdata/ll61+gdata/if89+gdata/li87"
     module = 'singularity'
     cache = 'lenient'
