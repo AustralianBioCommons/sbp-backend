@@ -60,7 +60,9 @@ async def launch_bindflow_workflow(
     work_dir = _get_required_env("WORK_DIR")
     s3_bucket = _get_required_env("AWS_S3_BUCKET")
 
-    run_name = form.runName
+    run_name = (form.runName or "").strip()
+    if not run_name:
+        raise BindflowConfigurationError("Missing run name for workflow launch")
     # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
     output_key = (output_id or "").strip()
     if not output_key:
