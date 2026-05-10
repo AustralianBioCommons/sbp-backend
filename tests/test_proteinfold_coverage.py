@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+import respx
 
 from app.schemas.workflows import WorkflowLaunchForm
 from app.services.proteinfold_config import (
@@ -168,16 +170,10 @@ def test_build_params_text_empty_form_data_dict():
 
 @pytest.mark.anyio
 async def test_post_to_seqera_success():
-    mock_response = MagicMock()
-    mock_response.is_error = False
-    mock_response.json.return_value = {"workflowId": "wf_abc123", "status": "submitted"}
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-
-    with patch("app.services.proteinfold_executor.httpx.AsyncClient", return_value=mock_client):
+    with respx.mock:
+        respx.post("https://api.seqera.test/workflow/launch").mock(
+            return_value=httpx.Response(200, json={"workflowId": "wf_abc123", "status": "submitted"})
+        )
         result = await _post_to_seqera(
             "https://api.seqera.test/workflow/launch",
             {"Authorization": "Bearer token"},
@@ -190,54 +186,34 @@ async def test_post_to_seqera_success():
 
 @pytest.mark.anyio
 async def test_post_to_seqera_nested_workflow_id():
-    """Test that workflowId can be found nested in data key."""
-    mock_response = MagicMock()
-    mock_response.is_error = False
-    mock_response.json.return_value = {"data": {"workflowId": "wf_nested"}, "status": "running"}
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-
-    with patch("app.services.proteinfold_executor.httpx.AsyncClient", return_value=mock_client):
-        result = await _post_to_seqera("https://api.test", {}, {})
+    """workflowId can be found nested under the data key."""
+    with respx.mock:
+        respx.post("https://api.test/workflow/launch").mock(
+            return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}, "status": "running"})
+        )
+        result = await _post_to_seqera("https://api.test/workflow/launch", {}, {})
 
     assert result.workflow_id == "wf_nested"
 
 
 @pytest.mark.anyio
 async def test_post_to_seqera_http_error():
-    mock_response = MagicMock()
-    mock_response.is_error = True
-    mock_response.status_code = 401
-    mock_response.reason_phrase = "Unauthorized"
-    mock_response.text = "Invalid token"
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-
-    with patch("app.services.proteinfold_executor.httpx.AsyncClient", return_value=mock_client):
+    with respx.mock:
+        respx.post("https://api.test/workflow/launch").mock(
+            return_value=httpx.Response(401, text="Invalid token")
+        )
         with pytest.raises(ProteinfoldExecutorError, match="401"):
-            await _post_to_seqera("https://api.test", {}, {})
+            await _post_to_seqera("https://api.test/workflow/launch", {}, {})
 
 
 @pytest.mark.anyio
 async def test_post_to_seqera_missing_workflow_id():
-    mock_response = MagicMock()
-    mock_response.is_error = False
-    mock_response.json.return_value = {"status": "submitted"}  # No workflowId
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-
-    with patch("app.services.proteinfold_executor.httpx.AsyncClient", return_value=mock_client):
+    with respx.mock:
+        respx.post("https://api.test/workflow/launch").mock(
+            return_value=httpx.Response(200, json={"status": "submitted"})
+        )
         with pytest.raises(ProteinfoldExecutorError, match="workflowId"):
-            await _post_to_seqera("https://api.test", {}, {})
+            await _post_to_seqera("https://api.test/workflow/launch", {}, {})
 
 
 # =============================================================================
