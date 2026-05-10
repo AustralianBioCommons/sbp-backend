@@ -172,7 +172,9 @@ def test_build_params_text_empty_form_data_dict():
 async def test_post_to_seqera_success():
     with respx.mock:
         respx.post("https://api.seqera.test/workflow/launch").mock(
-            return_value=httpx.Response(200, json={"workflowId": "wf_abc123", "status": "submitted"})
+            return_value=httpx.Response(
+                200, json={"workflowId": "wf_abc123", "status": "submitted"}
+            )
         )
         result = await _post_to_seqera(
             "https://api.seqera.test/workflow/launch",
@@ -189,7 +191,9 @@ async def test_post_to_seqera_nested_workflow_id():
     """workflowId can be found nested under the data key."""
     with respx.mock:
         respx.post("https://api.test/workflow/launch").mock(
-            return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}, "status": "running"})
+            return_value=httpx.Response(
+                200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
+            )
         )
         result = await _post_to_seqera("https://api.test/workflow/launch", {}, {})
 
@@ -370,7 +374,6 @@ def test_get_proteinfold_default_params_is_dict():
     result = get_proteinfold_default_params("s3://out", "https://sheet")
     assert isinstance(result, dict)
     assert len(result) > 0
-
 
 
 def test_get_proteinfold_executor_script_env_var_substitution():
