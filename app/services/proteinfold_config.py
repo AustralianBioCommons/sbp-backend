@@ -2,6 +2,8 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 _DB_BASE = "/g/data/if89/proteinfold_dbs/proteinfold_minidbs/"
 _SINGULARITY_CACHE_DIR = "/g/data/if89/singularity_cache/"
 
@@ -15,40 +17,39 @@ _COLABFOLD_ALPHAFOLD2_PARAMS_TAGS = {
 
 def get_proteinfold_default_params(
     out_dir: str, samplesheet_url: str, mode: str = "alphafold2"
-) -> list[str]:
+) -> dict[str, Any]:
     """Get default parameters for proteinfold workflow."""
-    tags_lines = "\n".join(f'    {k}: "{v}"' for k, v in _COLABFOLD_ALPHAFOLD2_PARAMS_TAGS.items())
-    return [
-        f'outdir: "{out_dir}"',
-        f'input: "{samplesheet_url}"',
-        f'db: "{_DB_BASE}"',
-        f'alphafold2_db: "{_DB_BASE}"',
-        f'alphafold2_bfd_path: "{_DB_BASE}/bfd/*"',
-        f'alphafold2_small_bfd_path: "{_DB_BASE}/small_bfd/*"',
-        f'alphafold2_params_path: "{_DB_BASE}/params/alphafold_params_2022-12-06/*"',
-        f'alphafold2_mgnify_path: "{_DB_BASE}/mgnify/*"',
-        f'alphafold2_pdb70_path: "{_DB_BASE}/pdb70/**"',
-        f'alphafold2_pdb_mmcif_path: "{_DB_BASE}/pdb_mmcif/mmcif_files"',
-        f'alphafold2_pdb_obsolete_path: "{_DB_BASE}/pdb_mmcif/obsolete.dat"',
-        f'alphafold2_uniref30_path: "{_DB_BASE}/uniref30/*"',
-        f'alphafold2_uniref90_path: "{_DB_BASE}/uniref90/*"',
-        f'alphafold2_pdb_seqres_path: "{_DB_BASE}/pdb_seqres/*"',
-        f'alphafold2_uniprot_path: "{_DB_BASE}/uniprot/*"',
-        f'colabfold_db: "{_DB_BASE}"',
-        f'colabfold_envdb_path: "{_DB_BASE}/colabfold_envdb/*"',
-        f'colabfold_uniref30_path: "{_DB_BASE}/colabfold_uniref30/*"',
-        f'colabfold_alphafold2_params_path: "{_DB_BASE}/params/alphafold_params_2022-12-06"',
-        f'boltz_db: "{_DB_BASE}"',
-        f'boltz_ccd_path: "{_DB_BASE}/params/ccd.pkl"',
-        f'boltz_model_path: "{_DB_BASE}/params/boltz1_conf.ckpt"',
-        f'boltz2_aff_path: "{_DB_BASE}/params/boltz2_aff.ckpt"',
-        f'boltz2_conf_path: "{_DB_BASE}/params/boltz2_conf.ckpt"',
-        f'boltz2_mols_path: "{_DB_BASE}/params/mols/"',
-        'project: "yz52"',
-        f'mode: "{mode}"',
-        "use_gpu: true",
-        f"colabfold_alphafold2_params_tags:\n{tags_lines}",
-    ]
+    return {
+        "outdir": out_dir,
+        "input": samplesheet_url,
+        "db": _DB_BASE,
+        "alphafold2_db": _DB_BASE,
+        "alphafold2_bfd_path": f"{_DB_BASE}/bfd/*",
+        "alphafold2_small_bfd_path": f"{_DB_BASE}/small_bfd/*",
+        "alphafold2_params_path": f"{_DB_BASE}/params/alphafold_params_2022-12-06/*",
+        "alphafold2_mgnify_path": f"{_DB_BASE}/mgnify/*",
+        "alphafold2_pdb70_path": f"{_DB_BASE}/pdb70/**",
+        "alphafold2_pdb_mmcif_path": f"{_DB_BASE}/pdb_mmcif/mmcif_files",
+        "alphafold2_pdb_obsolete_path": f"{_DB_BASE}/pdb_mmcif/obsolete.dat",
+        "alphafold2_uniref30_path": f"{_DB_BASE}/uniref30/*",
+        "alphafold2_uniref90_path": f"{_DB_BASE}/uniref90/*",
+        "alphafold2_pdb_seqres_path": f"{_DB_BASE}/pdb_seqres/*",
+        "alphafold2_uniprot_path": f"{_DB_BASE}/uniprot/*",
+        "colabfold_db": _DB_BASE,
+        "colabfold_envdb_path": f"{_DB_BASE}/colabfold_envdb/*",
+        "colabfold_uniref30_path": f"{_DB_BASE}/colabfold_uniref30/*",
+        "colabfold_alphafold2_params_path": f"{_DB_BASE}/params/alphafold_params_2022-12-06",
+        "boltz_db": _DB_BASE,
+        "boltz_ccd_path": f"{_DB_BASE}/params/ccd.pkl",
+        "boltz_model_path": f"{_DB_BASE}/params/boltz1_conf.ckpt",
+        "boltz2_aff_path": f"{_DB_BASE}/params/boltz2_aff.ckpt",
+        "boltz2_conf_path": f"{_DB_BASE}/params/boltz2_conf.ckpt",
+        "boltz2_mols_path": f"{_DB_BASE}/params/mols/",
+        "project": "yz52",
+        "mode": mode,
+        "use_gpu": True,
+        "colabfold_alphafold2_params_tags": dict(_COLABFOLD_ALPHAFOLD2_PARAMS_TAGS),
+    }
 
 
 def get_proteinfold_executor_script(

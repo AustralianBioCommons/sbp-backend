@@ -39,12 +39,24 @@ def _yaml_value(value: Any) -> str:
     return f'"{value}"'
 
 
-def _tool_param_lines(form_data: dict[str, Any]) -> list[str]:
-    return [
-        f"{key}: {_yaml_value(form_data[key])}"
+def _params_to_yaml_text(params: dict[str, Any]) -> str:
+    lines = []
+    for key, value in params.items():
+        if isinstance(value, dict):
+            lines.append(f"{key}:")
+            for k, v in value.items():
+                lines.append(f"  {k}: {_yaml_value(v)}")
+        else:
+            lines.append(f"{key}: {_yaml_value(value)}")
+    return "\n".join(lines)
+
+
+def _tool_params(form_data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: form_data[key]
         for key in _TOOL_PARAM_KEYS
         if key in form_data and form_data[key] is not None
-    ]
+    }
 
 
 class ProteinfoldConfigurationError(RuntimeError):
@@ -86,10 +98,10 @@ def _build_params_text(
     custom_params: str | None,
 ) -> str:
     """Build the YAML params string for the Seqera launch payload."""
-    lines = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
+    params = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
     if form_data:
-        lines.extend(_tool_param_lines(form_data))
-    params_text = "\n".join(lines)
+        params.update(_tool_params(form_data))
+    params_text = _params_to_yaml_text(params)
     if custom_params and custom_params.strip():
         params_text = f"{params_text}\n{custom_params.rstrip()}"
     return params_text

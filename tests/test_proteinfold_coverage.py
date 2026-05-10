@@ -18,8 +18,9 @@ from app.services.proteinfold_executor import (
     ProteinfoldExecutorError,
     ProteinfoldLaunchResult,
     _build_params_text,
+    _params_to_yaml_text,
     _post_to_seqera,
-    _tool_param_lines,
+    _tool_params,
     _yaml_value,
     launch_proteinfold_workflow,
 )
@@ -50,49 +51,71 @@ def test_yaml_value_str():
 
 
 # =============================================================================
-# Tests for _tool_param_lines()
+# Tests for _params_to_yaml_text()
 # =============================================================================
 
 
-def test_tool_param_lines_empty_form():
-    result = _tool_param_lines({})
-    assert result == []
+def test_params_to_yaml_text_scalars():
+    result = _params_to_yaml_text({"outdir": "s3://bucket", "use_gpu": True, "batches": 1})
+    assert 'outdir: "s3://bucket"' in result
+    assert "use_gpu: true" in result
+    assert "batches: 1" in result
 
 
-def test_tool_param_lines_irrelevant_keys():
-    result = _tool_param_lines({"unknown_key": "value", "another_key": 123})
-    assert result == []
+def test_params_to_yaml_text_nested_dict():
+    result = _params_to_yaml_text({"tags": {"key1": "val1", "key2": "val2"}})
+    assert "tags:" in result
+    assert '  key1: "val1"' in result
+    assert '  key2: "val2"' in result
 
 
-def test_tool_param_lines_with_bool():
-    result = _tool_param_lines({"alphafold2_full_dbs": True})
-    assert any("alphafold2_full_dbs: true" in line for line in result)
+def test_params_to_yaml_text_empty():
+    assert _params_to_yaml_text({}) == ""
 
 
-def test_tool_param_lines_with_int():
-    result = _tool_param_lines({"colabfold_num_recycles": 3})
-    assert any("colabfold_num_recycles: 3" in line for line in result)
+# =============================================================================
+# Tests for _tool_params()
+# =============================================================================
 
 
-def test_tool_param_lines_with_str():
-    result = _tool_param_lines({"alphafold2_random_seed": "42"})
-    assert any('alphafold2_random_seed: "42"' in line for line in result)
+def test_tool_params_empty_form():
+    result = _tool_params({})
+    assert result == {}
 
 
-def test_tool_param_lines_none_value_excluded():
-    result = _tool_param_lines({"alphafold2_full_dbs": None, "colabfold_num_recycles": 5})
-    # None value should be excluded
-    assert not any("alphafold2_full_dbs" in line for line in result)
-    assert any("colabfold_num_recycles" in line for line in result)
+def test_tool_params_irrelevant_keys():
+    result = _tool_params({"unknown_key": "value", "another_key": 123})
+    assert result == {}
 
 
-def test_tool_param_lines_multiple_keys():
+def test_tool_params_with_bool():
+    result = _tool_params({"alphafold2_full_dbs": True})
+    assert result == {"alphafold2_full_dbs": True}
+
+
+def test_tool_params_with_int():
+    result = _tool_params({"colabfold_num_recycles": 3})
+    assert result == {"colabfold_num_recycles": 3}
+
+
+def test_tool_params_with_str():
+    result = _tool_params({"alphafold2_random_seed": "42"})
+    assert result == {"alphafold2_random_seed": "42"}
+
+
+def test_tool_params_none_value_excluded():
+    result = _tool_params({"alphafold2_full_dbs": None, "colabfold_num_recycles": 5})
+    assert "alphafold2_full_dbs" not in result
+    assert result["colabfold_num_recycles"] == 5
+
+
+def test_tool_params_multiple_keys():
     form_data = {
         "alphafold2_full_dbs": False,
         "colabfold_num_recycles": 2,
         "boltz_use_potentials": True,
     }
-    result = _tool_param_lines(form_data)
+    result = _tool_params(form_data)
     assert len(result) == 3
 
 
@@ -353,20 +376,25 @@ async def test_launch_proteinfold_workflow_with_form_data(monkeypatch):
 
 def test_get_proteinfold_default_params_required_keys():
     params = get_proteinfold_default_params("s3://bucket/out", "https://sheet.url")
-    params_text = "\n".join(params)
-    assert "outdir:" in params_text
-    assert "input:" in params_text
-    assert "mode:" in params_text
-    assert "use_gpu:" in params_text
-    assert "alphafold2_db:" in params_text
-    assert "colabfold_db:" in params_text
-    assert "boltz_db:" in params_text
+    assert params["outdir"] == "s3://bucket/out"
+    assert params["input"] == "https://sheet.url"
+    assert "mode" in params
+    assert "use_gpu" in params
+    assert "alphafold2_db" in params
+    assert "colabfold_db" in params
+    assert "boltz_db" in params
 
 
 def test_get_proteinfold_default_params_mode_substitution():
     params = get_proteinfold_default_params("s3://bucket/out", "https://sheet.url", mode="boltz")
-    params_text = "\n".join(params)
-    assert 'mode: "boltz"' in params_text
+    assert params["mode"] == "boltz"
+
+
+def test_get_proteinfold_default_params_is_dict():
+    result = get_proteinfold_default_params("s3://out", "https://sheet")
+    assert isinstance(result, dict)
+    assert len(result) > 0
+
 
 
 def test_get_proteinfold_executor_script_env_var_substitution():
