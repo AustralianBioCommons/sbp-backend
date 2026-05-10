@@ -170,13 +170,19 @@ async def launch_workflow(
                 mode=mode,
                 form_data=payload.formData,
             )
-        else:
+        elif requested_tool == "bindflow":
             result = await launch_bindflow_workflow(
                 payload.launch,
                 dataset_id,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
+            )
+        else:
+            db_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"No executor configured for tool '{payload.launch.tool}'.",
             )
         workflow_run.seqera_run_id = result.workflow_id
         db_session.commit()
