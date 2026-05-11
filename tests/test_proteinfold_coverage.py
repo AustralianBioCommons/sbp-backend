@@ -239,6 +239,8 @@ async def test_launch_proteinfold_workflow_success(monkeypatch):
     monkeypatch.setenv("COMPUTE_ID", "ce_456")
     monkeypatch.setenv("WORK_DIR", "/work/dir")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
 
     expected_result = ProteinfoldLaunchResult(
         workflow_id="wf_success", status="submitted", message=None
@@ -327,6 +329,8 @@ async def test_launch_proteinfold_workflow_with_form_data(monkeypatch):
     monkeypatch.setenv("COMPUTE_ID", "ce_456")
     monkeypatch.setenv("WORK_DIR", "/work/dir")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
 
     expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
 
@@ -411,7 +415,7 @@ def test_get_proteinfold_config_text_singularity_enabled():
     assert "autoMounts = true" in text
 
 
-def test_get_proteinfold_config_text_contains_db_path():
+def test_get_proteinfold_config_text_contains_pbspro():
     text = get_proteinfold_config_text()
     assert "pbspro" in text
 

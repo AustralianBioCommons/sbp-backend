@@ -181,9 +181,9 @@ async def launch_proteinfold_workflow(
             "configProfiles": get_proteinfold_config_profiles(),
             "configText": get_proteinfold_config_text(),
             "preRunScript": get_proteinfold_executor_script(
-                os.getenv("AWS_ACCESS_KEY_ID", ""),
-                os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                os.getenv("AWS_REGION", "ap-southeast-2"),
+                aws_access_key=_get_required_env("AWS_ACCESS_KEY_ID"),
+                aws_secret_key=_get_required_env("AWS_SECRET_ACCESS_KEY"),
+                aws_region=os.getenv("AWS_REGION", "ap-southeast-2"),
             ),
             "resume": False,
             "datasetIds": [dataset_id],
