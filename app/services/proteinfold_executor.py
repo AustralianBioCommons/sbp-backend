@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import yaml
 
 from ..schemas.workflows import WorkflowLaunchForm
 from .proteinfold_config import (
@@ -31,24 +32,11 @@ _TOOL_PARAM_KEYS = frozenset(
 )
 
 
-def _yaml_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    return f'"{value}"'
-
-
 def _params_to_yaml_text(params: dict[str, Any]) -> str:
-    lines = []
-    for key, value in params.items():
-        if isinstance(value, dict):
-            lines.append(f"{key}:")
-            for k, v in value.items():
-                lines.append(f"  {k}: {_yaml_value(v)}")
-        else:
-            lines.append(f"{key}: {_yaml_value(value)}")
-    return "\n".join(lines)
+    """Convert params dict to YAML string using PyYAML."""
+    if not params:
+        return ""
+    return yaml.dump(params, default_flow_style=False, sort_keys=False).rstrip()
 
 
 def _tool_params(form_data: dict[str, Any]) -> dict[str, Any]:

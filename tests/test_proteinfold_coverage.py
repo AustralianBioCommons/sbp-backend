@@ -23,34 +23,8 @@ from app.services.proteinfold_executor import (
     _params_to_yaml_text,
     _post_to_seqera,
     _tool_params,
-    _yaml_value,
     launch_proteinfold_workflow,
 )
-
-# =============================================================================
-# Tests for _yaml_value()
-# =============================================================================
-
-
-def test_yaml_value_true():
-    assert _yaml_value(True) == "true"
-
-
-def test_yaml_value_false():
-    assert _yaml_value(False) == "false"
-
-
-def test_yaml_value_int():
-    assert _yaml_value(42) == "42"
-
-
-def test_yaml_value_float():
-    assert _yaml_value(3.14) == "3.14"
-
-
-def test_yaml_value_str():
-    assert _yaml_value("hello") == '"hello"'
-
 
 # =============================================================================
 # Tests for _params_to_yaml_text()
@@ -59,7 +33,7 @@ def test_yaml_value_str():
 
 def test_params_to_yaml_text_scalars():
     result = _params_to_yaml_text({"outdir": "s3://bucket", "use_gpu": True, "batches": 1})
-    assert 'outdir: "s3://bucket"' in result
+    assert "outdir: s3://bucket" in result
     assert "use_gpu: true" in result
     assert "batches: 1" in result
 
@@ -67,8 +41,8 @@ def test_params_to_yaml_text_scalars():
 def test_params_to_yaml_text_nested_dict():
     result = _params_to_yaml_text({"tags": {"key1": "val1", "key2": "val2"}})
     assert "tags:" in result
-    assert '  key1: "val1"' in result
-    assert '  key2: "val2"' in result
+    assert "key1: val1" in result
+    assert "key2: val2" in result
 
 
 def test_params_to_yaml_text_empty():
@@ -128,9 +102,9 @@ def test_tool_params_multiple_keys():
 
 def test_build_params_text_no_form_data_no_custom():
     text = _build_params_text("s3://bucket/out", "https://sheet.url", "alphafold2", None, None)
-    assert 'outdir: "s3://bucket/out"' in text
-    assert 'input: "https://sheet.url"' in text
-    assert 'mode: "alphafold2"' in text
+    assert "outdir: s3://bucket/out" in text
+    assert "input: https://sheet.url" in text
+    assert "mode: alphafold2" in text
 
 
 def test_build_params_text_with_form_data():
@@ -149,7 +123,7 @@ def test_build_params_text_with_custom_params():
 def test_build_params_text_custom_params_whitespace_only():
     text = _build_params_text("s3://bucket/out", "https://sheet.url", "alphafold2", None, "   ")
     # Whitespace-only custom_params should not be appended
-    assert text.endswith('mode: "alphafold2"') or "colabfold_alphafold2_params_tags" in text
+    assert "mode: alphafold2" in text
 
 
 def test_build_params_text_custom_params_strips_trailing():
@@ -160,7 +134,7 @@ def test_build_params_text_custom_params_strips_trailing():
 
 def test_build_params_text_empty_form_data_dict():
     text = _build_params_text("s3://bucket/out", "https://sheet.url", "boltz", {}, None)
-    assert 'mode: "boltz"' in text
+    assert "mode: boltz" in text
 
 
 # =============================================================================
