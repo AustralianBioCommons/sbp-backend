@@ -235,10 +235,13 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
     """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""
     from app.services.seqera_errors import SeqeraAPIError
 
+    mock_db.scalar.return_value = None  # get_owned_run returns None
+
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,

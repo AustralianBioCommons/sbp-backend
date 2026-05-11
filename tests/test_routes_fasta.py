@@ -82,3 +82,71 @@ def test_upload_fasta_file_rejects_non_fasta_content(client):
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "must start with" in response.json()["detail"]
+
+
+def test_upload_fasta_no_filename(client):
+    """Empty filename should return a 4xx error."""
+    response = client.post(
+        "/api/workflows/fasta/upload",
+        files={"file": ("", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+        headers={"Authorization": "Bearer testtoken"},
+    )
+    assert response.status_code in (
+        status.HTTP_400_BAD_REQUEST,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
+def test_upload_fasta_s3_configuration_error(client):
+    """S3ConfigurationError should map to 500."""
+    from app.services.s3 import S3ConfigurationError
+
+    with patch(
+        "app.routes.fasta_upload.upload_file_to_s3",
+        new_callable=AsyncMock,
+        side_effect=S3ConfigurationError("bucket not set"),
+    ):
+        response = client.post(
+            "/api/workflows/fasta/upload",
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+            headers={"Authorization": "Bearer testtoken"},
+        )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "S3 configuration error" in response.json()["detail"]
+
+
+def test_upload_fasta_s3_service_error(client):
+    """S3ServiceError should map to 502."""
+    from app.services.s3 import S3ServiceError
+
+    with patch(
+        "app.routes.fasta_upload.upload_file_to_s3",
+        new_callable=AsyncMock,
+        side_effect=S3ServiceError("upload failed"),
+    ):
+        response = client.post(
+            "/api/workflows/fasta/upload",
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+            headers={"Authorization": "Bearer testtoken"},
+        )
+
+    assert response.status_code == status.HTTP_502_BAD_GATEWAY
+    assert "S3 upload failed" in response.json()["detail"]
+
+
+def test_upload_fasta_generic_exception(client):
+    """Unexpected exceptions should map to 500."""
+    with patch(
+        "app.routes.fasta_upload.upload_file_to_s3",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("something broke"),
+    ):
+        response = client.post(
+            "/api/workflows/fasta/upload",
+            files={"file": ("single_prediction.fasta", BytesIO(b">pro_1\nACDEF\n"), "text/plain")},
+            headers={"Authorization": "Bearer testtoken"},
+        )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Unexpected error" in response.json()["detail"]
