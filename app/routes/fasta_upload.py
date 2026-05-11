@@ -13,7 +13,7 @@ from ..services.s3 import (
 )
 from .dependencies import get_current_user_id
 
-router = APIRouter(tags=["fasta"], dependencies=[Depends(get_current_user_id)])
+router = APIRouter(tags=["fasta"])
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
@@ -30,6 +30,7 @@ def _human_readable_size(size_bytes: int) -> str:
 @router.post("/upload", response_model=FastaUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_fasta_file(
     file: UploadFile = File(..., description="FASTA file to upload"),
+    _current_user_id=Depends(get_current_user_id),
 ) -> FastaUploadResponse:
     """Upload a FASTA file to S3 and return a pre-signed URL."""
 
@@ -102,3 +103,4 @@ async def upload_fasta_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error during file upload: {str(exc)}",
         ) from exc
+    
