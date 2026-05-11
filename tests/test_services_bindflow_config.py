@@ -11,7 +11,6 @@ from app.services.bindflow_config import (
     get_bindflow_executor_script,
 )
 
-
 # =============================================================================
 # Tests for get_bindflow_default_params()
 # =============================================================================

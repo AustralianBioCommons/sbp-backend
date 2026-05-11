@@ -62,9 +62,7 @@ def _block(name: str, entries: dict[str, Any], depth: int = 0) -> str:
     inner = "    " * (depth + 1)
     lines: list[str] = [f"{pad}{name} {{"]
     for key, val in entries.items():
-        if isinstance(val, dict) and (
-            key.startswith("withName:") or key.startswith("withLabel:")
-        ):
+        if isinstance(val, dict) and (key.startswith("withName:") or key.startswith("withLabel:")):
             lines.append(_block(key, val, depth + 1))
         else:
             lines.append(f"{inner}{key} = {_serialize(val, depth + 1)}")

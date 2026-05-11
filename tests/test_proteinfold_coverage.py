@@ -360,8 +360,8 @@ def test_serialize_list():
 
 def test_serialize_dict_produces_groovy_map():
     result = _serialize({"key1": "val1", "key2": "val2"}, depth=1)
-    assert '"key1": \'val1\'' in result
-    assert '"key2": \'val2\'' in result
+    assert "\"key1\": 'val1'" in result
+    assert "\"key2\": 'val2'" in result
     assert result.startswith("[")
     assert result.endswith("]")
 
