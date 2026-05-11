@@ -115,7 +115,7 @@ async def test_launch_includes_default_params():
     params_text = payload["launch"]["paramsText"]
 
     assert "use_dgxa100: false" in params_text
-    assert 'project: "yz52"' in params_text
+    assert "project: yz52" in params_text
     assert "outdir:" in params_text
 
 

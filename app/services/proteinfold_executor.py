@@ -85,11 +85,14 @@ def _build_params_text(
     mode: str,
     form_data: dict[str, Any] | None,
     custom_params: str | None,
+    extra_params: dict[str, Any] | None = None,
 ) -> str:
     """Build the YAML params string for the Seqera launch payload."""
     params = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
     if form_data:
         params.update(_tool_params(form_data))
+    if extra_params:
+        params.update(extra_params)
     params_text = _params_to_yaml_text(params)
     if custom_params and custom_params.strip():
         params_text = f"{params_text}\n{custom_params.rstrip()}"
@@ -162,12 +165,7 @@ async def launch_proteinfold_workflow(
         mode,
         form_data,
         form.paramsText,
-    )
-    params_text = (
-        f"{params_text}\n"
-        f'job_id: "{job_id}"\n'
-        f'user_name: "{user_email}"\n'
-        f'timestamp: "{timestamp}"'
+        extra_params={"job_id": job_id, "user_name": user_email, "timestamp": timestamp},
     )
 
     launch_payload: dict[str, Any] = {

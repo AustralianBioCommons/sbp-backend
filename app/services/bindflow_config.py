@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def get_bindflow_default_params(out_dir: str) -> list[str]:
+
+def get_bindflow_default_params(out_dir: str) -> dict[str, Any]:
     """Get default parameters for bindflow workflow."""
-    return [
-        "use_dgxa100: false",
-        "validate_params: true",
-        "help_full: false",
-        'custom_config_base: "https://raw.githubusercontent.com/nf-core/configs/master"',
-        "show_hidden: false",
-        "plaintext_email: false",
-        'project: "yz52"',
-        "monochrome_logs: false",
-        'error_strategy: "terminate"',
-        "version: false",
-        'custom_config_version: "master"',
-        f'outdir: "{out_dir}"',
-        "quote_char: '\"'",
-        'bindcraft_container: "australianbiocommons/freebindcraft:1.0.3"',
-        'publish_dir_mode: "copy"',
-        'pipelines_testdata_base_path: "https://raw.githubusercontent.com/nf-core/test-datasets/"',
-        "batches: 1",
-        "help: false",
-    ]
+    return {
+        "use_dgxa100": False,
+        "validate_params": True,
+        "help_full": False,
+        "custom_config_base": "https://raw.githubusercontent.com/nf-core/configs/master",
+        "show_hidden": False,
+        "plaintext_email": False,
+        "project": "yz52",
+        "monochrome_logs": False,
+        "error_strategy": "terminate",
+        "version": False,
+        "custom_config_version": "master",
+        "outdir": out_dir,
+        "quote_char": '"',
+        "bindcraft_container": "australianbiocommons/freebindcraft:1.0.3",
+        "publish_dir_mode": "copy",
+        "pipelines_testdata_base_path": "https://raw.githubusercontent.com/nf-core/test-datasets/",
+        "batches": 1,
+        "help": False,
+    }
 
 
 def get_bindflow_executor_script(

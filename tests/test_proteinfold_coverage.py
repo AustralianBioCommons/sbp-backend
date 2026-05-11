@@ -204,8 +204,9 @@ def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
     return WorkflowLaunchForm(**defaults)
 
 
-@pytest.mark.anyio
-async def test_launch_proteinfold_workflow_success(monkeypatch):
+@pytest.fixture
+def seqera_env(monkeypatch):
+    """Set required Seqera environment variables for launch tests."""
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
     monkeypatch.setenv("WORK_SPACE", "ws_123")
@@ -215,6 +216,9 @@ async def test_launch_proteinfold_workflow_success(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
 
+
+@pytest.mark.anyio
+async def test_launch_proteinfold_workflow_success(seqera_env):
     expected_result = ProteinfoldLaunchResult(
         workflow_id="wf_success", status="submitted", message=None
     )
@@ -257,14 +261,7 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_missing_output_id(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-
+async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
     with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
         await launch_proteinfold_workflow(
@@ -276,14 +273,7 @@ async def test_launch_proteinfold_workflow_missing_output_id(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_empty_output_id(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-
+async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
     with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
         await launch_proteinfold_workflow(
@@ -295,16 +285,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_with_form_data(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
-
+async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
     expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
 
     with patch(

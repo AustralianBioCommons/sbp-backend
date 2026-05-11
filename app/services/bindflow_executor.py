@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+import yaml
 
 from ..schemas.workflows import WorkflowLaunchForm
 from .bindflow_config import (
@@ -79,25 +80,21 @@ async def launch_bindflow_workflow(
     # Build default external parameters from config
     default_params = get_bindflow_default_params(out_dir)
 
-    # Start with default parameters
-    params_text = "\n".join(default_params)
-
-    # Append job metadata params
-    params_text = (
-        f"{params_text}\n"
-        f'job_id: "{run_name}"\n'
-        f'user_name: "{user_email}"\n'
-        f'timestamp: "{timestamp}"'
+    # Merge job metadata and dataset URL into params dict
+    dataset_url = (
+        f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
     )
+    default_params["job_id"] = run_name
+    default_params["user_name"] = user_email
+    default_params["timestamp"] = timestamp
+    default_params["input"] = dataset_url
+
+    # Serialize to YAML
+    params_text = str(yaml.dump(default_params, default_flow_style=False, sort_keys=False)).rstrip()
 
     # Add custom paramsText from frontend if provided
     if form.paramsText and form.paramsText.strip():
         params_text = f"{params_text}\n{form.paramsText.rstrip()}"
-
-    dataset_url = (
-        f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
-    params_text = f"{params_text}\ninput: {dataset_url}"
 
     launch_payload: dict[str, Any] = {
         "launch": {
