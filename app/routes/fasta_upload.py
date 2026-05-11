@@ -103,4 +103,3 @@ async def upload_fasta_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error during file upload: {str(exc)}",
         ) from exc
-    
