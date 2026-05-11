@@ -170,7 +170,7 @@ async def launch_workflow(
                 mode=mode,
                 form_data=payload.formData,
             )
-        elif requested_tool == "bindflow":
+        elif requested_tool in ("bindflow", "bindcraft"):
             result = await launch_bindflow_workflow(
                 payload.launch,
                 dataset_id,
