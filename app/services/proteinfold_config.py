@@ -1,8 +1,11 @@
 """Proteinfold workflow configuration and executor settings (modeled after bindflow).
 """
+
 from __future__ import annotations
 
 from typing import Any
+
+from ._nf_config import GADI_TRACE_SECTION, Raw, build_nf_config
 
 _DB_BASE = "/g/data/if89/proteinfold_dbs/proteinfold_minidbs/"
 _SINGULARITY_CACHE_DIR = "/g/data/if89/singularity_cache/"
@@ -71,61 +74,65 @@ def get_proteinfold_config_profiles() -> list[str]:
 
 def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
-    return f"""\
-params {{
-    use_gpu = true
-    project = System.getenv("PROJECT")
-    db = "{_DB_BASE}"
-    colabfold_alphafold2_params_tags = [
-        "alphafold2_multimer_v1" : "alphafold_params_colab_2021-10-27",
-        "alphafold2_multimer_v2" : "alphafold_params_colab_2022-03-02",
-        "alphafold2_multimer_v3" : "alphafold_params_colab_2022-12-06",
-        "alphafold2_ptm"         : "alphafold_params_2022-12-06"
-    ]
-}}
-
-
-// Enable use of Singularity to run containers
-singularity {{
-    enabled = true
-    autoMounts = true
-    cacheDir = "{_SINGULARITY_CACHE_DIR}"
-}}
-
-executor {{
-    queueSize = 300
-    pollInterval = '5 min'
-    queueStatInterval = '5 min'
-    submitRateLimit = '20 min'
-}}
-
-// Define process resource limits
-process {{
-    executor = 'pbspro'
-    clusterOptions = "-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
-    storage = "gdata/ll61+gdata/if89+gdata/li87"
-    module = 'singularity'
-    cache = 'lenient'
-    stageInMode = 'symlink'
-    queue = {{ task.memory < 128.GB ? 'normalbw' : (task.memory >= 128.GB && task.memory <= 190.GB ? 'normal' : (task.memory > 190.GB && task.memory <= 1020.GB ? 'hugemembw' : '')) }}
-    beforeScript = 'module load singularity'
-
-    withName: 'MMSEQS_COLABFOLDSEARCH' {{
-        memory = 256.GB
-    }}
-
-    withLabel: 'process_gpu' {{
-        queue = 'gpuvolta'
-        cpus = 12
-        gpus = 1
-    }}
-}}
-
-// Write custom trace file with outputs required for SU calculation
-def trace_timestamp = new java.util.Date().format('yyyy-MM-dd_HH-mm-ss')
-trace {{
-    enabled = true
-    overwrite = false
-    file = "./gadi-nf-core-trace-${{trace_timestamp}}.txt"
-    fields = 'name,status,exit,duration,realtime,cpus,%cpu,memory,%mem,rss'
-}}"""
+    return build_nf_config(
+        (
+            "params",
+            {
+                "use_gpu": True,
+                "project": Raw('System.getenv("PROJECT")'),
+                "db": _DB_BASE,
+                "colabfold_alphafold2_params_tags": dict(_COLABFOLD_ALPHAFOLD2_PARAMS_TAGS),
+            },
+        ),
+        "// Enable use of Singularity to run containers",
+        (
+            "singularity",
+            {
+                "enabled": True,
+                "autoMounts": True,
+                "cacheDir": _SINGULARITY_CACHE_DIR,
+            },
+        ),
+        (
+            "executor",
+            {
+                "queueSize": 300,
+                "pollInterval": "5 min",
+                "queueStatInterval": "5 min",
+                "submitRateLimit": "20 min",
+            },
+        ),
+        "// Define process resource limits",
+        (
+            "process",
+            {
+                "executor": "pbspro",
+                "clusterOptions": (
+                    f"-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
+                ),
+                "storage": "gdata/ll61+gdata/if89+gdata/li87",
+                "module": "singularity",
+                "cache": "lenient",
+                "stageInMode": "symlink",
+                "queue": Raw(
+                    "{ task.memory < 128.GB"
+                    " ? 'normalbw'"
+                    " : (task.memory >= 128.GB && task.memory <= 190.GB"
+                    " ? 'normal'"
+                    " : (task.memory > 190.GB && task.memory <= 1020.GB"
+                    " ? 'hugemembw' : '')) }"
+                ),
+                "beforeScript": "module load singularity",
+                "withName: 'MMSEQS_COLABFOLDSEARCH'": {
+                    "memory": Raw("256.GB"),
+                },
+                "withLabel: 'process_gpu'": {
+                    "queue": "gpuvolta",
+                    "cpus": 12,
+                    "gpus": 1,
+                },
+            },
+        ),
+        "// Write custom trace file with outputs required for SU calculation",
+        GADI_TRACE_SECTION,
+    )

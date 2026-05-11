@@ -42,6 +42,7 @@ dev = [
     "polyfactory~=2.16",
     "respx~=0.21",
     "sqlalchemy-data-model-visualizer~=0.1",
+    "groovy-parser @ git+https://github.com/inab/python-groovy-parser.git",
 ]
 
 [tool.pytest.ini_options]

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._nf_config import GADI_TRACE_SECTION, Raw, build_nf_config
+
 
 def get_bindflow_default_params(out_dir: str) -> dict[str, Any]:
     """Get default parameters for bindflow workflow."""
@@ -50,42 +52,42 @@ def get_bindflow_config_profiles() -> list[str]:
 
 def get_bindflow_config_text(job_id: str, user_email: str, timestamp: str) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
-    return f"""\
-singularity {{
-    cacheDir = "/g/data/if89/singularity_cache/"
-    enabled = true
-    runOptions = '--nv'
-    autoMounts = true
-}}
-
-process {{
-    executor = 'pbspro'
-    clusterOptions = "-v JOB_ID={job_id},USER_NAME={user_email},TIMESTAMP={timestamp}"
-    storage = 'scratch/yz52+gdata/yz52+gdata/if89+gdata/li87'
-    shell = ['bash', '-C', '-e', '-u', '-o', 'pipefail']
-
-    withName: 'BINDCRAFT' {{
-        queue = {{ params.use_dgxa100 ? "dgxa100" : "gpuvolta" }}
-        cpus = {{ params.use_dgxa100 ? 16 : 12 }}
-        gpus = 1
-        memory = '24.GB'
-        time = '24.h'
-    }}
-
-}}
-
-executor {{
-    queueSize = 300
-    pollInterval = '5 min'
-    queueStatInterval = '5 min'
-    submitRateLimit = '20 min'
-}}
-
-def trace_timestamp = new java.util.Date().format('yyyy-MM-dd_HH-mm-ss')
-trace {{
-    enabled = true
-    overwrite = false
-    file = "./gadi-nf-core-trace-${{trace_timestamp}}.txt"
-    fields = 'name,status,exit,duration,realtime,cpus,%cpu,memory,%mem,rss'
-}}
-"""
+    return build_nf_config(
+        (
+            "singularity",
+            {
+                "cacheDir": "/g/data/if89/singularity_cache/",
+                "enabled": True,
+                "runOptions": "--nv",
+                "autoMounts": True,
+            },
+        ),
+        (
+            "process",
+            {
+                "executor": "pbspro",
+                "clusterOptions": (
+                    f"-v JOB_ID={job_id},USER_NAME={user_email},TIMESTAMP={timestamp}"
+                ),
+                "storage": "scratch/yz52+gdata/yz52+gdata/if89+gdata/li87",
+                "shell": ["bash", "-C", "-e", "-u", "-o", "pipefail"],
+                "withName: 'BINDCRAFT'": {
+                    "queue": Raw('{ params.use_dgxa100 ? "dgxa100" : "gpuvolta" }'),
+                    "cpus": Raw("{ params.use_dgxa100 ? 16 : 12 }"),
+                    "gpus": 1,
+                    "memory": "24.GB",
+                    "time": "24.h",
+                },
+            },
+        ),
+        (
+            "executor",
+            {
+                "queueSize": 300,
+                "pollInterval": "5 min",
+                "queueStatInterval": "5 min",
+                "submitRateLimit": "20 min",
+            },
+        ),
+        GADI_TRACE_SECTION,
+    )
