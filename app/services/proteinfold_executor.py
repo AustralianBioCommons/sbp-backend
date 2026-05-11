@@ -36,7 +36,7 @@ def _params_to_yaml_text(params: dict[str, Any]) -> str:
     """Convert params dict to YAML string using PyYAML."""
     if not params:
         return ""
-    return yaml.dump(params, default_flow_style=False, sort_keys=False).rstrip()
+    return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
 def _tool_params(form_data: dict[str, Any]) -> dict[str, Any]:
