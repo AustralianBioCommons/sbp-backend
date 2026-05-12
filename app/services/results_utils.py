@@ -214,6 +214,8 @@ def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
         return ("stats_csv", basename)
     if "/accepted/animation/" in lowered and basename.lower().endswith(".html"):
         return ("report", basename)
+    if "/generate/" in lowered and basename.lower().endswith(".html"):
+        return ("report", basename)
     if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
         return ("snapshot", basename)
     if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
@@ -230,6 +232,7 @@ def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     prefixes: list[str] = [
         f"{run_uuid}/ranker/",
         f"{run_uuid}/Accepted/Animation/",
+        f"{run_uuid}/generate/",
     ]
 
     # Append bindcraft sample-specific prefixes only when a sample_id is available.

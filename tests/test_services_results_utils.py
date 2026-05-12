@@ -100,6 +100,10 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
         "report",
         "report.html",
     )
+    assert _classify_bindcraft_output_key(f"{run.id}/generate/bindcraft_report.html") == (
+        "report",
+        "bindcraft_report.html",
+    )
     assert _classify_bindcraft_output_key(f"{run.id}/bindcraft/sampleZ_0_output/preview.png") == (
         "snapshot",
         "preview.png",
@@ -117,6 +121,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert prefixes == [
         f"{run.id}/ranker/",
         f"{run.id}/Accepted/Animation/",
+        f"{run.id}/generate/",
         f"{run.id}/bindcraft/sampleZ_0_output/Accepted/Animation/",
         f"{run.id}/bindcraft/sampleZ_0_output/",
     ]
@@ -125,6 +130,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_bindcraft_output_listing_prefixes(run_without_sample) == [
         f"{run.id}/ranker/",
         f"{run.id}/Accepted/Animation/",
+        f"{run.id}/generate/",
     ]
 
     monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
