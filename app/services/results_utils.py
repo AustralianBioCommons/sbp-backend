@@ -212,8 +212,6 @@ def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
 
     if basename.endswith("_final_design_stats.csv"):
         return ("stats_csv", basename)
-    if "/accepted/animation/" in lowered and basename.lower().endswith(".html"):
-        return ("report", basename)
     if "/generate/" in lowered and basename.lower().endswith(".html"):
         return ("report", basename)
     if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
@@ -231,7 +229,6 @@ def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     # Always include run-UUID-only prefixes; these do not depend on sample_id.
     prefixes: list[str] = [
         f"{run_uuid}/ranker/",
-        f"{run_uuid}/Accepted/Animation/",
         f"{run_uuid}/generate/",
     ]
 
@@ -240,7 +237,6 @@ def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     if sample_id:
         prefixes.extend(
             [
-                f"{run_uuid}/bindcraft/{sample_id}_0_output/Accepted/Animation/",
                 f"{run_uuid}/bindcraft/{sample_id}_0_output/",
             ]
         )
