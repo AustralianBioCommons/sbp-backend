@@ -360,8 +360,8 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
             uri="s3://bucket/demo2/ranker/demo2_Ranked/1_PDL1_model1.pdb",
         ),
         S3Object(
-            object_key="demo2/Accepted/Animation/PDL1_l100_s975117.html",
-            uri="s3://bucket/demo2/Accepted/Animation/PDL1_l100_s975117.html",
+            object_key=f"{run.id}/generate/PDL1_l100_s975117.html",
+            uri=f"s3://bucket/{run.id}/generate/PDL1_l100_s975117.html",
         ),
         S3Object(
             object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
@@ -608,9 +608,10 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         sample_id="demo2",
         work_dir="/tmp/wf-report-1",
     )
+    report_key = f"{run.id}/generate/PDL1_l100_s975117.html"
     report = S3Object(
-        object_key="demo2/Accepted/Animation/PDL1_l100_s975117.html",
-        uri="s3://bucket/demo2/Accepted/Animation/PDL1_l100_s975117.html",
+        object_key=report_key,
+        uri=f"s3://bucket/{report_key}",
     )
     test_db.add_all([user, run, report])
     test_db.commit()
@@ -631,13 +632,10 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     assert result.runId == "wf-report-1"
     assert result.report is not None
     assert result.report.category == "report"
-    assert result.report.key == "demo2/Accepted/Animation/PDL1_l100_s975117.html"
-    assert (
-        result.report.url
-        == "https://signed.example/demo2/Accepted/Animation/PDL1_l100_s975117.html"
-    )
+    assert result.report.key == report_key
+    assert result.report.url == f"https://signed.example/{report_key}"
     mock_presign.assert_awaited_once_with(
-        "demo2/Accepted/Animation/PDL1_l100_s975117.html",
+        report_key,
         response_content_type="text/html",
         response_content_disposition="inline",
     )
@@ -662,10 +660,10 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
     test_db.add_all([user, run])
     test_db.commit()
 
-    real_key = f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/PDL1_l79_s800698.html"
+    real_key = f"{run_id}/generate/PDL1_l79_s800698.html"
 
     def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/bindcraft/s1_0_output/Accepted/Animation/":
+        if prefix == f"{run_id}/generate/":
             return [
                 {
                     "key": real_key,

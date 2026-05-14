@@ -554,7 +554,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         sample_id="sampleE",
         work_dir="workdir-report-download-1",
     )
-    report_key = f"{run_id}/bindcraft/sampleE_0_output/Accepted/Animation/sampleE_report.html"
+    report_key = f"{run_id}/generate/sampleE_report.html"
     report = S3Object(
         object_key=report_key,
         uri=f"s3://bucket/{report_key}",
@@ -592,7 +592,7 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
         sample_id="sampleFast",
         work_dir="workdir-report-fast-path-1",
     )
-    report_key = f"{run.id}/bindcraft/sampleFast_0_output/Accepted/Animation/sampleFast_report.html"
+    report_key = f"{run.id}/generate/sampleFast_report.html"
 
     with (
         patch("app.services.results_utils._get_run_output_keys", return_value=[report_key]),
@@ -620,7 +620,7 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
         work_dir="workdir-output-fast-path-1",
     )
     tracked_keys = [
-        f"{run.id}/bindcraft/sampleTracked_0_output/Accepted/Animation/sampleTracked_report.html",
+        f"{run.id}/generate/sampleTracked_report.html",
         f"{run.id}/ranker/sampleTracked_final_design_stats.csv",
         f"{run.id}/ranker/sampleTracked_ranked/sampleTracked_model_1.pdb",
     ]
@@ -659,10 +659,10 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
     test_db.add_all([user, run])
     test_db.commit()
 
-    report_key = f"{run_id}/bindcraft/sampleF_0_output/Accepted/Animation/sampleF_report.html"
+    report_key = f"{run_id}/generate/sampleF_report.html"
 
     def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/bindcraft/sampleF_0_output/Accepted/Animation/":
+        if prefix == f"{run_id}/generate/":
             return [
                 {
                     "key": report_key,
@@ -701,7 +701,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         sample_id="sampleG",
         work_dir="workdir-report-fallback-1",
     )
-    report_key = f"{run.id}/bindcraft/sampleG_0_output/Accepted/Animation/sampleG_report.html"
+    report_key = f"{run.id}/generate/sampleG_report.html"
 
     with (
         patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock(return_value=[])),
@@ -710,7 +710,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
             side_effect=lambda prefix: [{"key": report_key}]
-            if prefix.endswith("Accepted/Animation/")
+            if prefix.endswith("generate/")
             else [],
         ),
         patch(
