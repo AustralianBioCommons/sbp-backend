@@ -170,6 +170,22 @@ def test_launch_invalid_payload(client: TestClient):
     assert response.status_code == 422  # Validation error
 
 
+def test_launch_rejects_blank_dataset_id(client: TestClient):
+    """datasetId must be non-empty after trimming."""
+    payload = {
+        "launch": {
+            "tool": "BindCraft",
+            "runName": "test-run",
+        },
+        "datasetId": "   ",
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 422
+    assert "datasetId is required" in response.json()["detail"]
+
+
 def test_cancel_workflow_endpoint_removed(client: TestClient):
     """Cancel endpoint is intentionally removed from jobs API."""
     response = client.post("/api/workflows/run_123/cancel")
@@ -225,6 +241,20 @@ def test_get_details_success(client: TestClient):
     assert data["id"] == "run_123"
     assert "status" in data
     assert "runName" in data
+
+
+def test_list_runs_placeholder(client: TestClient):
+    """List runs currently returns an empty placeholder response."""
+    response = client.get(
+        "/api/workflows/runs", params={"status": "RUNNING", "limit": 10, "offset": 5}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["runs"] == []
+    assert data["total"] == 0
+    assert data["limit"] == 10
+    assert data["offset"] == 5
 
 
 # =============================================================================

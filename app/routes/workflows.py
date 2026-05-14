@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import RunMetric, Workflow, WorkflowRun
+from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -130,6 +130,8 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
+    user_email = db_session.scalar(select(AppUser.email).where(AppUser.id == current_user_id)) or ""
+
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
 
@@ -169,6 +171,7 @@ async def launch_workflow(
                 output_id=str(run_id),
                 mode=mode,
                 form_data=payload.formData,
+                user_email=user_email,
             )
         elif requested_tool in ("bindflow", "bindcraft"):
             result = await launch_bindflow_workflow(
@@ -177,6 +180,7 @@ async def launch_workflow(
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
+                user_email=user_email,
             )
         else:
             db_session.rollback()

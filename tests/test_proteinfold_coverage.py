@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 import respx
+from groovy_parser.parser import parse_groovy_content
 
 from app.schemas.workflows import WorkflowLaunchForm
+from app.services._nf_config import (
+    GADI_TRACE_SECTION,
+    Raw,
+    _block,
+    _serialize,
+    build_nf_config,
+)
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
@@ -170,7 +178,6 @@ async def test_post_to_seqera_nested_workflow_id():
             )
         )
         result = await _post_to_seqera("https://api.test/workflow/launch", {}, {})
-
     assert result.workflow_id == "wf_nested"
 
 
@@ -205,8 +212,9 @@ def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
     return WorkflowLaunchForm(**defaults)
 
 
-@pytest.mark.anyio
-async def test_launch_proteinfold_workflow_success(monkeypatch):
+@pytest.fixture
+def seqera_env(monkeypatch):
+    """Set required Seqera environment variables for launch tests."""
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
     monkeypatch.setenv("WORK_SPACE", "ws_123")
@@ -216,6 +224,9 @@ async def test_launch_proteinfold_workflow_success(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
 
+
+@pytest.mark.anyio
+async def test_launch_proteinfold_workflow_success(seqera_env):
     expected_result = ProteinfoldLaunchResult(
         workflow_id="wf_success", status="submitted", message=None
     )
@@ -258,14 +269,7 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_missing_output_id(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-
+async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
     with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
         await launch_proteinfold_workflow(
@@ -277,14 +281,7 @@ async def test_launch_proteinfold_workflow_missing_output_id(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_empty_output_id(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-
+async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
     with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
         await launch_proteinfold_workflow(
@@ -296,16 +293,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_with_form_data(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
-
+async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
     expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
 
     with patch(
@@ -325,6 +313,131 @@ async def test_launch_proteinfold_workflow_with_form_data(monkeypatch):
         )
 
     assert result.workflow_id == "wf_form"
+
+
+# =============================================================================
+# Tests for _nf_config builder module
+# =============================================================================
+
+
+def test_raw_is_emitted_verbatim():
+    assert _serialize(Raw("256.GB")) == "256.GB"
+
+
+def test_raw_with_closure():
+    expr = "{ task.memory < 128.GB ? 'normalbw' : 'normal' }"
+    assert _serialize(Raw(expr)) == expr
+
+
+def test_serialize_bool_true():
+    assert _serialize(True) == "true"
+
+
+def test_serialize_bool_false():
+    assert _serialize(False) == "false"
+
+
+def test_serialize_int():
+    assert _serialize(300) == "300"
+
+
+def test_serialize_float():
+    assert _serialize(1.5) == "1.5"
+
+
+def test_serialize_simple_string_single_quotes():
+    assert _serialize("pbspro") == "'pbspro'"
+
+
+def test_serialize_string_with_single_quote_uses_double():
+    assert _serialize("it's here") == '"it\'s here"'
+
+
+def test_serialize_list():
+    result = _serialize(["bash", "-C", "-e"])
+    assert result == "['bash', '-C', '-e']"
+
+
+def test_serialize_dict_produces_groovy_map():
+    result = _serialize({"key1": "val1", "key2": "val2"}, depth=1)
+    assert "\"key1\": 'val1'" in result
+    assert "\"key2\": 'val2'" in result
+    assert result.startswith("[")
+    assert result.endswith("]")
+
+
+def test_serialize_unsupported_type_raises():
+    with pytest.raises(TypeError, match="Cannot serialize"):
+        _serialize(object())
+
+
+def test_block_simple():
+    result = _block("executor", {"queueSize": 300, "pollInterval": "5 min"})
+    assert result.startswith("executor {")
+    assert "queueSize = 300" in result
+    assert "pollInterval = '5 min'" in result
+    assert result.strip().endswith("}")
+
+
+def test_block_with_nested_withname():
+    result = _block(
+        "process",
+        {
+            "executor": "pbspro",
+            "withName: 'JOB'": {"memory": Raw("256.GB")},
+        },
+    )
+    assert "withName: 'JOB' {" in result
+    assert "memory = 256.GB" in result
+
+
+def test_block_with_nested_withlabel():
+    result = _block(
+        "process",
+        {"withLabel: 'process_gpu'": {"cpus": 12, "gpus": 1}},
+    )
+    assert "withLabel: 'process_gpu' {" in result
+    assert "cpus = 12" in result
+    assert "gpus = 1" in result
+
+
+def test_block_depth_indentation():
+    result = _block("inner", {"key": "val"}, depth=1)
+    assert result.startswith("    inner {")
+    assert "        key = 'val'" in result
+
+
+def test_build_nf_config_joins_sections_with_blank_line():
+    result = build_nf_config(
+        ("singularity", {"enabled": True}),
+        ("executor", {"queueSize": 1}),
+    )
+    assert "singularity {" in result
+    assert "executor {" in result
+    assert "\n\n" in result
+
+
+def test_build_nf_config_raw_string_section():
+    result = build_nf_config("// a comment", ("trace", {"enabled": True}))
+    assert "// a comment" in result
+    assert "trace {" in result
+
+
+def test_gadi_trace_section_contains_expected_fields():
+    assert "def trace_timestamp" in GADI_TRACE_SECTION
+    assert "trace {" in GADI_TRACE_SECTION
+    assert "enabled = true" in GADI_TRACE_SECTION
+    assert "${trace_timestamp}" in GADI_TRACE_SECTION
+
+
+def test_build_nf_config_produces_valid_groovy():
+    config = build_nf_config(
+        ("params", {"use_gpu": True, "db": "/some/path"}),
+        ("singularity", {"enabled": True, "autoMounts": True}),
+        ("executor", {"queueSize": 300}),
+    )
+    tree = parse_groovy_content(config)
+    assert tree is not None
 
 
 # =============================================================================
@@ -371,29 +484,60 @@ def test_get_proteinfold_executor_script_defaults():
     assert "ap-southeast-2" in script
 
 
+def test_get_proteinfold_config_profiles_returns_list():
+    profiles = get_proteinfold_config_profiles()
+    assert isinstance(profiles, list)
+
+
 def test_get_proteinfold_config_profiles_contains_singularity():
     profiles = get_proteinfold_config_profiles()
     assert "singularity" in profiles
 
 
 def test_get_proteinfold_config_text_groovy_structure():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    assert "params {" in text
     assert "singularity {" in text
     assert "executor {" in text
     assert "process {" in text
 
 
 def test_get_proteinfold_config_text_singularity_enabled():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
     assert "enabled = true" in text
     assert "autoMounts = true" in text
 
 
 def test_get_proteinfold_config_text_contains_pbspro():
-    text = get_proteinfold_config_text()
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
     assert "pbspro" in text
 
 
 def test_get_proteinfold_config_text_contains_trace():
-    text = get_proteinfold_config_text()
-    assert "trace {" in text or "trace" in text
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    assert "trace {" in text
+
+
+def test_get_proteinfold_config_text_interpolates_job_fields():
+    text = get_proteinfold_config_text("my-job", "alice", "20260507_120000")
+    assert "my-job" in text
+    assert "alice" in text
+    assert "20260507_120000" in text
+
+
+def test_get_proteinfold_config_text_contains_withname_block():
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    assert "MMSEQS_COLABFOLDSEARCH" in text
+    assert "256.GB" in text
+
+
+def test_get_proteinfold_config_text_contains_withlabel_block():
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    assert "process_gpu" in text
+    assert "gpuvolta" in text
+
+
+def test_get_proteinfold_config_text_is_valid_groovy():
+    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
+    tree = parse_groovy_content(text)
+    assert tree is not None

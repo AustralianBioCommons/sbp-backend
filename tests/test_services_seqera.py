@@ -39,7 +39,7 @@ async def test_launch_success_minimal():
         )
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-test-minimal")
 
     result = await launch_bindflow_workflow(
         form,
@@ -99,7 +99,7 @@ async def test_launch_includes_default_params():
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-default-params")
 
     await launch_bindflow_workflow(
         form,
@@ -115,7 +115,7 @@ async def test_launch_includes_default_params():
     params_text = payload["launch"]["paramsText"]
 
     assert "use_dgxa100: false" in params_text
-    assert 'project: "yz52"' in params_text
+    assert "project: yz52" in params_text
     assert "outdir:" in params_text
 
 
@@ -127,7 +127,7 @@ async def test_launch_with_dataset_adds_input_url():
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-dataset-url")
 
     await launch_bindflow_workflow(
         form,
@@ -155,7 +155,7 @@ async def test_launch_api_error_response():
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-api-error")
 
     with pytest.raises(BindflowExecutorError, match="400"):
         await launch_bindflow_workflow(
@@ -174,7 +174,7 @@ async def test_launch_missing_workflow_id_in_response():
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-missing-workflow-id")
 
     with pytest.raises(BindflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(
@@ -187,7 +187,7 @@ async def test_launch_missing_workflow_id_in_response():
 
 def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-custom-params")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.delenv("SEQERA_API_URL", raising=False)
@@ -217,6 +217,7 @@ async def test_launch_with_custom_params_text():
 
     form = WorkflowLaunchForm(
         tool="BindCraft",
+        runName="seqera-custom-params",
         paramsText="my_custom_param: 42\nanother_param: test",
     )
 
