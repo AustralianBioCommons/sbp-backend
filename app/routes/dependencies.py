@@ -21,9 +21,6 @@ from ..db.models.core import AppUser
 security = HTTPBearer()
 USERINFO_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 
-DEFAULT_AUTH0_ROLES_CLAIM = "https://biocommons.org.au/roles"
-DEFAULT_WORKFLOW_EXECUTION_ROLE = "biocommons/group/sbp_workflow_execution"
-
 
 def _get_token_expiry_epoch(claims: dict[str, object]) -> float | None:
     raw_exp = claims.get("exp")
@@ -141,8 +138,8 @@ def require_workflow_execution_role(
 ) -> None:
     """Raise HTTP 403 if the token does not carry the workflow execution role."""
     claims = verify_access_token_claims(credentials.credentials)
-    roles_claim = os.getenv("AUTH0_ROLES_CLAIM", DEFAULT_AUTH0_ROLES_CLAIM).strip()
-    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", DEFAULT_WORKFLOW_EXECUTION_ROLE).strip()
+    roles_claim = os.getenv("AUTH0_ROLES_CLAIM", "").strip()
+    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
     roles = claims.get(roles_claim, [])
     if not isinstance(roles, list) or required_role not in roles:
         raise HTTPException(
