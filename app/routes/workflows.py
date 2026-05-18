@@ -38,7 +38,7 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
-from .dependencies import get_current_user_id, get_db
+from .dependencies import get_current_user_id, get_db, require_workflow_execution_role
 
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
@@ -87,7 +87,12 @@ async def sync_current_user(
     return {"message": "User synced", "userId": str(current_user_id)}
 
 
-@router.post("/launch", response_model=WorkflowLaunchResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/launch",
+    response_model=WorkflowLaunchResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_workflow_execution_role)],
+)
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
     current_user_id: UUID = Depends(get_current_user_id),
