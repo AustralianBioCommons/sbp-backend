@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 from time import time
 from typing import cast
 from uuid import UUID, uuid4
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -130,3 +131,18 @@ def get_current_user_id(
             db.commit()
 
     return cast(UUID, user.id)
+
+
+def require_workflow_execution_role(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> None:
+    """Raise HTTP 403 if the token does not carry the workflow execution role."""
+    claims = verify_access_token_claims(credentials.credentials)
+    roles_claim = os.getenv("AUTH0_ROLES_CLAIM", "").strip()
+    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
+    roles = claims.get(roles_claim, [])
+    if not isinstance(roles, list) or required_role not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workflow execution role required.",
+        )
