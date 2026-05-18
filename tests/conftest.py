@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 
 from app.db.models.core import AppUser, Workflow
 from app.main import create_app
-from app.routes.dependencies import get_current_user_id, get_db
+from app.routes.dependencies import get_current_user_id, get_db, require_workflow_execution_role
 from app.schemas.workflows import (
     LaunchDetails,
     LaunchLogs,
@@ -173,6 +173,7 @@ def app(test_engine):
 
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user_id] = lambda: user_id
+    app.dependency_overrides[require_workflow_execution_role] = lambda: None
     return app
 
 

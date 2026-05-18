@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models.core import RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
+from app.routes.dependencies import get_current_user_id, get_db
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
@@ -20,6 +22,52 @@ from app.services.proteinfold_executor import (
     ProteinfoldExecutorError,
     ProteinfoldLaunchResult,
 )
+
+ROLES_CLAIM = "https://biocommons.org.au/roles"
+WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
+
+
+@pytest.fixture
+def role_check_client(test_engine):
+    """Test client with auth bypassed but require_workflow_execution_role active."""
+    from app.main import create_app
+
+    application = create_app()
+    user_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(
+        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
+    )
+    setup_session = SessionLocal()
+    if not setup_session.get(AppUser, user_id):
+        setup_session.add(
+            AppUser(id=user_id, auth0_user_id="auth0|role-test", name="Role User", email="role@example.com")
+        )
+    setup_session.add(
+        Workflow(
+            id=uuid4(),
+            name="BindCraft",
+            description="Test workflow",
+            repo_url="https://github.com/test/repo",
+            default_revision="dev",
+        )
+    )
+    setup_session.commit()
+    setup_session.close()
+
+    def _get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    application.dependency_overrides[get_db] = _get_db
+    application.dependency_overrides[get_current_user_id] = lambda: user_id
+    with TestClient(application) as c:
+        yield c
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -533,3 +581,68 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 502
     assert "Seqera API 503" in response.json()["detail"]
+
+
+# =============================================================================
+# Tests for require_workflow_execution_role
+# =============================================================================
+
+
+_LAUNCH_PAYLOAD = {
+    "launch": {"tool": "BindCraft", "runName": "role-test-run"},
+    "datasetId": "dataset_role",
+}
+
+
+@patch("app.routes.workflows.launch_bindflow_workflow")
+def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monkeypatch):
+    """Users holding the workflow execution role can launch."""
+    monkeypatch.setenv("AUTH0_ROLES_CLAIM", ROLES_CLAIM)
+    monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
+    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_role_ok", status="submitted")
+
+    with patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={ROLES_CLAIM: [WORKFLOW_ROLE]},
+    ):
+        response = role_check_client.post(
+            "/api/workflows/launch",
+            json=_LAUNCH_PAYLOAD,
+            headers={"Authorization": "Bearer mock-token"},
+        )
+
+    assert response.status_code == 201
+
+
+def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
+    """Users without the workflow execution role receive HTTP 403."""
+    monkeypatch.setenv("AUTH0_ROLES_CLAIM", ROLES_CLAIM)
+    monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
+
+    with patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={ROLES_CLAIM: ["biocommons/group/other"]},
+    ):
+        response = role_check_client.post(
+            "/api/workflows/launch",
+            json=_LAUNCH_PAYLOAD,
+            headers={"Authorization": "Bearer mock-token"},
+        )
+
+    assert response.status_code == 403
+    assert "Workflow execution role required" in response.json()["detail"]
+
+
+def test_launch_denied_when_env_vars_unset(role_check_client):
+    """When WORKFLOW_EXECUTION_ROLE is not configured, all launch requests are denied."""
+    with patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={ROLES_CLAIM: [WORKFLOW_ROLE]},
+    ):
+        response = role_check_client.post(
+            "/api/workflows/launch",
+            json=_LAUNCH_PAYLOAD,
+            headers={"Authorization": "Bearer mock-token"},
+        )
+
+    assert response.status_code == 403
