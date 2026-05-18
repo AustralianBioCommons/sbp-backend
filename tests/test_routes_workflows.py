@@ -43,7 +43,12 @@ def role_check_client(test_engine):
     setup_session = SessionLocal()
     if not setup_session.get(AppUser, user_id):
         setup_session.add(
-            AppUser(id=user_id, auth0_user_id="auth0|role-test", name="Role User", email="role@example.com")
+            AppUser(
+                id=user_id,
+                auth0_user_id="auth0|role-test",
+                name="Role User",
+                email="role@example.com",
+            )
         )
     setup_session.add(
         Workflow(
