@@ -123,8 +123,6 @@ def get_current_user_id(
             if existing is None:
                 raise
             user = existing
-            user.last_login_ip = client_ip
-            db.commit()
     else:
         # Refresh profile fields when we have better info than the placeholder values.
         should_update = user.last_login_ip != client_ip
