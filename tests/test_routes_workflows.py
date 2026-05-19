@@ -638,16 +638,10 @@ def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
     assert "Workflow execution role required" in response.json()["detail"]
 
 
-def test_launch_denied_when_env_vars_unset(role_check_client):
-    """When WORKFLOW_EXECUTION_ROLE is not configured, all launch requests are denied."""
-    with patch(
-        "app.routes.dependencies.verify_access_token_claims",
-        return_value={ROLES_CLAIM: [WORKFLOW_ROLE]},
-    ):
-        response = role_check_client.post(
-            "/api/workflows/launch",
-            json=_LAUNCH_PAYLOAD,
-            headers={"Authorization": "Bearer mock-token"},
-        )
+def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch):
+    """create_app() raises RuntimeError when required workflow env vars are missing."""
+    monkeypatch.delenv("WORKFLOW_EXECUTION_ROLE")
+    with pytest.raises(RuntimeError, match="WORKFLOW_EXECUTION_ROLE"):
+        from app.main import create_app
 
-    assert response.status_code == 403
+        create_app()
