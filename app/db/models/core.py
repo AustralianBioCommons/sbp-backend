@@ -22,6 +22,7 @@ class AppUser(Base):
     auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    last_login_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     workflow_runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="owner")
 
