@@ -138,7 +138,7 @@ def require_workflow_execution_role(
 ) -> None:
     """Raise HTTP 403 if the token does not carry the workflow execution role."""
     claims = verify_access_token_claims(credentials.credentials)
-    roles_claim = os.getenv("AUTH0_ROLES_CLAIM", "").strip()
+    roles_claim = os.getenv("DB_ADMIN_ROLES_CLAIM", "").strip()
     required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
     roles = claims.get(roles_claim, [])
     if not isinstance(roles, list) or required_role not in roles:
