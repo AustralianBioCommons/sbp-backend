@@ -38,9 +38,7 @@ def create_app() -> FastAPI:
             raise RuntimeError(f"{required_var} environment variable is required but not set")
 
     allowed_origins = [
-        origin.strip()
-        for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
-        if origin.strip()
+        origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
     ]
 
     app.add_middleware(
