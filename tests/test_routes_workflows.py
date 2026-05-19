@@ -572,7 +572,7 @@ _LAUNCH_PAYLOAD = {
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monkeypatch):
     """Users holding the workflow execution role can launch."""
-    monkeypatch.setenv("AUTH0_ROLES_CLAIM", ROLES_CLAIM)
+    monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
     mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_role_ok", status="submitted")
 
@@ -591,7 +591,7 @@ def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monke
 
 def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
     """Users without the workflow execution role receive HTTP 403."""
-    monkeypatch.setenv("AUTH0_ROLES_CLAIM", ROLES_CLAIM)
+    monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
 
     with patch(
