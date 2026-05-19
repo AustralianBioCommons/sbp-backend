@@ -19,6 +19,8 @@ os.environ["COMPUTE_ID"] = "test_compute_env_id"
 os.environ["WORK_DIR"] = "/test/work/dir"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
 os.environ["ENABLE_DB_ADMIN"] = "false"
+os.environ["DB_ADMIN_ROLES_CLAIM"] = "https://biocommons.org.au/roles"
+os.environ["WORKFLOW_EXECUTION_ROLE"] = "biocommons/group/sbp_workflow_execution"
 
 from uuid import UUID, uuid4
 

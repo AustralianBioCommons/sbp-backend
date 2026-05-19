@@ -33,12 +33,12 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
 
-    allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
-    if not allowed_origins_env:
-        raise RuntimeError("ALLOWED_ORIGINS environment variable is required but not set")
+    for required_var in ("ALLOWED_ORIGINS", "DB_ADMIN_ROLES_CLAIM", "WORKFLOW_EXECUTION_ROLE"):
+        if not os.getenv(required_var, "").strip():
+            raise RuntimeError(f"{required_var} environment variable is required but not set")
 
     allowed_origins = [
-        origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+        origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
     ]
 
     app.add_middleware(
