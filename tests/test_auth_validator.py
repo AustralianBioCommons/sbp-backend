@@ -26,8 +26,8 @@ def _clear_key_cache():
 
 
 def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUTH0_DOMAIN", "dev.login.aai.test.biocommons.org.au")
-    monkeypatch.setenv("AUTH0_AUDIENCE", "https://api.example.test")
+    monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
+    monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
 
 
 def generate_public_private_key_pair() -> tuple[RSAPublicKey, RSAPrivateKey]:
@@ -113,12 +113,28 @@ def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_get_auth0_settings_uses_defaults(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("AUTH_DOMAIN", raising=False)
+    monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.delenv("AUTH0_AUDIENCE", raising=False)
 
     settings = validator._get_auth0_settings()
     assert settings.domain == "dev.login.aai.test.biocommons.org.au"
     assert settings.audience == "https://dev.api.aai.test.biocommons.org.au"
+
+
+def test_get_auth0_settings_accepts_legacy_auth0_env(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("AUTH_DOMAIN", raising=False)
+    monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
+    monkeypatch.setenv("AUTH0_DOMAIN", "legacy.auth.test")
+    monkeypatch.setenv("AUTH0_AUDIENCE", "https://legacy.api.test")
+
+    settings = validator._get_auth0_settings()
+
+    assert settings.domain == "legacy.auth.test"
+    assert settings.audience == "https://legacy.api.test"
 
 
 def test_get_auth0_settings_empty_algorithms(monkeypatch: pytest.MonkeyPatch):

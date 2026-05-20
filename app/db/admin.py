@@ -40,6 +40,14 @@ DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 
 
+def _get_first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
 def _is_db_admin_enabled() -> bool:
     return os.getenv("ENABLE_DB_ADMIN", "false").strip().lower() in {"1", "true", "yes"}
 
@@ -53,24 +61,15 @@ def _get_db_admin_home_url() -> str:
 
 
 def _get_admin_auth_domain() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_DOMAIN") or os.getenv("AUTH0_DOMAIN")
-    if not value:
-        return None
-    return value.strip()
+    return _get_first_env("AUTH_DOMAIN", "DB_ADMIN_AUTH_DOMAIN", "AUTH0_DOMAIN")
 
 
 def _get_admin_auth_client_id() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_CLIENT_ID")
-    if not value:
-        return None
-    return value.strip()
+    return _get_first_env("AUTH_CLIENT_ID", "DB_ADMIN_AUTH_CLIENT_ID")
 
 
 def _get_admin_auth_audience() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_AUDIENCE") or os.getenv("AUTH0_AUDIENCE")
-    if not value:
-        return None
-    return value.strip()
+    return _get_first_env("AUTH_AUDIENCE", "DB_ADMIN_AUTH_AUDIENCE", "AUTH0_AUDIENCE")
 
 
 def _get_admin_session_cookie_name() -> str:
@@ -87,11 +86,11 @@ def _get_admin_session_secret() -> str:
 def _validate_db_admin_config() -> None:
     missing: list[str] = []
     if not _get_admin_auth_domain():
-        missing.append("DB_ADMIN_AUTH_DOMAIN or AUTH0_DOMAIN")
+        missing.append("AUTH_DOMAIN")
     if not _get_admin_auth_client_id():
-        missing.append("DB_ADMIN_AUTH_CLIENT_ID")
+        missing.append("AUTH_CLIENT_ID")
     if not _get_admin_auth_audience():
-        missing.append("DB_ADMIN_AUTH_AUDIENCE or AUTH0_AUDIENCE")
+        missing.append("AUTH_AUDIENCE")
     if not os.getenv("DB_ADMIN_AUTH_REDIRECT_URI", "").strip():
         missing.append("DB_ADMIN_AUTH_REDIRECT_URI")
     if not os.getenv("DB_ADMIN_SESSION_SECRET", "").strip():

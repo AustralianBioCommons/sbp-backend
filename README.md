@@ -144,18 +144,16 @@ Required entries in `.env`:
 - `WORK_DIR` — Default work directory
 - `WORK_SPACE` — Seqera workspace identifier
 - `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
-- `AUTH0_DOMAIN` — (Optional) Auth0 tenant domain used for JWKS lookup. Defaults to `dev.login.aai.test.biocommons.org.au`
-- `AUTH0_AUDIENCE` — (Optional) expected audience claim in incoming bearer tokens. Defaults to `https://dev.api.aai.test.biocommons.org.au`
-- `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH0_DOMAIN}/`
+- `AUTH_DOMAIN` — Auth tenant domain used for JWKS lookup. Required when `ENABLE_DB_ADMIN=true`; otherwise defaults to `dev.login.aai.test.biocommons.org.au`. Legacy `AUTH0_DOMAIN` is also accepted.
+- `AUTH_CLIENT_ID` — Required when `ENABLE_DB_ADMIN=true`
+- `AUTH_AUDIENCE` — Expected audience claim in incoming bearer tokens. Required when `ENABLE_DB_ADMIN=true`; otherwise defaults to `https://dev.api.aai.test.biocommons.org.au`. Legacy `AUTH0_AUDIENCE` is also accepted.
+- `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH_DOMAIN}/`
 - `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`
 - `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
 - `ENABLE_DB_ADMIN` — (Optional) set to `true` to enable Starlette Admin at `/admin`
 - `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
 - `DB_ADMIN_SESSION_SECRET` — Required when `ENABLE_DB_ADMIN=true`
-- `DB_ADMIN_AUTH_DOMAIN` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_DOMAIN`)
-- `DB_ADMIN_AUTH_CLIENT_ID` — Required when `ENABLE_DB_ADMIN=true`
-- `DB_ADMIN_AUTH_AUDIENCE` — Required when `ENABLE_DB_ADMIN=true` (or set `AUTH0_AUDIENCE`)
 - `DB_ADMIN_AUTH_REDIRECT_URI` — Required when `ENABLE_DB_ADMIN=true`
 
 ## DB Debug UI (Starlette Admin)
@@ -163,9 +161,9 @@ Required entries in `.env`:
 Enable local DB debugging UI:
 
 ```bash
-export DB_ADMIN_AUTH_DOMAIN="your-auth-domain.example.com"
-export DB_ADMIN_AUTH_CLIENT_ID="your-auth-client-id"
-export DB_ADMIN_AUTH_AUDIENCE="https://your-auth-audience.example.com"
+export AUTH_DOMAIN="your-auth-domain.example.com"
+export AUTH_CLIENT_ID="your-auth-client-id"
+export AUTH_AUDIENCE="https://your-auth-audience.example.com"
 export DB_ADMIN_AUTH_REDIRECT_URI="http://localhost:3000/admin/login"
 export DB_ADMIN_SESSION_SECRET="replace-with-long-random-secret"
 ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000

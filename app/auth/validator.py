@@ -26,8 +26,8 @@ class Auth0Settings:
 
 
 def _get_auth0_settings() -> Auth0Settings:
-    domain = os.getenv("AUTH0_DOMAIN") or DEFAULT_AUTH0_DOMAIN
-    audience = os.getenv("AUTH0_AUDIENCE") or DEFAULT_AUTH0_AUDIENCE
+    domain = os.getenv("AUTH_DOMAIN") or os.getenv("AUTH0_DOMAIN") or DEFAULT_AUTH0_DOMAIN
+    audience = os.getenv("AUTH_AUDIENCE") or os.getenv("AUTH0_AUDIENCE") or DEFAULT_AUTH0_AUDIENCE
     issuer = os.getenv("AUTH0_ISSUER")
     algorithms_raw = os.getenv("AUTH0_ALGORITHMS", "RS256")
     algorithms = tuple(alg.strip() for alg in algorithms_raw.split(",") if alg.strip())
