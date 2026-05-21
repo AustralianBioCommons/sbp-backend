@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -38,7 +38,12 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
-from .dependencies import get_current_user_id, get_db, require_workflow_execution_role
+from .dependencies import (
+    get_client_ip,
+    get_current_user_id,
+    get_db,
+    require_workflow_execution_role,
+)
 
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
@@ -94,9 +99,9 @@ async def sync_current_user(
     dependencies=[Depends(require_workflow_execution_role)],
 )
 async def launch_workflow(
-    request: Request,
     payload: WorkflowLaunchPayload,
     current_user_id: UUID = Depends(get_current_user_id),
+    launch_ip: str | None = Depends(get_client_ip),
     db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
@@ -138,9 +143,6 @@ async def launch_workflow(
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
-
-    forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    launch_ip = forwarded_for or (request.client.host if request.client else None)
 
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
