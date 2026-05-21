@@ -2,6 +2,7 @@
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -12,7 +13,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("workflow_runs", sa.Column("launch_ip", sa.Text(), nullable=True))
+    op.add_column("workflow_runs", sa.Column("launch_ip", postgresql.INET(), nullable=True))
 
 
 def downgrade() -> None:
