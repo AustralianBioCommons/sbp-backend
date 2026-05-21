@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -94,6 +94,7 @@ async def sync_current_user(
     dependencies=[Depends(require_workflow_execution_role)],
 )
 async def launch_workflow(
+    request: Request,
     payload: WorkflowLaunchPayload,
     current_user_id: UUID = Depends(get_current_user_id),
     db_session: Session = Depends(get_db),
@@ -138,6 +139,9 @@ async def launch_workflow(
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
 
+    forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    launch_ip = forwarded_for or (request.client.host if request.client else None)
+
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
     workflow_run = WorkflowRun(
@@ -151,6 +155,7 @@ async def launch_workflow(
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
+        launch_ip=launch_ip,
     )
 
     db_session.add(workflow_run)

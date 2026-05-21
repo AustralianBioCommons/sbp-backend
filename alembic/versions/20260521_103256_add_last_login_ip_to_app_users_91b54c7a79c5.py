@@ -1,4 +1,4 @@
-"""add_last_login_ip_to_app_users"""
+"""add_launch_ip_to_workflow_runs"""
 
 from alembic import op
 import sqlalchemy as sa
@@ -12,8 +12,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("app_users", sa.Column("last_login_ip", sa.Text(), nullable=True))
+    op.add_column("workflow_runs", sa.Column("launch_ip", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("app_users", "last_login_ip")
+    op.drop_column("workflow_runs", "launch_ip")

@@ -8,7 +8,7 @@ from time import time
 from typing import cast
 from uuid import UUID, uuid4
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -85,7 +85,6 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_current_user_id(
-    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> UUID:
@@ -100,16 +99,12 @@ def get_current_user_id(
 
     name, email = _extract_name_email_from_claims(auth0_user_id, claims, token)
 
-    forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    client_ip = forwarded_for or (request.client.host if request.client else None)
-
     if not user:
         user = AppUser(
             id=uuid4(),
             auth0_user_id=auth0_user_id,
             name=name,
             email=email,
-            last_login_ip=client_ip,
         )
         db.add(user)
         try:
@@ -125,7 +120,7 @@ def get_current_user_id(
             user = existing
     else:
         # Refresh profile fields when we have better info than the placeholder values.
-        should_update = user.last_login_ip != client_ip
+        should_update = False
         if user.name == auth0_user_id and name != auth0_user_id:
             user.name = name
             should_update = True
@@ -133,7 +128,6 @@ def get_current_user_id(
             user.email = email
             should_update = True
         if should_update:
-            user.last_login_ip = client_ip
             db.commit()
 
     return cast(UUID, user.id)

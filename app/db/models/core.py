@@ -22,7 +22,6 @@ class AppUser(Base):
     auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    last_login_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     workflow_runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="owner")
 
@@ -56,6 +55,7 @@ class WorkflowRun(Base):
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_form_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
+    launch_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
