@@ -39,12 +39,13 @@ async def test_launch_success_minimal():
         )
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-test-minimal")
 
     result = await launch_bindflow_workflow(
         form,
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-1",
     )
 
@@ -78,6 +79,7 @@ async def test_launch_success_with_all_params():
         dataset_id="dataset_789",
         pipeline="https://github.com/test/repo",
         revision="main",
+        user_email="test@example.com",
         output_id="run-out-2",
     )
 
@@ -99,12 +101,13 @@ async def test_launch_includes_default_params():
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-default-params")
 
     await launch_bindflow_workflow(
         form,
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-3",
     )
 
@@ -115,7 +118,7 @@ async def test_launch_includes_default_params():
     params_text = payload["launch"]["paramsText"]
 
     assert "use_dgxa100: false" in params_text
-    assert 'project: "yz52"' in params_text
+    assert "project: yz52" in params_text
     assert "outdir:" in params_text
 
 
@@ -127,12 +130,13 @@ async def test_launch_with_dataset_adds_input_url():
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-dataset-url")
 
     await launch_bindflow_workflow(
         form,
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-4",
     )
 
@@ -155,13 +159,14 @@ async def test_launch_api_error_response():
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-api-error")
 
     with pytest.raises(BindflowExecutorError, match="400"):
         await launch_bindflow_workflow(
             form,
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
+            user_email="test@example.com",
             output_id="run-out-5",
         )
 
@@ -174,20 +179,21 @@ async def test_launch_missing_workflow_id_in_response():
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-missing-workflow-id")
 
     with pytest.raises(BindflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(
             form,
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
+            user_email="test@example.com",
             output_id="run-out-6",
         )
 
 
 def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-custom-params")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.delenv("SEQERA_API_URL", raising=False)
@@ -202,6 +208,7 @@ def test_launch_missing_env_vars():
                     form,
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
+                    user_email="test@example.com",
                     output_id="run-out-7",
                 )
             )
@@ -217,6 +224,7 @@ async def test_launch_with_custom_params_text():
 
     form = WorkflowLaunchForm(
         tool="BindCraft",
+        runName="seqera-custom-params",
         paramsText="my_custom_param: 42\nanother_param: test",
     )
 
@@ -224,6 +232,7 @@ async def test_launch_with_custom_params_text():
         form,
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-8",
     )
 

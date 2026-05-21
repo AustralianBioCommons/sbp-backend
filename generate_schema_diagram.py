@@ -50,10 +50,7 @@ def main():
         print(f"  - {model.__tablename__}")
 
     # Generate the diagram
-    generate_data_model_diagram(
-        models,
-        output_file=output_file
-    )
+    generate_data_model_diagram(models, output_file=output_file)
 
     print(f"\n✓ Schema diagram generated: {output_file}.png")
     print("\nThe diagram shows:")
