@@ -45,6 +45,7 @@ async def test_launch_success_minimal():
         form,
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-1",
     )
 
@@ -78,6 +79,7 @@ async def test_launch_success_with_all_params():
         dataset_id="dataset_789",
         pipeline="https://github.com/test/repo",
         revision="main",
+        user_email="test@example.com",
         output_id="run-out-2",
     )
 
@@ -105,6 +107,7 @@ async def test_launch_includes_default_params():
         form,
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-3",
     )
 
@@ -133,6 +136,7 @@ async def test_launch_with_dataset_adds_input_url():
         form,
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-4",
     )
 
@@ -162,6 +166,7 @@ async def test_launch_api_error_response():
             form,
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
+            user_email="test@example.com",
             output_id="run-out-5",
         )
 
@@ -181,6 +186,7 @@ async def test_launch_missing_workflow_id_in_response():
             form,
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
+            user_email="test@example.com",
             output_id="run-out-6",
         )
 
@@ -202,6 +208,7 @@ def test_launch_missing_env_vars():
                     form,
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
+                    user_email="test@example.com",
                     output_id="run-out-7",
                 )
             )
@@ -225,6 +232,7 @@ async def test_launch_with_custom_params_text():
         form,
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
+        user_email="test@example.com",
         output_id="run-out-8",
     )
 

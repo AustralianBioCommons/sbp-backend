@@ -13,6 +13,7 @@ from app.schemas.workflows import WorkflowLaunchForm
 from app.services._nf_config import (
     GADI_TRACE_SECTION,
     Raw,
+    Section,
     _block,
     _serialize,
     build_nf_config,
@@ -409,8 +410,8 @@ def test_block_depth_indentation():
 
 def test_build_nf_config_joins_sections_with_blank_line():
     result = build_nf_config(
-        ("singularity", {"enabled": True}),
-        ("executor", {"queueSize": 1}),
+        Section(name="singularity", entries={"enabled": True}),
+        Section(name="executor", entries={"queueSize": 1}),
     )
     assert "singularity {" in result
     assert "executor {" in result
@@ -418,7 +419,7 @@ def test_build_nf_config_joins_sections_with_blank_line():
 
 
 def test_build_nf_config_raw_string_section():
-    result = build_nf_config("// a comment", ("trace", {"enabled": True}))
+    result = build_nf_config("// a comment", Section(name="trace", entries={"enabled": True}))
     assert "// a comment" in result
     assert "trace {" in result
 
@@ -432,9 +433,9 @@ def test_gadi_trace_section_contains_expected_fields():
 
 def test_build_nf_config_produces_valid_groovy():
     config = build_nf_config(
-        ("params", {"use_gpu": True, "db": "/some/path"}),
-        ("singularity", {"enabled": True, "autoMounts": True}),
-        ("executor", {"queueSize": 300}),
+        Section(name="params", entries={"use_gpu": True, "db": "/some/path"}),
+        Section(name="singularity", entries={"enabled": True, "autoMounts": True}),
+        Section(name="executor", entries={"queueSize": 300}),
     )
     tree = parse_groovy_content(config)
     assert tree is not None
