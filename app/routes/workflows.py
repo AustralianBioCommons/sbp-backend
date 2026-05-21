@@ -38,7 +38,12 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
-from .dependencies import get_current_user_id, get_db, require_workflow_execution_role
+from .dependencies import (
+    get_client_ip,
+    get_current_user_id,
+    get_db,
+    require_workflow_execution_role,
+)
 
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
@@ -96,6 +101,7 @@ async def sync_current_user(
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
     current_user_id: UUID = Depends(get_current_user_id),
+    launch_ip: str | None = Depends(get_client_ip),
     db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
@@ -153,6 +159,7 @@ async def launch_workflow(
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
+        launch_ip=launch_ip,
     )
 
     db_session.add(workflow_run)

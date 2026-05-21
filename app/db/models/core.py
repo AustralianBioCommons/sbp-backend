@@ -9,10 +9,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .. import Base
+
+_InetType = Text().with_variant(INET(), "postgresql")
 
 
 class AppUser(Base):
@@ -55,6 +57,7 @@ class WorkflowRun(Base):
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_form_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
+    launch_ip: Mapped[str | None] = mapped_column(_InetType, nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")

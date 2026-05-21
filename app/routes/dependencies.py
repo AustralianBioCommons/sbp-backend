@@ -8,7 +8,7 @@ from time import time
 from typing import cast
 from uuid import UUID, uuid4
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -74,6 +74,11 @@ def _extract_name_email_from_claims(
         email = f"{safe_sub}@unknown.local"
 
     return name, email
+
+
+def get_client_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    return forwarded_for or (request.client.host if request.client else None)
 
 
 def get_db() -> Generator[Session, None, None]:
