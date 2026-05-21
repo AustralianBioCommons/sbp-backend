@@ -10,11 +10,11 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
-
-_InetType = Text().with_variant(INET(), "postgresql")
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .. import Base
+
+_InetType = Text().with_variant(INET(), "postgresql")
 
 
 class AppUser(Base):
