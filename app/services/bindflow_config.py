@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._nf_config import GADI_TRACE_SECTION, Raw, build_nf_config
+from ._nf_config import GADI_TRACE_SECTION, Raw, Section, build_nf_config
 
 
 def get_bindflow_default_params(out_dir: str) -> dict[str, Any]:
@@ -53,18 +53,18 @@ def get_bindflow_config_profiles() -> list[str]:
 def get_bindflow_config_text(job_id: str, user_email: str, timestamp: str) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
     return build_nf_config(
-        (
-            "singularity",
-            {
+        Section(
+            name="singularity",
+            entries={
                 "cacheDir": "/g/data/if89/singularity_cache/",
                 "enabled": True,
                 "runOptions": "--nv",
                 "autoMounts": True,
             },
         ),
-        (
-            "process",
-            {
+        Section(
+            name="process",
+            entries={
                 "executor": "pbspro",
                 "clusterOptions": (
                     f"-v JOB_ID={job_id},USER_NAME={user_email},TIMESTAMP={timestamp}"
@@ -80,9 +80,9 @@ def get_bindflow_config_text(job_id: str, user_email: str, timestamp: str) -> st
                 },
             },
         ),
-        (
-            "executor",
-            {
+        Section(
+            name="executor",
+            entries={
                 "queueSize": 300,
                 "pollInterval": "5 min",
                 "queueStatInterval": "5 min",

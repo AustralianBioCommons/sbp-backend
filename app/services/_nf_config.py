@@ -6,7 +6,16 @@ raw f-strings with typed, structured config assembly.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass
+class Section:
+    """A named Nextflow DSL block with its key-value entries."""
+
+    name: str
+    entries: dict[str, Any]
 
 
 class Raw(str):
@@ -70,11 +79,11 @@ def _block(name: str, entries: dict[str, Any], depth: int = 0) -> str:
     return "\n".join(lines)
 
 
-def build_nf_config(*sections: str | tuple[str, dict[str, Any]]) -> str:
+def build_nf_config(*sections: str | Section) -> str:
     """Assemble a complete Nextflow config string from blocks and raw sections.
 
     Each positional argument is either:
-    - A ``(name, dict)`` tuple describing a named DSL block.
+    - A :class:`Section` describing a named DSL block.
     - A plain ``str`` for a comment line, a raw Groovy statement, or a
       pre-formatted section (e.g. :data:`GADI_TRACE_SECTION`).
 
@@ -85,6 +94,5 @@ def build_nf_config(*sections: str | tuple[str, dict[str, Any]]) -> str:
         if isinstance(section, str):
             parts.append(section)
         else:
-            name, entries = section
-            parts.append(_block(name, entries))
+            parts.append(_block(section.name, section.entries))
     return "\n\n".join(parts)
