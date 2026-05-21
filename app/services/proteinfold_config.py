@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._nf_config import GADI_TRACE_SECTION, Raw, build_nf_config
+from ._nf_config import GADI_TRACE_SECTION, Raw, Section, build_nf_config
 
 _DB_BASE = "/g/data/if89/proteinfold_dbs/proteinfold_minidbs/"
 _SINGULARITY_CACHE_DIR = "/g/data/if89/singularity_cache/"
@@ -75,9 +75,9 @@ def get_proteinfold_config_profiles() -> list[str]:
 def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
     return build_nf_config(
-        (
-            "params",
-            {
+        Section(
+            name="params",
+            entries={
                 "use_gpu": True,
                 "project": Raw('System.getenv("PROJECT")'),
                 "db": _DB_BASE,
@@ -85,17 +85,17 @@ def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> 
             },
         ),
         "// Enable use of Singularity to run containers",
-        (
-            "singularity",
-            {
+        Section(
+            name="singularity",
+            entries={
                 "enabled": True,
                 "autoMounts": True,
                 "cacheDir": _SINGULARITY_CACHE_DIR,
             },
         ),
-        (
-            "executor",
-            {
+        Section(
+            name="executor",
+            entries={
                 "queueSize": 300,
                 "pollInterval": "5 min",
                 "queueStatInterval": "5 min",
@@ -103,9 +103,9 @@ def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> 
             },
         ),
         "// Define process resource limits",
-        (
-            "process",
-            {
+        Section(
+            name="process",
+            entries={
                 "executor": "pbspro",
                 "clusterOptions": (
                     f"-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
