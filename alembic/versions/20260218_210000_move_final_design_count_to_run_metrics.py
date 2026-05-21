@@ -56,4 +56,3 @@ def downgrade() -> None:
         """
     )
     op.execute("ALTER TABLE run_metrics DROP COLUMN IF EXISTS final_design_count")
-

@@ -22,4 +22,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("workflow_runs", "final_design_count")
-
