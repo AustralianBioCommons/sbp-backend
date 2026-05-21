@@ -61,15 +61,15 @@ def _get_db_admin_home_url() -> str:
 
 
 def _get_admin_auth_domain() -> str | None:
-    return _get_first_env("AUTH_DOMAIN", "DB_ADMIN_AUTH_DOMAIN", "AUTH0_DOMAIN")
+    return _get_first_env("AUTH_DOMAIN", "AUTH0_DOMAIN")
 
 
 def _get_admin_auth_client_id() -> str | None:
-    return _get_first_env("AUTH_CLIENT_ID", "DB_ADMIN_AUTH_CLIENT_ID")
+    return _get_first_env("AUTH_CLIENT_ID")
 
 
 def _get_admin_auth_audience() -> str | None:
-    return _get_first_env("AUTH_AUDIENCE", "DB_ADMIN_AUTH_AUDIENCE", "AUTH0_AUDIENCE")
+    return _get_first_env("AUTH_AUDIENCE", "AUTH0_AUDIENCE")
 
 
 def _get_admin_session_cookie_name() -> str:
