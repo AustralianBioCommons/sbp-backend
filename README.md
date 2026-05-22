@@ -144,9 +144,9 @@ Required entries in `.env`:
 - `WORK_DIR` — Default work directory
 - `WORK_SPACE` — Seqera workspace identifier
 - `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
-- `AUTH_DOMAIN` — Auth tenant domain used for JWKS lookup. Required when `ENABLE_DB_ADMIN=true`; otherwise defaults to `dev.login.aai.test.biocommons.org.au`. Legacy `AUTH0_DOMAIN` is also accepted.
-- `AUTH_CLIENT_ID` — Required when `ENABLE_DB_ADMIN=true`
-- `AUTH_AUDIENCE` — Expected audience claim in incoming bearer tokens. Required when `ENABLE_DB_ADMIN=true`; otherwise defaults to `https://dev.api.aai.test.biocommons.org.au`. Legacy `AUTH0_AUDIENCE` is also accepted.
+- `AUTH_DOMAIN` — Auth tenant domain used for JWKS lookup and token issuer validation. Required.
+- `AUTH_CLIENT_ID` — OAuth client ID. Required when `ENABLE_DB_ADMIN=true`.
+- `AUTH_AUDIENCE` — Expected audience claim in incoming bearer tokens. Required.
 - `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH_DOMAIN}/`
 - `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
 - `PORT` — (Optional) uvicorn port when running `python -m app.main`

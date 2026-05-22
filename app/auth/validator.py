@@ -13,8 +13,6 @@ from jose import jwk, jwt
 from jose.exceptions import JWTError
 
 KEY_CACHE = TTLCache(maxsize=10, ttl=30 * 60)
-DEFAULT_AUTH0_DOMAIN = "dev.login.aai.test.biocommons.org.au"
-DEFAULT_AUTH0_AUDIENCE = "https://dev.api.aai.test.biocommons.org.au"
 
 
 @dataclass(frozen=True)
@@ -26,11 +24,18 @@ class Auth0Settings:
 
 
 def _get_auth0_settings() -> Auth0Settings:
-    domain = os.getenv("AUTH_DOMAIN") or os.getenv("AUTH0_DOMAIN") or DEFAULT_AUTH0_DOMAIN
-    audience = os.getenv("AUTH_AUDIENCE") or os.getenv("AUTH0_AUDIENCE") or DEFAULT_AUTH0_AUDIENCE
+    domain = os.getenv("AUTH_DOMAIN", "").strip()
+    audience = os.getenv("AUTH_AUDIENCE", "").strip()
     issuer = os.getenv("AUTH0_ISSUER")
     algorithms_raw = os.getenv("AUTH0_ALGORITHMS", "RS256")
     algorithms = tuple(alg.strip() for alg in algorithms_raw.split(",") if alg.strip())
+
+    missing = [name for name, val in [("AUTH_DOMAIN", domain), ("AUTH_AUDIENCE", audience)] if not val]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Auth configuration error: {', '.join(missing)} must be set",
+        )
 
     if not algorithms:
         raise HTTPException(
