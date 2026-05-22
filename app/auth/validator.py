@@ -30,7 +30,9 @@ def _get_auth0_settings() -> Auth0Settings:
     algorithms_raw = os.getenv("AUTH0_ALGORITHMS", "RS256")
     algorithms = tuple(alg.strip() for alg in algorithms_raw.split(",") if alg.strip())
 
-    missing = [name for name, val in [("AUTH_DOMAIN", domain), ("AUTH_AUDIENCE", audience)] if not val]
+    missing = [
+        name for name, val in [("AUTH_DOMAIN", domain), ("AUTH_AUDIENCE", audience)] if not val
+    ]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
