@@ -43,9 +43,11 @@ class _DB:
         self.rolled_back = True
 
 
-def test_get_current_user_id_missing_header():
+def test_get_current_user_id_missing_header(monkeypatch: pytest.MonkeyPatch):
     # HTTPBearer will automatically raise 403 for missing credentials
     # So we test with empty credentials
+    monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
+    monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="")
     with pytest.raises(HTTPException) as exc:
         get_current_user_id(credentials, _DB(None))
