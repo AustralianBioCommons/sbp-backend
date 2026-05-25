@@ -163,9 +163,9 @@ async def launch_workflow(
     institute = user_email.split("@")[-1] if "@" in user_email else None
     ip_address: str | None = launch_ip or None
 
-    _require_launch_var("full_name", full_name)
-    _require_launch_var("institute", institute)
-    _require_launch_var("ip_address", ip_address)
+    full_name = _require_launch_var("full_name", full_name)
+    institute = _require_launch_var("institute", institute)
+    ip_address = _require_launch_var("ip_address", ip_address)
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
