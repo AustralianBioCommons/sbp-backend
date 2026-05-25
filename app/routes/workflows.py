@@ -48,6 +48,15 @@ from .dependencies import (
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
 
+def _require_launch_var(name: str, value: str) -> str:
+    if not value:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"'{name}' is required for workflow launch but could not be determined.",
+        )
+    return value
+
+
 def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
     if not isinstance(form_data, dict):
         return None
@@ -144,11 +153,19 @@ async def launch_workflow(
     user = db_session.execute(
         select(AppUser.email, AppUser.name).where(AppUser.id == current_user_id)
     ).one_or_none()
-    user_email = user.email if user else ""
-    raw_name = user.name if user else ""
-    full_name = raw_name.replace(" ", "_")
+    if not user or not user.email:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not retrieve user details required for workflow launch.",
+        )
+    user_email = user.email
+    full_name = (user.name or "").replace(" ", "_")
     institute = user_email.split("@")[-1] if "@" in user_email else ""
     ip_address = launch_ip or ""
+
+    _require_launch_var("full_name", full_name)
+    _require_launch_var("institute", institute)
+    _require_launch_var("ip_address", ip_address)
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"

@@ -140,10 +140,10 @@ async def launch_proteinfold_workflow(
     output_id: str | None = None,
     mode: str = "alphafold2",
     form_data: dict[str, Any] | None = None,
-    user_email: str = "",
-    full_name: str = "",
-    institute: str = "",
-    ip_address: str = "",
+    user_email: str,
+    full_name: str,
+    institute: str,
+    ip_address: str,
 ) -> ProteinfoldLaunchResult:
     """Launch a proteinfold workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")

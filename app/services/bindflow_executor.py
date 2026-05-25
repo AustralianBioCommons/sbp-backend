@@ -51,13 +51,11 @@ async def launch_bindflow_workflow(
     pipeline: str,
     revision: str | None = None,
     output_id: str | None = None,
-    user_email: str = "",
-    full_name: str = "",
-    institute: str = "",
-    ip_address: str = "",
+    user_email: str,
+    full_name: str,
+    institute: str,
+    ip_address: str,
 ) -> BindflowLaunchResult:
-    if not user_email:
-        raise BindflowConfigurationError("Missing user email for workflow launch")
     """Launch a bindflow workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
