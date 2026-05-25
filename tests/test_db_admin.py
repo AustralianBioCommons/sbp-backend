@@ -21,9 +21,9 @@ from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, WorkflowR
 from app.routes.dependencies import get_db
 
 DB_ADMIN_REQUIRED_ENV = {
-    "DB_ADMIN_AUTH_DOMAIN": "example.auth.test",
-    "DB_ADMIN_AUTH_CLIENT_ID": "test-client-id",
-    "DB_ADMIN_AUTH_AUDIENCE": "https://example.api.test",
+    "AUTH_DOMAIN": "example.auth.test",
+    "AUTH_CLIENT_ID": "test-client-id",
+    "AUTH_AUDIENCE": "https://example.api.test",
     "DB_ADMIN_AUTH_REDIRECT_URI": "http://localhost:3000/admin/login",
     "DB_ADMIN_SESSION_SECRET": "test-session-secret",
 }

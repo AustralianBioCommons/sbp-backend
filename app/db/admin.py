@@ -53,24 +53,18 @@ def _get_db_admin_home_url() -> str:
 
 
 def _get_admin_auth_domain() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_DOMAIN") or os.getenv("AUTH0_DOMAIN")
-    if not value:
-        return None
-    return value.strip()
+    value = os.getenv("AUTH_DOMAIN", "").strip()
+    return value or None
 
 
 def _get_admin_auth_client_id() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_CLIENT_ID")
-    if not value:
-        return None
-    return value.strip()
+    value = os.getenv("AUTH_CLIENT_ID", "").strip()
+    return value or None
 
 
 def _get_admin_auth_audience() -> str | None:
-    value = os.getenv("DB_ADMIN_AUTH_AUDIENCE") or os.getenv("AUTH0_AUDIENCE")
-    if not value:
-        return None
-    return value.strip()
+    value = os.getenv("AUTH_AUDIENCE", "").strip()
+    return value or None
 
 
 def _get_admin_session_cookie_name() -> str:
@@ -87,11 +81,11 @@ def _get_admin_session_secret() -> str:
 def _validate_db_admin_config() -> None:
     missing: list[str] = []
     if not _get_admin_auth_domain():
-        missing.append("DB_ADMIN_AUTH_DOMAIN or AUTH0_DOMAIN")
+        missing.append("AUTH_DOMAIN")
     if not _get_admin_auth_client_id():
-        missing.append("DB_ADMIN_AUTH_CLIENT_ID")
+        missing.append("AUTH_CLIENT_ID")
     if not _get_admin_auth_audience():
-        missing.append("DB_ADMIN_AUTH_AUDIENCE or AUTH0_AUDIENCE")
+        missing.append("AUTH_AUDIENCE")
     if not os.getenv("DB_ADMIN_AUTH_REDIRECT_URI", "").strip():
         missing.append("DB_ADMIN_AUTH_REDIRECT_URI")
     if not os.getenv("DB_ADMIN_SESSION_SECRET", "").strip():

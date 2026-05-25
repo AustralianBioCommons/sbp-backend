@@ -26,8 +26,8 @@ def _clear_key_cache():
 
 
 def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUTH0_DOMAIN", "dev.login.aai.test.biocommons.org.au")
-    monkeypatch.setenv("AUTH0_AUDIENCE", "https://api.example.test")
+    monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
+    monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
 
 
 def generate_public_private_key_pair() -> tuple[RSAPublicKey, RSAPrivateKey]:
@@ -112,13 +112,38 @@ def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch):
     assert settings.algorithms == ("RS256", "ES256")
 
 
-def test_get_auth0_settings_uses_defaults(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
-    monkeypatch.delenv("AUTH0_AUDIENCE", raising=False)
+def test_get_auth0_settings_raises_if_domain_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("AUTH_DOMAIN", raising=False)
+    monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
 
-    settings = validator._get_auth0_settings()
-    assert settings.domain == "dev.login.aai.test.biocommons.org.au"
-    assert settings.audience == "https://dev.api.aai.test.biocommons.org.au"
+    with pytest.raises(HTTPException) as exc:
+        validator._get_auth0_settings()
+
+    assert exc.value.status_code == 500
+    assert "AUTH_DOMAIN" in exc.value.detail
+
+
+def test_get_auth0_settings_raises_if_audience_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
+    monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        validator._get_auth0_settings()
+
+    assert exc.value.status_code == 500
+    assert "AUTH_AUDIENCE" in exc.value.detail
+
+
+def test_get_auth0_settings_ignores_legacy_auth0_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("AUTH_DOMAIN", raising=False)
+    monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
+    monkeypatch.setenv("AUTH0_DOMAIN", "legacy.auth.test")
+    monkeypatch.setenv("AUTH0_AUDIENCE", "https://legacy.api.test")
+
+    with pytest.raises(HTTPException) as exc:
+        validator._get_auth0_settings()
+
+    assert exc.value.status_code == 500
 
 
 def test_get_auth0_settings_empty_algorithms(monkeypatch: pytest.MonkeyPatch):
