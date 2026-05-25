@@ -48,7 +48,7 @@ from .dependencies import (
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
 
-def _require_launch_var(name: str, value: str) -> str:
+def _require_launch_var(name: str, value: str | None) -> str:
     if not value:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -160,8 +160,8 @@ async def launch_workflow(
         )
     user_email = user.email
     full_name = (user.name or "").replace(" ", "_")
-    institute = user_email.split("@")[-1] if "@" in user_email else ""
-    ip_address = launch_ip or ""
+    institute = user_email.split("@")[-1] if "@" in user_email else None
+    ip_address: str | None = launch_ip or None
 
     _require_launch_var("full_name", full_name)
     _require_launch_var("institute", institute)
