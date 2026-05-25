@@ -48,6 +48,15 @@ from .dependencies import (
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
 
 
+def _require_launch_var(name: str, value: str | None) -> str:
+    if not value:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"'{name}' is required for workflow launch but could not be determined.",
+        )
+    return value
+
+
 def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
     if not isinstance(form_data, dict):
         return None
@@ -141,7 +150,22 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    user_email = db_session.scalar(select(AppUser.email).where(AppUser.id == current_user_id)) or ""
+    user = db_session.execute(
+        select(AppUser.email, AppUser.name).where(AppUser.id == current_user_id)
+    ).one_or_none()
+    if not user or not user.email:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not retrieve user details required for workflow launch.",
+        )
+    user_email = user.email
+    full_name = (user.name or "").replace(" ", "_")
+    institute = user_email.split("@")[-1] if "@" in user_email else None
+    ip_address: str | None = launch_ip or None
+
+    full_name = _require_launch_var("full_name", full_name)
+    institute = _require_launch_var("institute", institute)
+    ip_address = _require_launch_var("ip_address", ip_address)
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
@@ -184,6 +208,9 @@ async def launch_workflow(
                 mode=mode,
                 form_data=payload.formData,
                 user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             )
         elif requested_tool in ("bindflow", "bindcraft"):
             result = await launch_bindflow_workflow(
@@ -193,6 +220,9 @@ async def launch_workflow(
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             )
         else:
             db_session.rollback()

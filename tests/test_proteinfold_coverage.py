@@ -246,6 +246,10 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
             output_id="run-output-id",
             mode="alphafold2",
             form_data=None,
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
         )
 
     assert result.workflow_id == "wf_success"
@@ -266,6 +270,10 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
             output_id="run-output-id",
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
         )
 
 
@@ -278,6 +286,10 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
             output_id=None,
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
         )
 
 
@@ -290,6 +302,10 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
             output_id="   ",
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
         )
 
 
@@ -311,6 +327,10 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
             output_id="run-output-id",
             mode="colabfold",
             form_data={"colabfold_num_recycles": 3, "colabfold_use_templates": True},
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
         )
 
     assert result.workflow_id == "wf_form"
