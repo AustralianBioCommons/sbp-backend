@@ -72,7 +72,14 @@ def get_proteinfold_config_profiles() -> list[str]:
     return ["singularity"]
 
 
-def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> str:
+def get_proteinfold_config_text(
+    job_id: str,
+    user_name: str,
+    timestamp: str,
+    full_name: str = "",
+    institute: str = "",
+    ip_address: str = "",
+) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
     return build_nf_config(
         Section(
@@ -109,6 +116,7 @@ def get_proteinfold_config_text(job_id: str, user_name: str, timestamp: str) -> 
                 "executor": "pbspro",
                 "clusterOptions": (
                     f"-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
+                    f",FULL_NAME={full_name},INSTITUTE={institute},IP_ADDRESS={ip_address}"
                 ),
                 "storage": "gdata/ll61+gdata/if89+gdata/li87",
                 "module": "singularity",

@@ -141,7 +141,14 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    user_email = db_session.scalar(select(AppUser.email).where(AppUser.id == current_user_id)) or ""
+    user = db_session.execute(
+        select(AppUser.email, AppUser.name).where(AppUser.id == current_user_id)
+    ).one_or_none()
+    user_email = user.email if user else ""
+    raw_name = user.name if user else ""
+    full_name = raw_name.replace(" ", "_")
+    institute = user_email.split("@")[-1] if "@" in user_email else ""
+    ip_address = launch_ip or ""
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
@@ -184,6 +191,9 @@ async def launch_workflow(
                 mode=mode,
                 form_data=payload.formData,
                 user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             )
         elif requested_tool in ("bindflow", "bindcraft"):
             result = await launch_bindflow_workflow(
@@ -193,6 +203,9 @@ async def launch_workflow(
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             )
         else:
             db_session.rollback()

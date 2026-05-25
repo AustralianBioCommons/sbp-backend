@@ -50,7 +50,14 @@ def get_bindflow_config_profiles() -> list[str]:
     return ["singularity", "gadi"]
 
 
-def get_bindflow_config_text(job_id: str, user_email: str, timestamp: str) -> str:
+def get_bindflow_config_text(
+    job_id: str,
+    user_email: str,
+    timestamp: str,
+    full_name: str = "",
+    institute: str = "",
+    ip_address: str = "",
+) -> str:
     """Get Nextflow configText for the Seqera launch payload."""
     return build_nf_config(
         Section(
@@ -68,6 +75,7 @@ def get_bindflow_config_text(job_id: str, user_email: str, timestamp: str) -> st
                 "executor": "pbspro",
                 "clusterOptions": (
                     f"-v JOB_ID={job_id},USER_NAME={user_email},TIMESTAMP={timestamp}"
+                    f",FULL_NAME={full_name},INSTITUTE={institute},IP_ADDRESS={ip_address}"
                 ),
                 "storage": "scratch/yz52+gdata/yz52+gdata/if89+gdata/li87",
                 "shell": ["bash", "-C", "-e", "-u", "-o", "pipefail"],

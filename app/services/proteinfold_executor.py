@@ -141,6 +141,9 @@ async def launch_proteinfold_workflow(
     mode: str = "alphafold2",
     form_data: dict[str, Any] | None = None,
     user_email: str = "",
+    full_name: str = "",
+    institute: str = "",
+    ip_address: str = "",
 ) -> ProteinfoldLaunchResult:
     """Launch a proteinfold workflow on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -178,7 +181,9 @@ async def launch_proteinfold_workflow(
             "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_proteinfold_config_profiles(),
-            "configText": get_proteinfold_config_text(job_id, user_email, timestamp),
+            "configText": get_proteinfold_config_text(
+                job_id, user_email, timestamp, full_name, institute, ip_address
+            ),
             "preRunScript": get_proteinfold_executor_script(
                 os.getenv("AWS_ACCESS_KEY_ID", ""),
                 os.getenv("AWS_SECRET_ACCESS_KEY", ""),

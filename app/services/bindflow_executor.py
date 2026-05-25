@@ -52,6 +52,9 @@ async def launch_bindflow_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     user_email: str = "",
+    full_name: str = "",
+    institute: str = "",
+    ip_address: str = "",
 ) -> BindflowLaunchResult:
     if not user_email:
         raise BindflowConfigurationError("Missing user email for workflow launch")
@@ -108,7 +111,9 @@ async def launch_bindflow_workflow(
             "revision": revision or "dev",
             "paramsText": params_text,
             "configProfiles": get_bindflow_config_profiles(),
-            "configText": get_bindflow_config_text(run_name, user_email, timestamp),
+            "configText": get_bindflow_config_text(
+                run_name, user_email, timestamp, full_name, institute, ip_address
+            ),
             "preRunScript": get_bindflow_executor_script(
                 aws_access_key, aws_secret_key, aws_region
             ),
