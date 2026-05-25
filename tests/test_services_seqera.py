@@ -46,6 +46,9 @@ async def test_launch_success_minimal():
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
         user_email="test@example.com",
+        full_name="Test_User",
+        institute="example.com",
+        ip_address="127.0.0.1",
         output_id="run-out-1",
     )
 
@@ -80,6 +83,9 @@ async def test_launch_success_with_all_params():
         pipeline="https://github.com/test/repo",
         revision="main",
         user_email="test@example.com",
+        full_name="Test_User",
+        institute="example.com",
+        ip_address="127.0.0.1",
         output_id="run-out-2",
     )
 
@@ -108,6 +114,9 @@ async def test_launch_includes_default_params():
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
         user_email="test@example.com",
+        full_name="Test_User",
+        institute="example.com",
+        ip_address="127.0.0.1",
         output_id="run-out-3",
     )
 
@@ -137,6 +146,9 @@ async def test_launch_with_dataset_adds_input_url():
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
         user_email="test@example.com",
+        full_name="Test_User",
+        institute="example.com",
+        ip_address="127.0.0.1",
         output_id="run-out-4",
     )
 
@@ -167,6 +179,9 @@ async def test_launch_api_error_response():
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
             user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
             output_id="run-out-5",
         )
 
@@ -187,6 +202,9 @@ async def test_launch_missing_workflow_id_in_response():
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
             user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
             output_id="run-out-6",
         )
 
@@ -209,6 +227,9 @@ def test_launch_missing_env_vars():
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
                     user_email="test@example.com",
+                    full_name="Test_User",
+                    institute="example.com",
+                    ip_address="127.0.0.1",
                     output_id="run-out-7",
                 )
             )
@@ -233,6 +254,9 @@ async def test_launch_with_custom_params_text():
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
         user_email="test@example.com",
+        full_name="Test_User",
+        institute="example.com",
+        ip_address="127.0.0.1",
         output_id="run-out-8",
     )
 
