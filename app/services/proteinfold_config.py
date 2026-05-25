@@ -115,7 +115,7 @@ def get_proteinfold_config_text(
             entries={
                 "executor": "pbspro",
                 "clusterOptions": (
-                    f"-v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
+                    f"-P yz52  -v JOB_ID={job_id},USER_NAME={user_name},TIMESTAMP={timestamp}"
                     f",FULL_NAME={full_name},INSTITUTE={institute},IP_ADDRESS={ip_address}"
                 ),
                 "storage": "gdata/ll61+gdata/if89+gdata/li87",
