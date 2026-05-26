@@ -213,8 +213,12 @@ async def launch_workflow(
                 ip_address=ip_address,
             )
         elif requested_tool in ("bindflow", "bindcraft"):
+            seqera_run_name = str(
+                (payload.formData or {}).get("seqeraRunName") or payload.launch.runName or ""
+            )
+            bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(
-                payload.launch,
+                bindcraft_launch_form,
                 dataset_id,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
