@@ -52,15 +52,16 @@ router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id
 
 
 def build_unique_run_name(job_name: str) -> str:
-    # Produces a Seqera-safe run name: <slug>-<YYYYMMDD-HHMMSS>-<4-char random>
+    # Produces a parseable run name: <slug>_<YYYYMMDD-HHMMSS>_<4-char random>
+    # Underscores delimit the three parts; hyphens are only used within slug and timestamp.
     base = job_name.strip()
-    slug = re.sub(r"[^a-zA-Z0-9\-_]", "-", base)
+    slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)  # underscores → hyphens too
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-") or "run"
     now = datetime.now(timezone.utc)
     ts = now.strftime("%Y%m%d-%H%M%S")
     rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    return f"{slug}-{ts}-{rand}"
+    return f"{slug}_{ts}_{rand}"
 
 
 def _require_launch_var(name: str, value: str | None) -> str:

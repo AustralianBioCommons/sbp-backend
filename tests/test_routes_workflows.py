@@ -544,7 +544,7 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
     payload = {
         "launch": {"tool": "proteinfold", "runName": "pf-run-1"},
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2", "seqeraRunName": "pf-run-1"},
+        "formData": {"mode": "alphafold2"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
