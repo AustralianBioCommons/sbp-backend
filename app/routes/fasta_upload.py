@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from ..schemas.workflows import FastaUploadResponse
 from ..services.s3 import (
@@ -30,6 +30,7 @@ def _human_readable_size(size_bytes: int) -> str:
 @router.post("/upload", response_model=FastaUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_fasta_file(
     file: UploadFile = File(..., description="FASTA file to upload"),
+    folder: str = Form("input"),
     _current_user_id=Depends(get_current_user_id),
 ) -> FastaUploadResponse:
     """Upload a FASTA file to S3 and return a pre-signed URL."""
@@ -66,7 +67,7 @@ async def upload_fasta_file(
             file_content=file.file,
             filename=file.filename,
             content_type=file.content_type or "text/plain",
-            folder="input",
+            folder=folder,
         )
         presigned_url = await generate_presigned_url(
             upload_result.file_key,

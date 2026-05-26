@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from ..schemas.workflows import PdbUploadResponse
 from ..services.s3 import (
@@ -20,6 +20,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 @router.post("/upload", response_model=PdbUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_pdb_file(
     file: UploadFile = File(..., description="PDB file to upload"),
+    folder: str = Form("input"),
 ) -> PdbUploadResponse:
     """
     Upload a PDB file to S3 private bucket.
@@ -64,7 +65,7 @@ async def upload_pdb_file(
             file_content=file.file,
             filename=file.filename,
             content_type=file.content_type or "pdb",
-            folder="input",
+            folder=folder,
         )
 
         return PdbUploadResponse(
