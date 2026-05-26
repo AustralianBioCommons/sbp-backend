@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import random
+import re
+import string
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -46,6 +49,18 @@ from .dependencies import (
 )
 
 router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
+
+
+def build_unique_run_name(job_name: str) -> str:
+    # Produces a Seqera-safe run name: <slug>-<YYYYMMDD-HHMMSS>-<4-char random>
+    base = job_name.strip()
+    slug = re.sub(r"[^a-zA-Z0-9\-_]", "-", base)
+    slug = re.sub(r"-{2,}", "-", slug)
+    slug = slug.strip("-") or "run"
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%d-%H%M%S")
+    rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    return f"{slug}-{ts}-{rand}"
 
 
 def _require_launch_var(name: str, value: str | None) -> str:
@@ -195,9 +210,7 @@ async def launch_workflow(
         result: BindflowLaunchResult | ProteinfoldLaunchResult
         if requested_tool == "proteinfold":
             mode = str((payload.formData or {}).get("mode", "alphafold2"))
-            seqera_run_name = str(
-                (payload.formData or {}).get("seqeraRunName") or payload.launch.runName or ""
-            )
+            seqera_run_name = build_unique_run_name(payload.launch.runName or "")
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,
@@ -213,9 +226,7 @@ async def launch_workflow(
                 ip_address=ip_address,
             )
         elif requested_tool in ("bindflow", "bindcraft"):
-            seqera_run_name = str(
-                (payload.formData or {}).get("seqeraRunName") or payload.launch.runName or ""
-            )
+            seqera_run_name = build_unique_run_name(payload.launch.runName or "")
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(
                 bindcraft_launch_form,
