@@ -621,8 +621,6 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         ) -> str | None:
             return _mask_email(str(value) if value is not None else None)
 
-
-
     def _has_column(model: type, column_name: str) -> bool:
         return column_name in model.__table__.columns.keys()
 
