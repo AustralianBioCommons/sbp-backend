@@ -9,9 +9,17 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+from starlette_admin._types import RequestAction
 
 from app.db.admin import (
+    RunOutputAdmin,
+    S3ObjectAdmin,
     _claims_has_admin_role,
+    _decode_admin_pk,
     _is_db_admin_enabled,
     _mount_db_debug_api,
     mount_db_admin,
@@ -70,6 +78,65 @@ def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):
 
     with pytest.raises(RuntimeError, match="required DB admin env vars are missing"):
         mount_db_admin(app)
+
+
+async def test_admin_s3_object_relation_serializes_url_safe_detail_url() -> None:
+    async def detail_endpoint(request: Request) -> Response:
+        _ = request
+        return Response("ok")
+
+    app = Starlette(
+        routes=[
+            Route("/admin/{identity}/{pk}", detail_endpoint, name="admin:detail"),
+            Route("/admin/{identity}/{pk}/edit", detail_endpoint, name="admin:edit"),
+        ]
+    )
+    app.state.ROUTE_NAME = "admin"
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+            "router": app.router,
+            "app": app,
+        }
+    )
+    request.state.action = RequestAction.API
+
+    s3_view = S3ObjectAdmin(S3Object)
+    run_output_view = RunOutputAdmin(RunOutput)
+    run_output_view._find_foreign_model = lambda identity: s3_view
+
+    object_key = "Anne_test/ranker/Anne_test_final_design_stats.csv"
+    s3_object = S3Object(object_key=object_key, uri=f"s3://bucket/{object_key}")
+    run_output = RunOutput(run_id=uuid4(), s3_object_id=object_key)
+    run_output.s3_object = s3_object
+
+    serialized = await run_output_view.serialize(
+        run_output,
+        request,
+        RequestAction.API,
+        include_relationships=True,
+    )
+
+    detail_url = serialized["s3_object"]["_meta"]["detailUrl"]
+    encoded_pk = detail_url.rsplit("/", 1)[-1]
+
+    assert object_key not in detail_url
+    assert _decode_admin_pk(encoded_pk) == object_key
+
+    row_view_url = s3_view.row_action_1_view(request, object_key)
+    row_edit_url = s3_view.row_action_2_edit(request, object_key)
+
+    assert object_key not in row_view_url
+    assert object_key not in row_edit_url
+    assert _decode_admin_pk(row_view_url.rsplit("/", 1)[-1]) == object_key
+    assert _decode_admin_pk(row_edit_url.removesuffix("/edit").rsplit("/", 1)[-1]) == object_key
 
 
 def test_mount_db_debug_api_endpoints(test_db) -> None:

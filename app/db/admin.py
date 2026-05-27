@@ -10,17 +10,22 @@ import json
 import os
 import secrets
 from time import time
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette_admin import HasMany
 from starlette_admin._types import RequestAction
+from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
-from starlette_admin.fields import StringField
+from starlette_admin.contrib.sqla import Admin, ModelView
+from starlette_admin.fields import HasOne, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..routes.dependencies import get_db
@@ -38,6 +43,142 @@ from .models.core import (
 DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
+
+
+def _encode_admin_pk(value: object) -> str:
+    raw = str(value).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_admin_pk(value: object) -> str:
+    raw = str(value)
+    padding = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(raw + padding).decode("utf-8")
+
+
+class AppUserAdmin(ModelView):
+    fields = [
+        "id",
+        "auth0_user_id",
+        "name",
+        "email",
+    ]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return f"{obj.email}"
+
+
+class WorkflowAdmin(ModelView):
+    fields = ["id", "name", "description", "repo_url", "default_revision"]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return f"{obj.name}"
+
+
+class WorkflowRunAdmin(ModelView):
+    fields = [
+        "id",
+        "workflow_id",
+        "owner_user_id",
+        HasOne("workflow", identity="workflow"),
+        HasOne("owner", identity="app-user"),
+        "seqera_dataset_id",
+        "seqera_run_id",
+        "run_name",
+        "binder_name",
+        "work_dir",
+    ]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return f"{obj.run_name}"
+
+
+class RunMetricAdmin(ModelView):
+    fields = [
+        HasOne("run", identity="workflow-run"),
+        "max_score",
+    ]
+
+
+class UrlSafePrimaryKeyModelView(ModelView):
+    serialize_pk_field_as_raw = False
+
+    async def get_pk_value(self, request: Request, obj: Any) -> str:
+        raw_pk = await super().get_pk_value(request, obj)
+        return _encode_admin_pk(raw_pk)
+
+    async def find_by_pk(self, request: Request, pk: Any) -> Any:
+        return await super().find_by_pk(request, _decode_admin_pk(pk))
+
+    async def find_by_pks(self, request: Request, pks: list[Any]) -> list[Any]:
+        return await super().find_by_pks(request, [_decode_admin_pk(pk) for pk in pks])
+
+    def _row_action_pk(self, pk: Any) -> str:
+        if self.serialize_pk_field_as_raw:
+            return _encode_admin_pk(pk)
+        return str(pk)
+
+    @link_row_action(
+        name="view",
+        text="View",
+        icon_class="fa-solid fa-eye",
+        exclude_from_detail=True,
+    )
+    def row_action_1_view(self, request: Request, pk: Any) -> str:
+        route_name = request.app.state.ROUTE_NAME
+        return str(
+            request.url_for(
+                route_name + ":detail",
+                identity=self.identity,
+                pk=self._row_action_pk(pk),
+            )
+        )
+
+    @link_row_action(
+        name="edit",
+        text="Edit",
+        icon_class="fa-solid fa-edit",
+        action_btn_class="btn-primary",
+    )
+    def row_action_2_edit(self, request: Request, pk: Any) -> str:
+        route_name = request.app.state.ROUTE_NAME
+        return str(
+            request.url_for(
+                route_name + ":edit",
+                identity=self.identity,
+                pk=self._row_action_pk(pk),
+            )
+        )
+
+
+class S3ObjectAdmin(UrlSafePrimaryKeyModelView):
+    serialize_pk_field_as_raw = True
+
+    fields = [
+        "object_key",
+        "uri",
+        HasMany("run_inputs", identity="run-input"),
+        HasMany("run_outputs", identity="run-output"),
+        "version_id",
+        "size_bytes",
+    ]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return str(obj.object_key)
+
+
+class RunInputAdmin(UrlSafePrimaryKeyModelView):
+    fields = [
+        HasOne("run", identity="workflow-run"),
+        HasOne("s3_object", identity="s3-object"),
+    ]
+
+
+class RunOutputAdmin(UrlSafePrimaryKeyModelView):
+    fields = [
+        HasOne("run", identity="workflow-run"),
+        HasOne("s3_object", identity="s3-object"),
+    ]
 
 
 def _is_db_admin_enabled() -> bool:
@@ -255,8 +396,6 @@ def mount_db_admin(app: FastAPI) -> None:
 
 
 def _mount_starlette_admin(app: FastAPI) -> None:
-    from starlette_admin.contrib.sqla import Admin, ModelView
-
     session_cookie_name = _get_admin_session_cookie_name()
     oauth_state_cookie_name = "sbp_admin_oauth_state"
     oauth_verifier_cookie_name = "sbp_admin_oauth_verifier"
@@ -482,71 +621,6 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         ) -> str | None:
             return _mask_email(str(value) if value is not None else None)
 
-    class OwnerEmailField(StringField):
-        async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
-            owner = getattr(obj, "owner", None)
-            if owner is None:
-                return None
-            email = getattr(owner, "email", None)
-            return str(email) if email is not None else None
-
-        async def serialize_value(
-            self, request: StarletteRequest, value: object, action: RequestAction
-        ) -> str | None:
-            return str(value) if value is not None else None
-
-    class AppUserAdmin(ModelView):
-        fields = [
-            "id",
-            "auth0_user_id",
-            "name",
-            "email",
-        ]
-
-    class WorkflowAdmin(ModelView):
-        fields = ["id", "name", "description", "repo_url", "default_revision"]
-
-    class WorkflowRunAdmin(ModelView):
-        fields = [
-            "id",
-            "workflow_id",
-            "owner_user_id",
-            OwnerEmailField(
-                "owner_email",
-                label="Owner Email",
-                read_only=True,
-                exclude_from_create=True,
-                exclude_from_edit=True,
-            ),
-            "seqera_dataset_id",
-            "seqera_run_id",
-            "run_name",
-            "binder_name",
-            "work_dir",
-        ]
-
-    class RunMetricAdmin(ModelView):
-        class RunIdField(StringField):
-            async def parse_obj(self, request: StarletteRequest, obj: object) -> str | None:
-                raw_value = getattr(obj, self.name, None)
-                return str(raw_value) if raw_value is not None else None
-
-            async def serialize_value(
-                self, request: StarletteRequest, value: object, action: RequestAction
-            ) -> str | None:
-                return str(value) if value is not None else None
-
-        fields = [
-            RunIdField(
-                "run_id",
-                label="Run ID",
-                read_only=True,
-                exclude_from_create=True,
-                exclude_from_edit=True,
-            ),
-            "max_score",
-        ]
-
     def _has_column(model: type, column_name: str) -> bool:
         return column_name in model.__table__.columns.keys()
 
@@ -565,6 +639,9 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(WorkflowAdmin(Workflow))
     admin.add_view(WorkflowRunAdmin(WorkflowRun))
     admin.add_view(RunMetricAdmin(RunMetric))
+    admin.add_view(RunInputAdmin(RunInput))
+    admin.add_view(RunOutputAdmin(RunOutput))
+    admin.add_view(S3ObjectAdmin(S3Object))
     admin.mount_to(app)
 
 
