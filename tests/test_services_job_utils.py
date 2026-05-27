@@ -636,7 +636,7 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
     ):
         result = await results_utils.get_result_output_downloads(test_db, run)
 
-    assert [item["category"] for item in result] == ["report", "stats_csv", "pdb"]
+    assert [item.category for item in result] == ["report", "stats_csv", "pdb"]
     mocked_sync.assert_not_awaited()
 
 
