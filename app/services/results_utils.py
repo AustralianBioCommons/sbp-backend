@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from sqlalchemy import select
@@ -19,6 +19,8 @@ from .s3 import (
     generate_presigned_url,
     list_s3_files,
 )
+
+OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot"]
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
 _LOG_TIMESTAMP_PATTERN = re.compile(
@@ -202,7 +204,7 @@ def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
     return keys
 
 
-def _classify_bindcraft_output_key(key: str) -> tuple[str, str] | None:
+def _classify_bindcraft_output_key(key: str) -> tuple[OutputCategory, str] | None:
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
