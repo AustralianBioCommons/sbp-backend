@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from ...schemas.workflows import (
     JobSettingParamsResponse,
-    ResultDownloadItem,
     ResultDownloadsResponse,
     ResultLogsResponse,
     ResultReportResponse,
@@ -128,7 +127,7 @@ async def get_result_downloads(
 
     return ResultDownloadsResponse(
         runId=run_id,
-        downloads=[ResultDownloadItem(**download) for download in downloads],
+        downloads=downloads,
     )
 
 
@@ -154,7 +153,7 @@ async def get_result_snapshots(
 
     return ResultSnapshotsResponse(
         runId=run_id,
-        snapshots=[ResultDownloadItem(**snapshot) for snapshot in snapshots],
+        snapshots=snapshots,
     )
 
 
@@ -180,5 +179,5 @@ async def get_result_report(
 
     return ResultReportResponse(
         runId=run_id,
-        report=ResultDownloadItem(**report) if report is not None else None,
+        report=report
     )
