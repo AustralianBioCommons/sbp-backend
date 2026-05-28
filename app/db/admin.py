@@ -627,7 +627,6 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     if _has_column(WorkflowRun, "sample_id"):
         WorkflowRunAdmin.fields.insert(-1, "sample_id")
 
-
     if _has_column(RunMetric, "final_design_count"):
         RunMetricAdmin.fields.append("final_design_count")
 
