@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.schemas.workflows import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
+    InteractionScreeningDatasetUploadRequest,
     JobListItem,
     JobListResponse,
     LaunchDetails,
@@ -17,6 +18,7 @@ from app.schemas.workflows import (
     ListRunsResponse,
     PipelineStatus,
     RunInfo,
+    SequenceItem,
     UIStatus,
     WorkflowLaunchForm,
     WorkflowLaunchPayload,
@@ -377,3 +379,58 @@ def test_job_list_response_empty():
 
     assert len(response.jobs) == 0
     assert response.total == 0
+
+
+# ============================================================================
+# Tests for SequenceItem and InteractionScreeningDatasetUploadRequest
+# ============================================================================
+
+
+def test_sequence_item_query():
+    item = SequenceItem(id="seq-1", group="query")
+    assert item.id == "seq-1"
+    assert item.group == "query"
+
+
+def test_sequence_item_target():
+    item = SequenceItem(id="seq-2", group="target")
+    assert item.group == "target"
+
+
+def test_sequence_item_invalid_group():
+    with pytest.raises(ValidationError):
+        SequenceItem(id="seq-3", group="invalid")
+
+
+def test_sequence_item_extra_fields_forbidden():
+    with pytest.raises(ValidationError):
+        SequenceItem(id="seq-4", group="query", extra="nope")
+
+
+def test_interaction_screening_request_valid():
+    req = InteractionScreeningDatasetUploadRequest(
+        sequences=[
+            {"id": "q1", "group": "query"},
+            {"id": "t1", "group": "target"},
+        ],
+        runId="run-xyz",
+    )
+    assert len(req.sequences) == 2
+    assert req.runId == "run-xyz"
+    assert req.sequences[0].group == "query"
+    assert req.sequences[1].group == "target"
+
+
+def test_interaction_screening_request_empty_sequences():
+    # Empty sequences list is accepted by the schema; enforcement is in the service layer
+    req = InteractionScreeningDatasetUploadRequest(sequences=[], runId="run-1")
+    assert req.sequences == []
+
+
+def test_interaction_screening_request_extra_fields_forbidden():
+    with pytest.raises(ValidationError):
+        InteractionScreeningDatasetUploadRequest(
+            sequences=[{"id": "q1", "group": "query"}],
+            runId="run-1",
+            extra="bad",
+        )
