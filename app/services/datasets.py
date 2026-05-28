@@ -212,7 +212,7 @@ async def upload_interaction_screening_dataset(
         {
             "id": s["id"],
             "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s['id']}.fasta",
-            "group": "g1" if s["group"] == "target" else "g2",
+            "group": "g1" if s["group"] == "query" else "g2",
             "type": "protein",
         }
         for s in sequences
