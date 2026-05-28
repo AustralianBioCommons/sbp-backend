@@ -95,7 +95,7 @@ async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
 
     logger.info(
         "Creating Seqera dataset",
-        extra={"url": url, "workspaceId": workspace_id, "datasetName": dataset_name},
+        extra={"datasetName": dataset_name},
     )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
@@ -148,7 +148,7 @@ async def upload_dataset_to_seqera(
 
     logger.info(
         "Uploading dataset to Seqera",
-        extra={"datasetId": dataset_id, "workspaceId": workspace_id, "url": url},
+        extra={"datasetId": dataset_id},
     )
 
     files = {
@@ -187,7 +187,7 @@ async def upload_dataset_to_seqera(
     )
 
 
-INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input"
+INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_screening"
 
 
 async def upload_interaction_screening_dataset(
@@ -207,10 +207,11 @@ async def upload_interaction_screening_dataset(
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
+    unique_run_path = build_unique_dataset_name(run_id)
     rows = [
         {
             "id": s["id"],
-            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{run_id}/{s['id']}.fasta",
+            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s['id']}.fasta",
             "group": "g1" if s["group"] == "target" else "g2",
             "type": "protein",
         }
@@ -231,7 +232,7 @@ async def upload_interaction_screening_dataset(
 
     logger.info(
         "Uploading interaction screening samplesheet to Seqera",
-        extra={"datasetId": dataset_id, "workspaceId": workspace_id, "runId": run_id},
+        extra={"datasetId": dataset_id},
     )
 
     files = {
