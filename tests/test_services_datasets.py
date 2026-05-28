@@ -169,7 +169,7 @@ async def test_create_dataset_success():
         )
     )
 
-    result = await create_seqera_dataset(name="test-dataset", description="Test description")
+    result = await create_seqera_dataset(name="test-dataset")
 
     assert isinstance(result, DatasetCreationResult)
     assert result.dataset_id == "dataset_123"

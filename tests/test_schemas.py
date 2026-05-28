@@ -245,13 +245,9 @@ def test_dataset_upload_request_valid():
     """Test creating valid DatasetUploadRequest."""
     request = DatasetUploadRequest(
         formData={"sample": "test", "input": "/path/file"},
-        datasetName="test-dataset",
-        datasetDescription="Test description",
     )
 
     assert request.formData == {"sample": "test", "input": "/path/file"}
-    assert request.datasetName == "test-dataset"
-    assert request.datasetDescription == "Test description"
 
 
 def test_dataset_upload_request_empty_form_data():
@@ -259,7 +255,6 @@ def test_dataset_upload_request_empty_form_data():
     with pytest.raises(ValidationError, match="formData cannot be empty"):
         DatasetUploadRequest(
             formData={},
-            datasetName="test-dataset",
         )
 
 

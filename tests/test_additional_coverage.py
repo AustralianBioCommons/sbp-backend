@@ -34,7 +34,6 @@ async def test_upload_dataset_success(mock_create, mock_upload):
     # Create request
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     # Execute
@@ -67,7 +66,6 @@ async def test_upload_dataset_create_config_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -85,7 +83,6 @@ async def test_upload_dataset_create_service_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -109,7 +106,6 @@ async def test_upload_dataset_upload_value_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -133,7 +129,6 @@ async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -157,7 +152,6 @@ async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
