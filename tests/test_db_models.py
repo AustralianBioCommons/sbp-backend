@@ -117,6 +117,7 @@ def test_workflow_run_model():
     assert "run_name" in column_names
     assert "submitted_form_data" in column_names
     assert "work_dir" in column_names
+    assert "submission_timestamp" in column_names
 
     # Check relationships
     assert hasattr(WorkflowRun, "owner")
