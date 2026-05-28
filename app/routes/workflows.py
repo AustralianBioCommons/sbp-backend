@@ -342,9 +342,7 @@ async def upload_dataset(
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
     try:
-        dataset = await create_seqera_dataset(
-            name=payload.datasetName, description=payload.datasetDescription
-        )
+        dataset = await create_seqera_dataset()
     except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -383,9 +381,7 @@ async def upload_interaction_screening_dataset_endpoint(
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload an interaction screening samplesheet."""
     try:
-        dataset = await create_seqera_dataset(
-            name=payload.datasetName, description=payload.datasetDescription
-        )
+        dataset = await create_seqera_dataset(name=payload.runId)
     except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)

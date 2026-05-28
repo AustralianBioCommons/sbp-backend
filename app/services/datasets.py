@@ -78,19 +78,14 @@ class DatasetUploadResult:
     raw_response: dict[str, Any] | None = None
 
 
-async def create_seqera_dataset(
-    name: str | None = None, description: str | None = None
-) -> DatasetCreationResult:
+async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
     """Create a dataset on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
-    dataset_name = build_unique_dataset_name(name or "dataset")
-    payload = {
-        "name": dataset_name,
-        "description": description or "Dataset for workflow submission",
-    }
+    dataset_name = build_unique_dataset_name(name)
+    payload = {"name": dataset_name}
 
     url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/"
     headers = {

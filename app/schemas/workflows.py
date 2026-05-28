@@ -150,8 +150,6 @@ class DatasetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     formData: dict[str, Any]
-    datasetName: str | None = Field(default=None)
-    datasetDescription: str | None = Field(default=None)
 
     @field_validator("formData")
     @classmethod
@@ -180,8 +178,6 @@ class InteractionScreeningDatasetUploadRequest(BaseModel):
 
     sequences: list[SequenceItem]
     runId: str
-    datasetName: str | None = Field(default=None)
-    datasetDescription: str | None = Field(default=None)
 
 
 class PdbUploadResponse(BaseModel):
