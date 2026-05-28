@@ -36,17 +36,34 @@ def _stringify_field(value: Any) -> str:
 
 
 def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
-    """Convert a record of form data into a single-row CSV string."""
+    """Convert form data into a CSV string.
+
+    If any field value is a list, emits one row per index (multi-row mode).
+    Scalar fields are repeated across all rows in multi-row mode.
+    """
     if not form_data:
         raise ValueError("formData cannot be empty")
 
     headers = list(form_data.keys())
-    row = [_stringify_field(form_data[key]) for key in headers]
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(headers)
-    writer.writerow(row)
+
+    list_values = [v for v in form_data.values() if isinstance(v, list)]
+    if list_values:
+        row_count = len(list_values[0])
+        for i in range(row_count):
+            row = []
+            for key in headers:
+                val = form_data[key]
+                if isinstance(val, list):
+                    row.append(_stringify_field(val[i] if i < len(val) else None))
+                else:
+                    row.append(_stringify_field(val))
+            writer.writerow(row)
+    else:
+        writer.writerow([_stringify_field(form_data[key]) for key in headers])
+
     return output.getvalue()
 
 
@@ -117,20 +134,17 @@ async def create_seqera_dataset(
     return DatasetCreationResult(dataset_id=dataset_id, raw_response=data)
 
 
-async def upload_dataset_to_seqera(
-    dataset_id: str, form_data: dict[str, Any]
-) -> DatasetUploadResult:
-    """Upload CSV-encoded form data to an existing Seqera dataset."""
+async def upload_csv_to_seqera(dataset_id: str, csv_content: str) -> DatasetUploadResult:
+    """Upload a raw CSV string to an existing Seqera dataset."""
     if not dataset_id:
         raise ValueError("dataset_id is required")
-    if not form_data:
-        raise ValueError("formData cannot be empty")
+    if not csv_content:
+        raise ValueError("csv_content is required")
 
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
-    csv_payload = convert_form_data_to_csv(form_data)
     url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
     headers = {
         "Authorization": f"Bearer {seqera_token}",
@@ -138,12 +152,12 @@ async def upload_dataset_to_seqera(
     }
 
     logger.info(
-        "Uploading dataset to Seqera",
+        "Uploading CSV to Seqera dataset",
         extra={"datasetId": dataset_id, "workspaceId": workspace_id, "url": url},
     )
 
     files = {
-        "file": ("samplesheet.csv", csv_payload, "text/csv"),
+        "file": ("samplesheet.csv", csv_content, "text/csv"),
     }
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
@@ -176,3 +190,16 @@ async def upload_dataset_to_seqera(
         message=message,
         raw_response=data,
     )
+
+
+async def upload_dataset_to_seqera(
+    dataset_id: str, form_data: dict[str, Any]
+) -> DatasetUploadResult:
+    """Upload CSV-encoded form data to an existing Seqera dataset."""
+    if not dataset_id:
+        raise ValueError("dataset_id is required")
+    if not form_data:
+        raise ValueError("formData cannot be empty")
+
+    csv_content = convert_form_data_to_csv(form_data)
+    return await upload_csv_to_seqera(dataset_id, csv_content)
