@@ -18,6 +18,7 @@ from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
+    InteractionScreeningDatasetUploadRequest,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
@@ -34,6 +35,7 @@ from ..services.bindflow_executor import (
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
+    upload_interaction_screening_dataset,
 )
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
@@ -350,6 +352,46 @@ async def upload_dataset(
 
     try:
         upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except BindflowConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except BindflowExecutorError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return DatasetUploadResponse(
+        message="Dataset created and uploaded successfully",
+        datasetId=upload_result.dataset_id,
+        success=upload_result.success,
+        details=upload_result.raw_response,
+    )
+
+
+@router.post("/datasets/interaction-screening/upload", response_model=DatasetUploadResponse)
+async def upload_interaction_screening_dataset_endpoint(
+    payload: InteractionScreeningDatasetUploadRequest,
+) -> DatasetUploadResponse:
+    """Create a Seqera dataset and upload an interaction screening samplesheet."""
+    try:
+        dataset = await create_seqera_dataset(
+            name=payload.datasetName, description=payload.datasetDescription
+        )
+    except BindflowConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except BindflowExecutorError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    await asyncio.sleep(2)
+
+    sequences = [{"id": s.id, "group": s.group} for s in payload.sequences]
+    try:
+        upload_result = await upload_interaction_screening_dataset(
+            dataset.dataset_id, sequences, payload.runId
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except BindflowConfigurationError as exc:
