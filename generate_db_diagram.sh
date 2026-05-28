@@ -5,7 +5,7 @@
 set -e
 
 echo "Generating database schema diagram..."
-python generate_schema_diagram.py
+python3 generate_schema_diagram.py
 
 echo "✓ Database schema diagram updated successfully!"
 echo "  Updated file: docs/schema_diagram.svg"
