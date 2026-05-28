@@ -200,6 +200,7 @@ async def launch_workflow(
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
         launch_ip=launch_ip,
+        submission_timestamp=datetime.now(timezone.utc),
     )
 
     db_session.add(workflow_run)

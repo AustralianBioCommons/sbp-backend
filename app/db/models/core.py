@@ -1,8 +1,11 @@
 """Core database models for workflows and run metadata."""
 
+from datetime import datetime
+
 from sqlalchemy import (
     JSON,
     BigInteger,
+    DateTime,
     ForeignKey,
     Numeric,
     PrimaryKeyConstraint,
@@ -58,6 +61,7 @@ class WorkflowRun(Base):
     submitted_form_data: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     work_dir: Mapped[str] = mapped_column(Text, nullable=False)
     launch_ip: Mapped[str | None] = mapped_column(_InetType, nullable=True)
+    submission_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
