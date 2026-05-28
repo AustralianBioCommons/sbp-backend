@@ -185,6 +185,7 @@ async def launch_workflow(
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
+    submission_timestamp = datetime.now(timezone.utc)
 
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
@@ -200,7 +201,7 @@ async def launch_workflow(
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
         launch_ip=launch_ip,
-        submission_timestamp=datetime.now(timezone.utc),
+        submission_timestamp=submission_timestamp,
     )
 
     db_session.add(workflow_run)
@@ -268,7 +269,7 @@ async def launch_workflow(
         message="Workflow launched successfully",
         runId=result.workflow_id,
         status=result.status,
-        submitTime=datetime.now(timezone.utc),
+        submitTime=submission_timestamp,
     )
 
 
