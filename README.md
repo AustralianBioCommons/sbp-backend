@@ -89,6 +89,28 @@ The updated diagram will be saved in `docs/schema_diagram.svg`. Make sure to com
 - Ubuntu/Debian: `apt-get install graphviz`
 - Windows: Download from [graphviz.org](https://graphviz.org/download/)
 
+## Database Migrations
+
+Migrations are managed with Alembic and must be committed manually alongside model changes. The `generate_migrations.py` script spins up a temporary Postgres container, applies existing migrations, and then either generates a new revision or checks that the schema is in sync.
+
+**Prerequisites:** Docker must be running.
+
+```bash
+# Generate a new migration from model changes (most common)
+uv run python generate_migrations.py -m "describe your change here"
+
+# Check that migrations are in sync with the current models (no new revision needed)
+uv run python generate_migrations.py --check
+
+# Create a blank migration (fill in upgrade/downgrade manually)
+uv run python generate_migrations.py -m "describe your change here" --no-autogenerate
+
+# Print the live DB schema after applying migrations
+uv run python generate_migrations.py --check --print-schema
+```
+
+After generating, commit the new file from `alembic/versions/` alongside your model changes.
+
 ## Testing
 
 Run the test suite with coverage:
