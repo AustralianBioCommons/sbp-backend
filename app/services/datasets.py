@@ -7,8 +7,11 @@ import io
 import json
 import logging
 import os
-import time
+import random
+import re
+import string
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -33,6 +36,17 @@ def _stringify_field(value: Any) -> str:
     if isinstance(value, dict):
         return json.dumps(value, separators=(",", ":"))
     return str(value)
+
+
+def build_unique_dataset_name(name: str) -> str:
+    base = name.strip()
+    slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)
+    slug = re.sub(r"-{2,}", "-", slug)
+    slug = slug.strip("-") or "dataset"
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%d-%H%M%S")
+    rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    return f"{slug}_{ts}_{rand}"
 
 
 def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
@@ -72,7 +86,7 @@ async def create_seqera_dataset(
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
-    dataset_name = name or f"dataset-{int(time.time() * 1000)}"
+    dataset_name = build_unique_dataset_name(name or "dataset")
     payload = {
         "name": dataset_name,
         "description": description or "Dataset for workflow submission",

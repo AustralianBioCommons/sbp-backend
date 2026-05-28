@@ -332,7 +332,11 @@ async def get_details(run_id: str) -> LaunchDetails:
     )
 
 
-@router.post("/datasets/upload", response_model=DatasetUploadResponse)
+@router.post(
+    "/datasets/upload",
+    response_model=DatasetUploadResponse,
+    dependencies=[Depends(require_workflow_execution_role)],
+)
 async def upload_dataset(
     payload: DatasetUploadRequest,
 ) -> DatasetUploadResponse:
@@ -369,7 +373,11 @@ async def upload_dataset(
     )
 
 
-@router.post("/datasets/interaction-screening/upload", response_model=DatasetUploadResponse)
+@router.post(
+    "/datasets/interaction-screening/upload",
+    response_model=DatasetUploadResponse,
+    dependencies=[Depends(require_workflow_execution_role)],
+)
 async def upload_interaction_screening_dataset_endpoint(
     payload: InteractionScreeningDatasetUploadRequest,
 ) -> DatasetUploadResponse:
