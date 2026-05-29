@@ -87,6 +87,7 @@ class WorkflowRunAdmin(ModelView):
         "run_name",
         "binder_name",
         "work_dir",
+        "submission_timestamp",
     ]
 
     async def repr(self, obj: Any, request: Request) -> str:
