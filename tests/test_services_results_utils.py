@@ -10,9 +10,10 @@ import pytest
 
 from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
-    _build_bindcraft_output_listing_prefixes,
+    ClassifiedOutput,
+    build_bindcraft_output_listing_prefixes,
     _build_s3_uri,
-    _classify_bindcraft_output_key,
+    classify_bindcraft_output_key,
     format_log_entries,
     get_sample_id_for_result,
     resolve_pdb_presigned_urls,
@@ -94,27 +95,27 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
 def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
-    assert _classify_bindcraft_output_key(" ") is None
-    assert _classify_bindcraft_output_key("folder/") is None
-    assert _classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
-    assert _classify_bindcraft_output_key(f"{run.id}/generate/bindcraft_report.html") == (
+    assert classify_bindcraft_output_key(" ") is None
+    assert classify_bindcraft_output_key("folder/") is None
+    assert classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
+    assert classify_bindcraft_output_key(f"{run.id}/generate/bindcraft_report.html") == ClassifiedOutput(
         "report",
         "bindcraft_report.html",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/bindcraft/sampleZ_0_output/preview.png") == (
+    assert classify_bindcraft_output_key(f"{run.id}/bindcraft/sampleZ_0_output/preview.png") == ClassifiedOutput(
         "snapshot",
         "preview.png",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_ranked/model.pdb") == (
+    assert classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_ranked/model.pdb") == ClassifiedOutput(
         "pdb",
         "model.pdb",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_final_design_stats.csv") == (
+    assert classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_final_design_stats.csv") == ClassifiedOutput(
         "stats_csv",
         "sampleZ_final_design_stats.csv",
     )
 
-    prefixes = _build_bindcraft_output_listing_prefixes(run)
+    prefixes = build_bindcraft_output_listing_prefixes(run)
     assert prefixes == [
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
@@ -122,7 +123,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     ]
 
     run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
-    assert _build_bindcraft_output_listing_prefixes(run_without_sample) == [
+    assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
     ]
