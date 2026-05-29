@@ -457,8 +457,8 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)
 
-    assert [item["category"] for item in result] == ["snapshot", "snapshot"]
-    assert [item["key"] for item in result] == snapshot_keys
+    assert [item.category for item in result] == ["snapshot", "snapshot"]
+    assert [item.key for item in result] == snapshot_keys
     assert mocked_presign.await_count == 2
 
 
@@ -573,9 +573,9 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         result = await results_utils.get_result_report_download(test_db, run)
 
     assert result is not None
-    assert result["category"] == "report"
-    assert result["key"] == report_key
-    assert result["url"] == f"https://signed.example/{report_key}"
+    assert result.category == "report"
+    assert result.key == report_key
+    assert result.url == f"https://signed.example/{report_key}"
     mocked_presign.assert_awaited_once_with(
         report_key,
         response_content_type="text/html",
@@ -606,7 +606,7 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
         result = await results_utils.get_result_report_download(test_db, run)
 
     assert result is not None
-    assert result["key"] == report_key
+    assert result.key == report_key
     mocked_sync.assert_not_awaited()
 
 
@@ -688,8 +688,8 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
         result = await results_utils.get_result_report_download(test_db, run)
 
     assert result is not None
-    assert result["key"] == report_key
-    assert result["category"] == "report"
+    assert result.key == report_key
+    assert result.category == "report"
 
 
 @pytest.mark.asyncio
@@ -722,8 +722,8 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         result = await results_utils.get_result_report_download(test_db, run)
 
     assert result is not None
-    assert result["key"] == report_key
-    assert result["category"] == "report"
+    assert result.key == report_key
+    assert result.category == "report"
 
 
 @pytest.mark.asyncio
@@ -755,5 +755,5 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)
 
-    assert [item["key"] for item in result] == [snapshot_key]
-    assert [item["category"] for item in result] == ["snapshot"]
+    assert [item.key for item in result] == [snapshot_key]
+    assert [item.category for item in result] == ["snapshot"]

@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, WorkflowRun
+from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from app.routes.workflow.results import (
     get_result_downloads,
     get_result_logs,
@@ -343,9 +343,15 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         name="Results User 5",
         email="results5@example.com",
     )
+    workflow = Workflow(
+        id=uuid4(),
+        name="de-novo"
+    )
     run = WorkflowRun(
         id=uuid4(),
         owner_user_id=user.id,
+        workflow_id=workflow.id,
+        submitted_form_data={"mode": "bindcraft"},
         seqera_run_id="wf-downloads-1",
         sample_id="demo2",
         work_dir="/tmp/wf-downloads-1",
@@ -368,7 +374,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
             uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
         ),
     ]
-    test_db.add_all([user, run, *outputs])
+    test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
     test_db.commit()
