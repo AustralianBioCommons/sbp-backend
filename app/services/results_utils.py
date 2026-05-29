@@ -226,7 +226,25 @@ def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
     return keys
 
 
-def _classify_bindcraft_output_key(key: str) -> tuple[OutputCategory, str] | None:
+def get_tool_name(run: WorkflowRun) -> str | None:
+    form_data = getattr(run, "submitted_form_data", None)
+    if not isinstance(form_data, dict):
+        return None
+
+    return form_data.get("mode")
+
+
+def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
+    workflow_name = run.workflow.name
+    tool_name = get_tool_name(run)
+
+    spec = WORKFLOW_OUTPUT_SPECS.get(workflow_name, {}).get(tool_name)
+    if spec is not None:
+        return spec
+    raise ValueError(f"Couldn't find a matching output spec: workflow={workflow_name!r}, tool={tool_name!r}")
+
+
+def classify_bindcraft_output_key(key: str) -> ClassifiedOutput | None:
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
@@ -235,14 +253,98 @@ def _classify_bindcraft_output_key(key: str) -> tuple[OutputCategory, str] | Non
     lowered = normalized.lower()
 
     if basename.endswith("_final_design_stats.csv"):
-        return ("stats_csv", basename)
+        return ClassifiedOutput(category="stats_csv", label=basename)
     if "/generate/" in lowered and basename.lower().endswith(".html"):
-        return ("report", basename)
+        return ClassifiedOutput(category="report", label=basename)
     if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
-        return ("snapshot", basename)
+        return ClassifiedOutput(category="snapshot", label=basename)
     if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
-        return ("pdb", basename)
+        return ClassifiedOutput(category="pdb", label=basename)
     return None
+
+
+def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+
+    # Always include run-UUID-only prefixes; these do not depend on sample_id.
+    prefixes: list[str] = [
+        f"{run_uuid}/ranker/",
+        f"{run_uuid}/generate/",
+    ]
+
+    # Append bindcraft sample-specific prefixes only when a sample_id is available.
+    sample_id = get_sample_id_for_result(run)
+    if sample_id:
+        prefixes.extend(
+            [
+                f"{run_uuid}/bindcraft/{sample_id}_0_output/",
+            ]
+        )
+
+    return prefixes
+
+WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec]] = {
+    "de-novo": {
+        "bindcraft": WorkflowResultsSpec(
+            kind="de-novo",
+            tool="bindcraft",
+            required_categories={"report", "stats_csv", "pdb"},
+            get_prefixes=build_bindcraft_output_listing_prefixes,
+            classify=classify_bindcraft_output_key,
+        ),
+    },
+    # "proteinfold": {
+    #     "colabfold": WorkflowOutputSpec(
+    #     kind="proteinfold",
+    #     tool="colabfold",
+    #     required_download_categories=frozenset({"report", "pdb", "stats_tsv"}),
+    #     listing_prefixes=build_proteinfold_output_listing_prefixes,
+    #     classify_key=classify_proteinfold_output_key,
+    # ),
+}
+
+def collect_outputs(db: Session, run: WorkflowRun, spec: WorkflowResultsSpec) -> dict[str, ClassifiedOutput]:
+    """
+    Return output keys and their categories for a given workflow run.
+    """
+    outputs = {}
+    for key in _get_run_output_keys(db, run):
+        classified = spec.classify(key)
+        if classified is not None:
+            outputs[key] = classified
+    return outputs
+
+def missing_required_categories(
+    outputs: dict[str, ClassifiedOutput],
+    spec: WorkflowResultsSpec,
+) -> set[OutputCategory]:
+    found = {output.category for output in outputs.values()}
+    return set(spec.required_categories) - found
+
+def collect_classified_outputs(
+    db: Session,
+    run: WorkflowRun,
+    spec: WorkflowResultsSpec,
+) -> dict[str, ClassifiedOutput]:
+    outputs = {}
+    for key in _get_run_output_keys(db, run):
+        classified = spec.classify(key)
+        if classified:
+            outputs[key] = classified
+    return outputs
+
+
+def _filter_outputs_by_category(
+    outputs: dict[str, ClassifiedOutput],
+    category: OutputCategory,
+) -> dict[str, ClassifiedOutput]:
+    return {
+        key: output
+        for key, output in outputs.items()
+        if output.category == category
+    }
 
 
 def _get_bindcraft_outputs(db: Session, run: WorkflowRun, current_outputs=None) -> dict[str, tuple[OutputCategory, str]]:
@@ -255,7 +357,7 @@ def _get_bindcraft_outputs(db: Session, run: WorkflowRun, current_outputs=None) 
         outputs = current_outputs
     keys = _get_run_output_keys(db, run)
     for key in keys:
-        classified = _classify_bindcraft_output_key(key)
+        classified = classify_bindcraft_output_key(key)
         if classified and key not in outputs:
             outputs[key] = classified
     return outputs
@@ -275,13 +377,13 @@ def _get_bindcraft_report_outputs(db: Session, run: WorkflowRun) -> list[str]:
     report_keys = []
     keys = _get_run_output_keys(db, run)
     for key in keys:
-        classified = _classify_bindcraft_output_key(key)
+        classified = classify_bindcraft_output_key(key)
         if classified and classified[0] == "report":
             report_keys.append(key)
     return report_keys
 
 
-def _build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
         return []
@@ -336,10 +438,71 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
         db.commit()
 
 
+async def list_workflow_outputs_from_s3(
+    run: WorkflowRun,
+    spec: WorkflowResultsSpec,
+    *,
+    suppress_s3_errors: bool = True,
+) -> dict[str, ClassifiedOutput]:
+    """Discover workflow result artifacts in S3"""
+    outputs: dict[str, ClassifiedOutput] = {}
+
+    for prefix in spec.get_prefixes(run):
+        try:
+            files = await list_s3_files(prefix=prefix)
+        except (S3ConfigurationError, S3ServiceError) as exc:
+            if suppress_s3_errors:
+                logger.warning(
+                    "Failed to list workflow outputs from S3",
+                    extra={
+                        "runId": str(run.id),
+                        "seqeraRunId": run.seqera_run_id,
+                        "workflowKind": spec.kind,
+                        "workflowTool": spec.tool,
+                        "prefix": prefix,
+                        "error": str(exc),
+                    },
+                )
+                continue
+            raise
+
+        for item in files:
+            key = str(item.get("key", "")).strip()
+            if not key or key in outputs:
+                continue
+
+            classified = spec.classify(key)
+            if classified is not None:
+                outputs[key] = classified
+
+    return outputs
+
+
+async def sync_workflow_outputs(
+    db: Session,
+    run: WorkflowRun,
+    spec: WorkflowResultsSpec,
+    *,
+    suppress_s3_errors: bool = True,
+) -> list[str]:
+    outputs = await list_workflow_outputs_from_s3(
+        run,
+        spec,
+        suppress_s3_errors=suppress_s3_errors,
+    )
+
+    keys = list(outputs)
+    if keys:
+        _sync_run_output_records(db, run, keys)
+
+    return keys
+
+
+
 async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
     """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
     discovered: list[str] = []
-    for prefix in _build_bindcraft_output_listing_prefixes(run):
+    for prefix in build_bindcraft_output_listing_prefixes(run):
         try:
             files = await list_s3_files(prefix=prefix)
         except (S3ConfigurationError, S3ServiceError) as exc:
@@ -357,7 +520,7 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
             key = str(item.get("key", "")).strip()
             if not key or key in discovered:
                 continue
-            if _classify_bindcraft_output_key(key):
+            if classify_bindcraft_output_key(key):
                 discovered.append(key)
 
     if discovered:
@@ -365,51 +528,46 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
 
     return discovered
 
+def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
+    """Sort output items by category, label, and key"""
+    category_order = {"report": 0, "stats_csv": 1, "pdb": 2, "alignment": 3}
+    key, output = item
+    return (
+        category_order.get(output.category, 99),
+        output.label.lower(),
+        key
+    )
+
 
 async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
     """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
-    outputs = _get_bindcraft_outputs(db, run)
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
 
-    found_categories = {category for category, _label in outputs.values()}
-    missing_categories = {"stats_csv", "pdb", "report"} - found_categories
+    if missing_required_categories(outputs, results_spec):
+        await sync_workflow_outputs(db, run, results_spec)
+        outputs = collect_classified_outputs(db, run, results_spec)
 
-    if missing_categories:
-        await sync_bindcraft_outputs(db, run)
-        _get_bindcraft_outputs(db, run, current_outputs=outputs)
-        found_categories = {category for category, _label in outputs.values()}
-        missing_categories = {"stats_csv", "pdb", "report"} - found_categories
+    if missing_required_categories(outputs, results_spec):
+        discovered = await list_workflow_outputs_from_s3(
+            run,
+            results_spec,
+            suppress_s3_errors=False,
+        )
+        outputs.update(discovered)
 
-    if missing_categories:
-        for prefix in _build_bindcraft_output_listing_prefixes(run):
-            files = await list_s3_files(prefix=prefix)
-            for item in files:
-                key = str(item.get("key", "")).strip()
-                if not key or key in outputs:
-                    continue
-                classified = _classify_bindcraft_output_key(key)
-                if classified:
-                    outputs[key] = classified
-
-    category_order = {"report": 0, "stats_csv": 1, "pdb": 2}
     downloads = []
 
-    def _get_output_sort_key(item: tuple[str, tuple[OutputCategory, str]]):
-        key, (category, label) = item
-        return (
-            category_order.get(category, 99),
-            label.lower(),
-            key
-        )
-
-    for key, (category, label) in sorted( outputs.items(), key=_get_output_sort_key):
-        if category == "snapshot":
+    # Sort and filter outputs
+    for key, output in sorted( outputs.items(), key=_get_output_sort_key):
+        if output.category == "snapshot":
             continue
         downloads.append(
             ResultDownloadItem(
-                label=label,
+                label=output.label,
                 key=key,
                 url=await generate_presigned_url(key),
-                category=category,
+                category=output.category,
             )
         )
 
@@ -418,66 +576,69 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
 
 async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDownloadItem | None:
     """Return a single pre-signed HTML report link for the result view."""
-    report_keys = set(_get_bindcrafts_outputs_by_category(db, run, category="report"))
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+    report_outputs = _filter_outputs_by_category(outputs, "report")
 
-    if not report_keys:
-        await sync_bindcraft_outputs(db, run)
-        report_keys.update(_get_bindcrafts_outputs_by_category(db, run, category="report"))
+    if not report_outputs:
+        await sync_workflow_outputs(db, run, results_spec)
+        outputs = collect_classified_outputs(db, run, results_spec)
+        report_outputs = _filter_outputs_by_category(outputs, "report")
 
-    if not report_keys:
-        for prefix in _build_bindcraft_output_listing_prefixes(run):
-            files = await list_s3_files(prefix=prefix)
-            for item in files:
-                key = str(item.get("key", "")).strip()
-                if not key or key in report_keys:
-                    continue
-                classified = _classify_bindcraft_output_key(key)
-                if classified and classified[0] == "report":
-                    report_keys.add(key)
+    if not report_outputs:
+        discovered = await list_workflow_outputs_from_s3(
+            run,
+            results_spec,
+            suppress_s3_errors=False,
+        )
+        outputs.update(discovered)
+        report_outputs = _filter_outputs_by_category(outputs, "report")
 
-    if not report_keys:
+    if not report_outputs:
         return None
 
-    report_key = sorted(report_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key))[0]
-    label = report_key.rsplit("/", 1)[-1]
+    # TODO: there should only be one report output, not sure if we need to sort
+    report_key, report_output = sorted(report_outputs.items(), key=_get_output_sort_key)[0]
     return ResultDownloadItem(
-        label=label,
+        label=report_output.label,
         key=report_key,
         url=await generate_presigned_url(
             report_key,
             response_content_type="text/html",
             response_content_disposition="inline",
         ),
-        category="report",
+        category=report_output.category,
     )
 
 
 async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
     """Return pre-signed snapshot image links for the result view."""
-    await sync_bindcraft_outputs(db, run)
-    snapshot_keys = _get_bindcrafts_outputs_by_category(db, run, category="snapshot")
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+    snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
-    if not snapshot_keys:
-        for prefix in _build_bindcraft_output_listing_prefixes(run):
-            files = await list_s3_files(prefix=prefix)
-            for item in files:
-                key = str(item.get("key", "")).strip()
-                if not key or key in snapshot_keys:
-                    continue
-                classified = _classify_bindcraft_output_key(key)
-                if classified and classified[0] == "snapshot":
-                    snapshot_keys.append(key)
+    if not snapshot_outputs:
+        await sync_workflow_outputs(db, run, results_spec)
+        outputs = collect_classified_outputs(db, run, results_spec)
+        snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
+
+    if not snapshot_outputs:
+        discovered = await list_workflow_outputs_from_s3(
+            run,
+            results_spec,
+            suppress_s3_errors=False,
+        )
+        outputs.update(discovered)
+        snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
     downloads = []
-    for snapshot_key in sorted(
-        snapshot_keys, key=lambda key: (key.rsplit("/", 1)[-1].lower(), key)
-    ):
+    for snapshot_key, snapshot_output in sorted(snapshot_outputs.items(), key=_get_output_sort_key):
         downloads.append(
             ResultDownloadItem(
-                label=snapshot_key.rsplit("/", 1)[-1],
+                label=snapshot_output.label,
                 key=snapshot_key,
                 url=await generate_presigned_url(snapshot_key),
-                category="snapshot",
+                category=snapshot_output.category,
             )
         )
     return downloads
