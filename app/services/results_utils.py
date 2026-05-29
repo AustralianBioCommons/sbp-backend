@@ -597,8 +597,9 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDow
     if not report_outputs:
         return None
 
-    # TODO: there should only be one report output, not sure if we need to sort
-    report_key, report_output = sorted(report_outputs.items(), key=_get_output_sort_key)[0]
+    if len(report_outputs) > 1:
+        raise ValueError(f"Multiple report outputs found for run {run.id!r}: {report_outputs.keys()}")
+    report_key, report_output = report_outputs.popitem()
     return ResultDownloadItem(
         label=report_output.label,
         key=report_key,
