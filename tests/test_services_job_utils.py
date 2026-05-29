@@ -41,6 +41,11 @@ class _DB:
         self.committed = True
 
 
+def _configure_bindcraft_run(run: WorkflowRun) -> None:
+    run.workflow = Workflow(id=uuid4(), name="de-novo")
+    run.submitted_form_data = {"mode": "bindcraft"}
+
+
 def test_coerce_and_extract_helpers():
     payload = {"workflow": {"status": "RUNNING"}}
     assert job_utils.coerce_workflow_payload(payload) == payload["workflow"]
@@ -438,6 +443,7 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
         sample_id="sampleB",
         work_dir="workdir-snapshot-download-1",
     )
+    _configure_bindcraft_run(run)
     snapshot_keys = [
         f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview.png",
         f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview_2.png",
@@ -478,6 +484,7 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
         sample_id="sampleC",
         work_dir="workdir-snapshot-download-2",
     )
+    _configure_bindcraft_run(run)
     test_db.add_all([user, run])
     test_db.commit()
 
@@ -509,8 +516,8 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)
 
-    assert [item["key"] for item in result] == [snapshot_key]
-    assert [item["category"] for item in result] == ["snapshot"]
+    assert [item.key for item in result] == [snapshot_key]
+    assert [item.category for item in result] == ["snapshot"]
 
 
 @pytest.mark.asyncio
@@ -529,6 +536,7 @@ async def test_get_result_snapshot_downloads_returns_empty_when_missing(test_db)
         sample_id="sampleD",
         work_dir="workdir-snapshot-download-3",
     )
+    _configure_bindcraft_run(run)
     test_db.add_all([user, run])
     test_db.commit()
 
@@ -554,6 +562,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         sample_id="sampleE",
         work_dir="workdir-report-download-1",
     )
+    _configure_bindcraft_run(run)
     report_key = f"{run_id}/generate/sampleE_report.html"
     report = S3Object(
         object_key=report_key,
@@ -592,6 +601,7 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
         sample_id="sampleFast",
         work_dir="workdir-report-fast-path-1",
     )
+    _configure_bindcraft_run(run)
     report_key = f"{run.id}/generate/sampleFast_report.html"
 
     with (
@@ -619,6 +629,7 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
         sample_id="sampleTracked",
         work_dir="workdir-output-fast-path-1",
     )
+    _configure_bindcraft_run(run)
     tracked_keys = [
         f"{run.id}/generate/sampleTracked_report.html",
         f"{run.id}/ranker/sampleTracked_final_design_stats.csv",
@@ -656,6 +667,7 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
         sample_id="sampleF",
         work_dir="workdir-report-download-2",
     )
+    _configure_bindcraft_run(run)
     test_db.add_all([user, run])
     test_db.commit()
 
@@ -701,6 +713,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         sample_id="sampleG",
         work_dir="workdir-report-fallback-1",
     )
+    _configure_bindcraft_run(run)
     report_key = f"{run.id}/generate/sampleG_report.html"
 
     with (
@@ -735,6 +748,7 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
         sample_id="sampleH",
         work_dir="workdir-snapshot-fallback-1",
     )
+    _configure_bindcraft_run(run)
     snapshot_key = f"{run.id}/bindcraft/sampleH_0_output/sampleH_preview.png"
 
     with (
