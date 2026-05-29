@@ -1,4 +1,5 @@
 """Core database models for workflows and run metadata."""
+from uuid import uuid4
 
 from datetime import datetime
 
@@ -23,7 +24,7 @@ _InetType = Text().with_variant(INET(), "postgresql")
 class AppUser(Base):
     __tablename__ = "app_users"
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -34,7 +35,7 @@ class AppUser(Base):
 class Workflow(Base):
     __tablename__ = "workflows"
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     repo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -51,7 +52,7 @@ class WorkflowRun(Base):
         UniqueConstraint("work_dir"),
     )
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     workflow_id: Mapped[UUID | None] = mapped_column(ForeignKey("workflows.id"))
     owner_user_id: Mapped[UUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
     seqera_dataset_id: Mapped[str | None] = mapped_column(Text, nullable=True)
