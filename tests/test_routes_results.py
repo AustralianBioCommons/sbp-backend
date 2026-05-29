@@ -20,6 +20,11 @@ from app.services.s3 import S3ConfigurationError, S3ServiceError
 from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 
+def _configure_bindcraft_run(run: WorkflowRun) -> None:
+    run.workflow = Workflow(name="de-novo")
+    run.submitted_form_data = {"mode": "bindcraft"}
+
+
 @pytest.mark.asyncio
 async def test_get_result_setting_params_uses_stored_form_data(test_db):
     user = AppUser(
@@ -487,9 +492,12 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
         name="Results User Snapshots 1",
         email="results-snapshots1@example.com",
     )
+    workflow = Workflow(name="de-novo")
     run = WorkflowRun(
         id=uuid4(),
+        workflow=workflow,
         owner_user_id=user.id,
+        submitted_form_data={"mode": "bindcraft"},
         seqera_run_id="wf-snapshots-1",
         sample_id="demo2",
         work_dir="/tmp/wf-snapshots-1",
@@ -504,7 +512,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
             uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview_2.png",
         ),
     ]
-    test_db.add_all([user, run, *outputs])
+    test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
     test_db.commit()
@@ -614,6 +622,7 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         sample_id="demo2",
         work_dir="/tmp/wf-report-1",
     )
+    _configure_bindcraft_run(run)
     report_key = f"{run.id}/generate/PDL1_l100_s975117.html"
     report = S3Object(
         object_key=report_key,
@@ -663,6 +672,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
         sample_id="s1",
         work_dir="/tmp/wf-report-3",
     )
+    _configure_bindcraft_run(run)
     test_db.add_all([user, run])
     test_db.commit()
 
