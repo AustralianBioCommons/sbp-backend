@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -20,7 +22,27 @@ from .s3 import (
     list_s3_files,
 )
 
-OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot"]
+WorkflowKind = Literal["de-novo", "proteinfold"]
+WorkflowTool = Literal["bindcraft", "boltz", "colabfold", "alphafold2"]
+OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
+
+@dataclass(frozen=True)
+class ClassifiedOutput:
+    category: OutputCategory
+    label: str
+
+
+@dataclass(frozen=True)
+class WorkflowResultsSpec:
+    """
+    Defines the output categories for a workflow, along
+    with functions to classify outputs into these categories
+    """
+    kind: WorkflowKind
+    tool: WorkflowTool
+    required_categories: set[OutputCategory]
+    get_prefixes: Callable[[WorkflowRun], list[str]]
+    classify: Callable[[str], ClassifiedOutput | None]
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
 _LOG_TIMESTAMP_PATTERN = re.compile(
