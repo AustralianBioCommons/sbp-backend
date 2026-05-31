@@ -50,7 +50,7 @@ from .dependencies import (
     require_workflow_execution_role,
 )
 
-router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
+router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id), Depends(require_workflow_execution_role)])
 
 
 def build_unique_run_name(job_name: str) -> str:
@@ -123,7 +123,6 @@ async def sync_current_user(
     "/launch",
     response_model=WorkflowLaunchResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_workflow_execution_role)],
 )
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
@@ -335,14 +334,13 @@ async def get_details(run_id: str) -> LaunchDetails:
 @router.post(
     "/datasets/upload",
     response_model=DatasetUploadResponse,
-    dependencies=[Depends(require_workflow_execution_role)],
 )
 async def upload_dataset(
     payload: DatasetUploadRequest,
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
     try:
-        dataset = await create_seqera_dataset()
+        dataset = await create_seqera_dataset(name="dataset")
     except BindflowConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -374,7 +372,6 @@ async def upload_dataset(
 @router.post(
     "/datasets/interaction-screening/upload",
     response_model=DatasetUploadResponse,
-    dependencies=[Depends(require_workflow_execution_role)],
 )
 async def upload_interaction_screening_dataset_endpoint(
     payload: InteractionScreeningDatasetUploadRequest,
@@ -391,10 +388,9 @@ async def upload_interaction_screening_dataset_endpoint(
 
     await asyncio.sleep(2)
 
-    sequences = [{"id": s.id, "group": s.group} for s in payload.sequences]
     try:
         upload_result = await upload_interaction_screening_dataset(
-            dataset.dataset_id, sequences, payload.runId
+            dataset.dataset_id, payload.sequences, payload.runId
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

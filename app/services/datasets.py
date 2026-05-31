@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
+from ..schemas.workflows import SequenceItem
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def _stringify_field(value: Any) -> str:
 
 
 def build_unique_dataset_name(name: str) -> str:
+    """Build a unique dataset name. E.g. 'my-run' -> 'my-run_20240101-120000_ab3x'"""
     base = name.strip()
     slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)
     slug = re.sub(r"-{2,}", "-", slug)
@@ -57,11 +59,11 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
     headers = list(form_data.keys())
     row = [_stringify_field(form_data[key]) for key in headers]
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(headers)
-    writer.writerow(row)
-    return output.getvalue()
+    with io.StringIO() as output:
+        writer = csv.writer(output)
+        writer.writerow(headers)
+        writer.writerow(row)
+        return output.getvalue()
 
 
 @dataclass
@@ -192,7 +194,7 @@ INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_sc
 
 async def upload_interaction_screening_dataset(
     dataset_id: str,
-    sequences: list[dict[str, str]],
+    sequences: list[SequenceItem],
     run_id: str,
 ) -> DatasetUploadResult:
     """Build and upload an interaction screening samplesheet to a Seqera dataset."""
@@ -210,19 +212,19 @@ async def upload_interaction_screening_dataset(
     unique_run_path = build_unique_dataset_name(run_id)
     rows = [
         {
-            "id": s["id"],
-            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s['id']}.fasta",
-            "group": "g1" if s["group"] == "query" else "g2",
+            "id": s.id,
+            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s.id}.fasta",
+            "group": "g1" if s.group == "query" else "g2",
             "type": "protein",
         }
         for s in sequences
     ]
 
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=["id", "sequence", "group", "type"])
-    writer.writeheader()
-    writer.writerows(rows)
-    csv_content = output.getvalue()
+    with io.StringIO() as output:
+        writer = csv.DictWriter(output, fieldnames=["id", "sequence", "group", "type"])
+        writer.writeheader()
+        writer.writerows(rows)
+        csv_content = output.getvalue()
 
     url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
     headers = {
