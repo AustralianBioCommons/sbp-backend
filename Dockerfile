@@ -27,4 +27,4 @@ COPY scripts ./scripts
 
 EXPOSE 3000
 
-CMD ["uv", "run", "--no-sync", "python", "scripts/bootstrap.py"]
+CMD ["uv", "run", "--no-sync", "python", "scripts/bootstrap.py", "serve"]

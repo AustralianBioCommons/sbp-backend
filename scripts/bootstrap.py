@@ -73,14 +73,36 @@ def start_server() -> None:
     )
 
 
-def main() -> None:
+def migrate() -> None:
+    """Run migrations then exit — used by the migration ECS task."""
     _configure_logging()
     try:
         wait_for_database()
         run_migrations()
+    except Exception:
+        LOG.exception("Fatal error during migrate")
+        sys.exit(1)
+
+
+def serve() -> None:
+    """Start the API server — migrations are assumed to have already run."""
+    _configure_logging()
+    try:
+        wait_for_database()
         start_server()
     except Exception:
-        LOG.exception("Fatal error during bootstrap")
+        LOG.exception("Fatal error during serve")
+        sys.exit(1)
+
+
+def main() -> None:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "serve"
+    if mode == "migrate":
+        migrate()
+    elif mode == "serve":
+        serve()
+    else:
+        print(f"Unknown mode: {mode!r}. Use 'migrate' or 'serve'.", file=sys.stderr)
         sys.exit(1)
 
 
