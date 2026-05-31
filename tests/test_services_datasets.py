@@ -337,7 +337,9 @@ async def test_upload_with_complex_data():
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_dataset_id():
     with pytest.raises(ValueError, match="dataset_id is required"):
-        await upload_interaction_screening_dataset("", [SequenceItem(id="s1", group="query")], "run-1")
+        await upload_interaction_screening_dataset(
+            "", [SequenceItem(id="s1", group="query")], "run-1"
+        )
 
 
 @pytest.mark.asyncio
@@ -349,7 +351,9 @@ async def test_upload_interaction_screening_empty_sequences():
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_run_id():
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_interaction_screening_dataset("ds-1", [SequenceItem(id="s1", group="query")], "")
+        await upload_interaction_screening_dataset(
+            "ds-1", [SequenceItem(id="s1", group="query")], ""
+        )
 
 
 @pytest.mark.asyncio
