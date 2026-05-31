@@ -50,7 +50,10 @@ from .dependencies import (
     require_workflow_execution_role,
 )
 
-router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id), Depends(require_workflow_execution_role)])
+router = APIRouter(
+    tags=["workflows"],
+    dependencies=[Depends(get_current_user_id), Depends(require_workflow_execution_role)],
+)
 
 
 def build_unique_run_name(job_name: str) -> str:

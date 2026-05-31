@@ -16,8 +16,8 @@ from typing import Any
 
 import httpx
 
-from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 from ..schemas.workflows import SequenceItem
+from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 
 logger = logging.getLogger(__name__)
 
