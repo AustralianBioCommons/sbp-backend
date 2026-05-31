@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 
+from app.schemas.workflows import SequenceItem
 from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 from app.services.datasets import (
     DatasetCreationResult,
@@ -336,7 +337,7 @@ async def test_upload_with_complex_data():
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_dataset_id():
     with pytest.raises(ValueError, match="dataset_id is required"):
-        await upload_interaction_screening_dataset("", [{"id": "s1", "group": "query"}], "run-1")
+        await upload_interaction_screening_dataset("", [SequenceItem(id="s1", group="query")], "run-1")
 
 
 @pytest.mark.asyncio
@@ -348,7 +349,7 @@ async def test_upload_interaction_screening_empty_sequences():
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_run_id():
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_interaction_screening_dataset("ds-1", [{"id": "s1", "group": "query"}], "")
+        await upload_interaction_screening_dataset("ds-1", [SequenceItem(id="s1", group="query")], "")
 
 
 @pytest.mark.asyncio
@@ -366,8 +367,8 @@ async def test_upload_interaction_screening_success():
     )
 
     sequences = [
-        {"id": "seq_A", "group": "query"},
-        {"id": "seq_B", "group": "target"},
+        SequenceItem(id="seq_A", group="query"),
+        SequenceItem(id="seq_B", group="target"),
     ]
 
     result = await upload_interaction_screening_dataset("ds-screening-1", sequences, "run-abc")
@@ -387,8 +388,8 @@ async def test_upload_interaction_screening_csv_format():
     )
 
     sequences = [
-        {"id": "q1", "group": "query"},
-        {"id": "t1", "group": "target"},
+        SequenceItem(id="q1", group="query"),
+        SequenceItem(id="t1", group="target"),
     ]
 
     await upload_interaction_screening_dataset("ds-1", sequences, "my-run")
@@ -410,7 +411,7 @@ async def test_upload_interaction_screening_api_error():
         return_value=httpx.Response(500, text="Internal error")
     )
 
-    sequences = [{"id": "s1", "group": "query"}]
+    sequences = [SequenceItem(id="s1", group="query")]
 
     with pytest.raises(BindflowExecutorError, match="500"):
         await upload_interaction_screening_dataset("ds-1", sequences, "run-1")
@@ -424,7 +425,7 @@ async def test_upload_interaction_screening_fallback_dataset_id():
         return_value=httpx.Response(200, json={"message": "ok"})
     )
 
-    sequences = [{"id": "s1", "group": "query"}]
+    sequences = [SequenceItem(id="s1", group="query")]
     result = await upload_interaction_screening_dataset("fallback-ds", sequences, "run-1")
 
     assert result.dataset_id == "fallback-ds"
