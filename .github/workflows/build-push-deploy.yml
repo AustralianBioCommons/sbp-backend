@@ -11,9 +11,9 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-2
-  ECR_REPOSITORY: sbp-backend-dev
+  ECR_REPOSITORY: sbp-backend
   DEPLOY_LAMBDA_NAME: SbpBackendDevReleaseDeployer
-  IMAGE_TAG: latest
+  IMAGE_TAG: dev
 
 jobs:
   build-push-deploy:
