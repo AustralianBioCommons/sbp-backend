@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 
+from app.schemas.workflows import SequenceItem
 from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 from app.services.datasets import (
     DatasetCreationResult,
@@ -17,6 +18,7 @@ from app.services.datasets import (
     convert_form_data_to_csv,
     create_seqera_dataset,
     upload_dataset_to_seqera,
+    upload_interaction_screening_dataset,
 )
 
 
@@ -169,7 +171,7 @@ async def test_create_dataset_success():
         )
     )
 
-    result = await create_seqera_dataset(name="test-dataset", description="Test description")
+    result = await create_seqera_dataset(name="test-dataset")
 
     assert isinstance(result, DatasetCreationResult)
     assert result.dataset_id == "dataset_123"
@@ -325,3 +327,109 @@ async def test_upload_with_complex_data():
     result = await upload_dataset_to_seqera("dataset_123", form_data)
 
     assert result.success is True
+
+
+# ============================================================================
+# Tests for upload_interaction_screening_dataset
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_upload_interaction_screening_empty_dataset_id():
+    with pytest.raises(ValueError, match="dataset_id is required"):
+        await upload_interaction_screening_dataset(
+            "", [SequenceItem(id="s1", group="query")], "run-1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_upload_interaction_screening_empty_sequences():
+    with pytest.raises(ValueError, match="sequences cannot be empty"):
+        await upload_interaction_screening_dataset("ds-1", [], "run-1")
+
+
+@pytest.mark.asyncio
+async def test_upload_interaction_screening_empty_run_id():
+    with pytest.raises(ValueError, match="run_id is required"):
+        await upload_interaction_screening_dataset(
+            "ds-1", [SequenceItem(id="s1", group="query")], ""
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_interaction_screening_success():
+    """Test successful interaction screening dataset upload."""
+    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "version": {"datasetId": "ds-screening-1"},
+                "message": "Upload successful",
+            },
+        )
+    )
+
+    sequences = [
+        SequenceItem(id="seq_A", group="query"),
+        SequenceItem(id="seq_B", group="target"),
+    ]
+
+    result = await upload_interaction_screening_dataset("ds-screening-1", sequences, "run-abc")
+
+    assert isinstance(result, DatasetUploadResult)
+    assert result.success is True
+    assert result.dataset_id == "ds-screening-1"
+    assert route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_interaction_screening_csv_format():
+    """Verify query maps to g1 and target maps to g2 in the samplesheet."""
+    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    sequences = [
+        SequenceItem(id="q1", group="query"),
+        SequenceItem(id="t1", group="target"),
+    ]
+
+    await upload_interaction_screening_dataset("ds-1", sequences, "my-run")
+
+    assert route.called
+    request_body = route.calls.last.request.content.decode()
+    assert "g1" in request_body
+    assert "g2" in request_body
+    assert "q1" in request_body
+    assert "t1" in request_body
+    assert "protein" in request_body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_interaction_screening_api_error():
+    """Test that API errors raise BindflowExecutorError."""
+    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
+        return_value=httpx.Response(500, text="Internal error")
+    )
+
+    sequences = [SequenceItem(id="s1", group="query")]
+
+    with pytest.raises(BindflowExecutorError, match="500"):
+        await upload_interaction_screening_dataset("ds-1", sequences, "run-1")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_interaction_screening_fallback_dataset_id():
+    """Test that dataset_id from input is used when response lacks version.datasetId."""
+    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
+        return_value=httpx.Response(200, json={"message": "ok"})
+    )
+
+    sequences = [SequenceItem(id="s1", group="query")]
+    result = await upload_interaction_screening_dataset("fallback-ds", sequences, "run-1")
+
+    assert result.dataset_id == "fallback-ds"

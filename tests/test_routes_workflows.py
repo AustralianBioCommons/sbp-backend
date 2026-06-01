@@ -115,6 +115,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
                 WorkflowRun.binder_name,
                 WorkflowRun.sample_id,
                 WorkflowRun.submitted_form_data,
+                WorkflowRun.submission_timestamp,
             ).where(WorkflowRun.seqera_run_id == "wf_123")
         ).first()
         assert created_run is not None
@@ -123,6 +124,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "s1"
         assert created_run.submitted_form_data == payload["formData"]
+        assert created_run.submission_timestamp is not None
         metric = db.execute(
             select(RunMetric).where(RunMetric.run_id == created_run.id)
         ).scalar_one()

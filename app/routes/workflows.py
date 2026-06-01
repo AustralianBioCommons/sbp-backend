@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import random
 import re
 import string
@@ -18,6 +17,7 @@ from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
+    InteractionScreeningDatasetUploadRequest,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
@@ -34,6 +34,7 @@ from ..services.bindflow_executor import (
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
+    upload_interaction_screening_dataset,
 )
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
@@ -41,6 +42,7 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
+from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -48,7 +50,10 @@ from .dependencies import (
     require_workflow_execution_role,
 )
 
-router = APIRouter(tags=["workflows"], dependencies=[Depends(get_current_user_id)])
+router = APIRouter(
+    tags=["workflows"],
+    dependencies=[Depends(get_current_user_id), Depends(require_workflow_execution_role)],
+)
 
 
 def build_unique_run_name(job_name: str) -> str:
@@ -121,7 +126,6 @@ async def sync_current_user(
     "/launch",
     response_model=WorkflowLaunchResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_workflow_execution_role)],
 )
 async def launch_workflow(
     payload: WorkflowLaunchPayload,
@@ -185,6 +189,7 @@ async def launch_workflow(
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
+    submission_timestamp = datetime.now(timezone.utc)
 
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
@@ -200,6 +205,7 @@ async def launch_workflow(
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
         launch_ip=launch_ip,
+        submission_timestamp=submission_timestamp,
     )
 
     db_session.add(workflow_run)
@@ -267,7 +273,7 @@ async def launch_workflow(
         message="Workflow launched successfully",
         runId=result.workflow_id,
         status=result.status,
-        submitTime=datetime.now(timezone.utc),
+        submitTime=submission_timestamp,
     )
 
 
@@ -330,34 +336,87 @@ async def get_details(run_id: str) -> LaunchDetails:
     )
 
 
-@router.post("/datasets/upload", response_model=DatasetUploadResponse)
+@router.post(
+    "/datasets/upload",
+    response_model=DatasetUploadResponse,
+)
 async def upload_dataset(
     payload: DatasetUploadRequest,
 ) -> DatasetUploadResponse:
     """Create a Seqera dataset and upload form data as CSV content."""
     try:
-        dataset = await create_seqera_dataset(
-            name=payload.datasetName, description=payload.datasetDescription
-        )
-    except BindflowConfigurationError as exc:
+        dataset = await create_seqera_dataset(name="dataset")
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset creation failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    await asyncio.sleep(2)
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset creation failed: {exc}",
+        ) from exc
 
     try:
         upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except BindflowConfigurationError as exc:
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset upload failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset upload failed: {exc}",
+        ) from exc
+
+    return DatasetUploadResponse(
+        message="Dataset created and uploaded successfully",
+        datasetId=upload_result.dataset_id,
+        success=upload_result.success,
+        details=upload_result.raw_response,
+    )
+
+
+@router.post(
+    "/datasets/interaction-screening/upload",
+    response_model=DatasetUploadResponse,
+)
+async def upload_interaction_screening_dataset_endpoint(
+    payload: InteractionScreeningDatasetUploadRequest,
+) -> DatasetUploadResponse:
+    """Create a Seqera dataset and upload an interaction screening samplesheet."""
+    try:
+        dataset = await create_seqera_dataset(name=payload.runId)
+    except SeqeraConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset creation failed: {exc}",
+        ) from exc
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset creation failed: {exc}",
+        ) from exc
+
+    try:
+        upload_result = await upload_interaction_screening_dataset(
+            dataset.dataset_id, payload.sequences, payload.runId
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except SeqeraConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset upload failed: {exc}",
+        ) from exc
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset upload failed: {exc}",
+        ) from exc
 
     return DatasetUploadResponse(
         message="Dataset created and uploaded successfully",

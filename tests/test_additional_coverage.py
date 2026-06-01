@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException, status
 
-from app.routes.workflows import get_details, upload_dataset
-from app.schemas.workflows import DatasetUploadRequest
+from app.routes.workflows import (
+    get_details,
+    upload_dataset,
+    upload_interaction_screening_dataset_endpoint,
+)
+from app.schemas.workflows import DatasetUploadRequest, InteractionScreeningDatasetUploadRequest
 from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
 from app.services.datasets import DatasetUploadResult
 
@@ -34,7 +38,6 @@ async def test_upload_dataset_success(mock_create, mock_upload):
     # Create request
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     # Execute
@@ -67,7 +70,6 @@ async def test_upload_dataset_create_config_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -85,7 +87,6 @@ async def test_upload_dataset_create_service_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -109,7 +110,6 @@ async def test_upload_dataset_upload_value_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -133,7 +133,6 @@ async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -157,7 +156,6 @@ async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
 
     request = DatasetUploadRequest(
         formData={"sample": "test"},
-        datasetName="test-dataset",
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -165,3 +163,101 @@ async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
 
     assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
     assert "Upload service error" in str(exc_info.value.detail)
+
+
+# ============================================================================
+# Tests for upload_interaction_screening_dataset_endpoint
+# ============================================================================
+
+
+def _make_screening_request():
+    return InteractionScreeningDatasetUploadRequest(
+        sequences=[
+            {"id": "seq_A", "group": "query"},
+            {"id": "seq_B", "group": "target"},
+        ],
+        runId="run-screen-1",
+    )
+
+
+@patch("app.routes.workflows.upload_interaction_screening_dataset")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_success(mock_create, mock_upload):
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "ds-screen-1"
+    mock_create.return_value = mock_create_result
+
+    mock_upload.return_value = DatasetUploadResult(
+        success=True,
+        dataset_id="ds-screen-1",
+        message="Uploaded",
+    )
+
+    response = await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert response.success is True
+    assert response.datasetId == "ds-screen-1"
+    mock_create.assert_called_once_with(name="run-screen-1")
+    mock_upload.assert_called_once()
+
+
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_create_config_error(mock_create):
+    mock_create.side_effect = BindflowConfigurationError("missing env")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_create_executor_error(mock_create):
+    mock_create.side_effect = BindflowExecutorError("api failure")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
+
+
+@patch("app.routes.workflows.upload_interaction_screening_dataset")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_upload_value_error(mock_create, mock_upload):
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "ds-1"
+    mock_create.return_value = mock_create_result
+    mock_upload.side_effect = ValueError("bad sequences")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@patch("app.routes.workflows.upload_interaction_screening_dataset")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_upload_config_error(mock_create, mock_upload):
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "ds-1"
+    mock_create.return_value = mock_create_result
+    mock_upload.side_effect = BindflowConfigurationError("cfg err")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+@patch("app.routes.workflows.upload_interaction_screening_dataset")
+@patch("app.routes.workflows.create_seqera_dataset")
+async def test_upload_interaction_screening_upload_executor_error(mock_create, mock_upload):
+    mock_create_result = AsyncMock()
+    mock_create_result.dataset_id = "ds-1"
+    mock_create.return_value = mock_create_result
+    mock_upload.side_effect = BindflowExecutorError("exec err")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+
+    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
