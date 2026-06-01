@@ -177,7 +177,4 @@ async def get_result_report(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultReportResponse(
-        runId=run_id,
-        report=report
-    )
+    return ResultReportResponse(runId=run_id, report=report)

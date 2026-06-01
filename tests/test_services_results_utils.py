@@ -98,19 +98,27 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert classify_bindcraft_output_key(" ") is None
     assert classify_bindcraft_output_key("folder/") is None
     assert classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
-    assert classify_bindcraft_output_key(f"{run.id}/generate/bindcraft_report.html") == ClassifiedOutput(
+    assert classify_bindcraft_output_key(
+        f"{run.id}/generate/bindcraft_report.html"
+    ) == ClassifiedOutput(
         "report",
         "bindcraft_report.html",
     )
-    assert classify_bindcraft_output_key(f"{run.id}/bindcraft/sampleZ_0_output/preview.png") == ClassifiedOutput(
+    assert classify_bindcraft_output_key(
+        f"{run.id}/bindcraft/sampleZ_0_output/preview.png"
+    ) == ClassifiedOutput(
         "snapshot",
         "preview.png",
     )
-    assert classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_ranked/model.pdb") == ClassifiedOutput(
+    assert classify_bindcraft_output_key(
+        f"{run.id}/ranker/sampleZ_ranked/model.pdb"
+    ) == ClassifiedOutput(
         "pdb",
         "model.pdb",
     )
-    assert classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_final_design_stats.csv") == ClassifiedOutput(
+    assert classify_bindcraft_output_key(
+        f"{run.id}/ranker/sampleZ_final_design_stats.csv"
+    ) == ClassifiedOutput(
         "stats_csv",
         "sampleZ_final_design_stats.csv",
     )

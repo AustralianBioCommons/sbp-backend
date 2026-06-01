@@ -8,6 +8,7 @@ from app.db.models.core import AppUser, RunInput, RunOutput, Workflow, WorkflowR
 
 fake = Faker()
 
+
 def random_auth0_id() -> str:
     return "auth0|" + "".join(random.choices("0123456789abcdef", k=24))
 

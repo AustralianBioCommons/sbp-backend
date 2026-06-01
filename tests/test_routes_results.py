@@ -328,7 +328,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         name="Results User 5",
         email="results5@example.com",
     )
-    workflow = Workflow( name="de-novo" )
+    workflow = Workflow(name="de-novo")
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
