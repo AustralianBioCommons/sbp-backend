@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -28,14 +27,12 @@ def _configure_bindcraft_run(run: WorkflowRun) -> None:
 @pytest.mark.asyncio
 async def test_get_result_setting_params_uses_stored_form_data(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user",
         name="Results User",
         email="results@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-1",
         submitted_form_data={
             "id": "s1",
@@ -47,7 +44,7 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
         work_dir="/tmp/wf-1",
     )
     test_db.add_all([user, run])
-    test_db.add(RunMetric(run_id=run.id, final_design_count=100))
+    test_db.add(RunMetric(run=run, final_design_count=100))
     test_db.commit()
 
     result = await get_result_setting_params("wf-1", user.id, test_db)
@@ -63,14 +60,12 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
 @pytest.mark.asyncio
 async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-2",
         name="Results User 2",
         email="results2@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-2",
         submitted_form_data=None,
         sample_id="s2",
@@ -78,7 +73,7 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
         work_dir="/tmp/wf-2",
     )
     test_db.add_all([user, run])
-    test_db.add(RunMetric(run_id=run.id, final_design_count=25))
+    test_db.add(RunMetric(run=run, final_design_count=25))
     test_db.commit()
 
     result = await get_result_setting_params("wf-2", user.id, test_db)
@@ -96,7 +91,6 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
 @pytest.mark.asyncio
 async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-setting-missing",
         name="Results User Missing",
         email="results-missing@example.com",
@@ -114,14 +108,12 @@ async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_
 @pytest.mark.asyncio
 async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-pdb-user",
         name="PDB User",
         email="pdb@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-pdb-1",
         submitted_form_data={
             "binder_name": "PDL1",
@@ -146,14 +138,12 @@ async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(te
 @pytest.mark.asyncio
 async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-pdb-err-user",
         name="PDB Err User",
         email="pdberr@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-pdb-err",
         submitted_form_data={
             "starting_pdb": "s3://my-bucket/uploads/target.pdb",
@@ -175,14 +165,12 @@ async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
 @pytest.mark.asyncio
 async def test_get_result_logs_returns_formatted_entries(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-3",
         name="Results User 3",
         email="results3@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-logs-1",
         work_dir="/tmp/wf-logs-1",
     )
@@ -226,7 +214,6 @@ async def test_get_result_logs_returns_formatted_entries(test_db):
 @pytest.mark.asyncio
 async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-4",
         name="Results User 4",
         email="results4@example.com",
@@ -244,14 +231,12 @@ async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
 @pytest.mark.asyncio
 async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-logs-top-level",
         name="Results User Logs",
         email="results-logs@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-logs-top-level",
         work_dir="/tmp/wf-logs-top-level",
     )
@@ -287,14 +272,12 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(tes
 @pytest.mark.asyncio
 async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-logs-config-error",
         name="Results User Logs Config",
         email="results-logs-config@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-logs-config-error",
         work_dir="/tmp/wf-logs-config-error",
     )
@@ -315,14 +298,12 @@ async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db):
 @pytest.mark.asyncio
 async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-logs-api-error",
         name="Results User Logs API",
         email="results-logs-api@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-logs-api-error",
         work_dir="/tmp/wf-logs-api-error",
     )
@@ -343,19 +324,14 @@ async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
 @pytest.mark.asyncio
 async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-5",
         name="Results User 5",
         email="results5@example.com",
     )
-    workflow = Workflow(
-        id=uuid4(),
-        name="de-novo"
-    )
+    workflow = Workflow( name="de-novo" )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
-        workflow_id=workflow.id,
+        owner=user,
+        workflow=workflow,
         submitted_form_data={"mode": "bindcraft"},
         seqera_run_id="wf-downloads-1",
         sample_id="demo2",
@@ -413,7 +389,6 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 @pytest.mark.asyncio
 async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-downloads-missing",
         name="Results User Downloads Missing",
         email="results-downloads-missing@example.com",
@@ -431,14 +406,12 @@ async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
 @pytest.mark.asyncio
 async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-downloads-config-error",
         name="Results User Downloads Config",
         email="results-downloads-config@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-downloads-config-error",
         work_dir="/tmp/wf-downloads-config-error",
     )
@@ -459,14 +432,12 @@ async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
 @pytest.mark.asyncio
 async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-downloads-service-error",
         name="Results User Downloads Service",
         email="results-downloads-service@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-downloads-service-error",
         work_dir="/tmp/wf-downloads-service-error",
     )
@@ -487,16 +458,14 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
 @pytest.mark.asyncio
 async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-snapshots-1",
         name="Results User Snapshots 1",
         email="results-snapshots1@example.com",
     )
     workflow = Workflow(name="de-novo")
     run = WorkflowRun(
-        id=uuid4(),
         workflow=workflow,
-        owner_user_id=user.id,
+        owner=user,
         submitted_form_data={"mode": "bindcraft"},
         seqera_run_id="wf-snapshots-1",
         sample_id="demo2",
@@ -536,7 +505,6 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
 @pytest.mark.asyncio
 async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-snapshots-missing",
         name="Results User Snapshots Missing",
         email="results-snapshots-missing@example.com",
@@ -554,14 +522,12 @@ async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db):
 @pytest.mark.asyncio
 async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-snapshots-config-error",
         name="Results User Snapshots Config",
         email="results-snapshots-config@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-snapshots-config-error",
         work_dir="/tmp/wf-snapshots-config-error",
     )
@@ -582,14 +548,12 @@ async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
 @pytest.mark.asyncio
 async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-snapshots-service-error",
         name="Results User Snapshots Service",
         email="results-snapshots-service@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-snapshots-service-error",
         work_dir="/tmp/wf-snapshots-service-error",
     )
@@ -610,14 +574,12 @@ async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
 @pytest.mark.asyncio
 async def test_get_result_report_returns_single_presigned_html_for_tracked_output(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-7",
         name="Results User 7",
         email="results7@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-report-1",
         sample_id="demo2",
         work_dir="/tmp/wf-report-1",
@@ -659,15 +621,12 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
 @pytest.mark.asyncio
 async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-9",
         name="Results User 9",
         email="results9@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-report-3",
         sample_id="s1",
         work_dir="/tmp/wf-report-3",
@@ -675,6 +634,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
     _configure_bindcraft_run(run)
     test_db.add_all([user, run])
     test_db.commit()
+    run_id = run.id
 
     real_key = f"{run_id}/generate/PDL1_l79_s800698.html"
 
@@ -720,7 +680,6 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 @pytest.mark.asyncio
 async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-report-missing",
         name="Results User Report Missing",
         email="results-report-missing@example.com",
@@ -738,14 +697,12 @@ async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
 @pytest.mark.asyncio
 async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-report-config-error",
         name="Results User Report Config",
         email="results-report-config@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-report-config-error",
         work_dir="/tmp/wf-report-config-error",
     )
@@ -766,14 +723,12 @@ async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
 @pytest.mark.asyncio
 async def test_get_result_report_maps_s3_service_error_to_502(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-report-service-error",
         name="Results User Report Service",
         email="results-report-service@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-report-service-error",
         work_dir="/tmp/wf-report-service-error",
     )
@@ -794,14 +749,12 @@ async def test_get_result_report_maps_s3_service_error_to_502(test_db):
 @pytest.mark.asyncio
 async def test_get_result_report_allows_missing_report_payload(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|results-user-report-none",
         name="Results User Report None",
         email="results-report-none@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="wf-report-none",
         work_dir="/tmp/wf-report-none",
     )
