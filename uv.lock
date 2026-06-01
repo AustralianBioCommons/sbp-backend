@@ -1530,6 +1530,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "black" },
+    { name = "click" },
     { name = "coverage", extra = ["toml"] },
     { name = "faker" },
     { name = "groovy-parser" },
@@ -1552,6 +1553,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = "~=23.3" },
     { name = "boto3", specifier = "~=1.34" },
     { name = "cachetools", specifier = "~=5.3" },
+    { name = "click", marker = "extra == 'dev'", specifier = "~=8.1" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = "~=7.4" },
     { name = "faker", marker = "extra == 'dev'", specifier = ">=40.1.0" },
     { name = "fastapi", specifier = "~=0.111" },

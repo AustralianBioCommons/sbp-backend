@@ -26,6 +26,7 @@ WorkflowKind = Literal["de-novo", "proteinfold"]
 WorkflowTool = Literal["bindcraft", "boltz", "colabfold", "alphafold2"]
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
 
+
 @dataclass(frozen=True)
 class ClassifiedOutput:
     category: OutputCategory
@@ -38,11 +39,13 @@ class WorkflowResultsSpec:
     Defines the output categories for a workflow, along
     with functions to classify outputs into these categories
     """
+
     kind: WorkflowKind
     tool: WorkflowTool
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
     classify: Callable[[str], ClassifiedOutput | None]
+
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
 _LOG_TIMESTAMP_PATTERN = re.compile(
@@ -241,7 +244,9 @@ def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
     spec = WORKFLOW_OUTPUT_SPECS.get(workflow_name, {}).get(tool_name)
     if spec is not None:
         return spec
-    raise ValueError(f"Couldn't find a matching output spec: workflow={workflow_name!r}, tool={tool_name!r}")
+    raise ValueError(
+        f"Couldn't find a matching output spec: workflow={workflow_name!r}, tool={tool_name!r}"
+    )
 
 
 def classify_bindcraft_output_key(key: str) -> ClassifiedOutput | None:
@@ -285,6 +290,7 @@ def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
 
     return prefixes
 
+
 WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec]] = {
     "de-novo": {
         "bindcraft": WorkflowResultsSpec(
@@ -305,7 +311,10 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
     # ),
 }
 
-def collect_outputs(db: Session, run: WorkflowRun, spec: WorkflowResultsSpec) -> dict[str, ClassifiedOutput]:
+
+def collect_outputs(
+    db: Session, run: WorkflowRun, spec: WorkflowResultsSpec
+) -> dict[str, ClassifiedOutput]:
     """
     Return output keys and their categories for a given workflow run.
     """
@@ -316,12 +325,14 @@ def collect_outputs(db: Session, run: WorkflowRun, spec: WorkflowResultsSpec) ->
             outputs[key] = classified
     return outputs
 
+
 def missing_required_categories(
     outputs: dict[str, ClassifiedOutput],
     spec: WorkflowResultsSpec,
 ) -> set[OutputCategory]:
     found = {output.category for output in outputs.values()}
     return set(spec.required_categories) - found
+
 
 def collect_classified_outputs(
     db: Session,
@@ -340,14 +351,12 @@ def _filter_outputs_by_category(
     outputs: dict[str, ClassifiedOutput],
     category: OutputCategory,
 ) -> dict[str, ClassifiedOutput]:
-    return {
-        key: output
-        for key, output in outputs.items()
-        if output.category == category
-    }
+    return {key: output for key, output in outputs.items() if output.category == category}
 
 
-def _get_bindcraft_outputs(db: Session, run: WorkflowRun, current_outputs=None) -> dict[str, tuple[OutputCategory, str]]:
+def _get_bindcraft_outputs(
+    db: Session, run: WorkflowRun, current_outputs=None
+) -> dict[str, tuple[OutputCategory, str]]:
     """
     Return bindcraft output keys and their categories for a given workflow run.
     If current_outputs is given, outputs are added to the existing dictionary."""
@@ -362,7 +371,10 @@ def _get_bindcraft_outputs(db: Session, run: WorkflowRun, current_outputs=None) 
             outputs[key] = classified
     return outputs
 
-def _get_bindcrafts_outputs_by_category(db: Session, run: WorkflowRun, category: OutputCategory) -> list[str]:
+
+def _get_bindcrafts_outputs_by_category(
+    db: Session, run: WorkflowRun, category: OutputCategory
+) -> list[str]:
     """
     Return bindcraft output keys for a given category for a run
     """
@@ -498,7 +510,6 @@ async def sync_workflow_outputs(
     return keys
 
 
-
 async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
     """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
     discovered: list[str] = []
@@ -528,15 +539,12 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
 
     return discovered
 
+
 def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
     """Sort output items by category, label, and key"""
     category_order = {"report": 0, "stats_csv": 1, "pdb": 2, "alignment": 3}
     key, output = item
-    return (
-        category_order.get(output.category, 99),
-        output.label.lower(),
-        key
-    )
+    return (category_order.get(output.category, 99), output.label.lower(), key)
 
 
 async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
@@ -559,7 +567,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
     downloads = []
 
     # Sort and filter outputs
-    for key, output in sorted( outputs.items(), key=_get_output_sort_key):
+    for key, output in sorted(outputs.items(), key=_get_output_sort_key):
         if output.category == "snapshot":
             continue
         downloads.append(
@@ -598,7 +606,9 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDow
         return None
 
     if len(report_outputs) > 1:
-        raise ValueError(f"Multiple report outputs found for run {run.id!r}: {report_outputs.keys()}")
+        raise ValueError(
+            f"Multiple report outputs found for run {run.id!r}: {report_outputs.keys()}"
+        )
     report_key, report_output = report_outputs.popitem()
     return ResultDownloadItem(
         label=report_output.label,
