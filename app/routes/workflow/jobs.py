@@ -122,7 +122,7 @@ async def list_jobs(
             if allowed_statuses and ui_status not in allowed_statuses:
                 continue
 
-            workflow_type = workflow_type_by_run_id.get(run_id)
+            workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
             tool = tool_by_run_id.get(run_id, "Unknown")
             job_name = _resolve_job_name(run_id, wf, owned_run)
             if (
@@ -200,18 +200,20 @@ async def get_job_details(
     if ui_status != "Completed":
         score = None
 
-    tool: str = "Unknown"
-    form_data = owned_run.submitted_form_data
-    if isinstance(form_data, dict):
-        for _key in ("tool", "mode"):
-            _raw = form_data.get(_key)
-            if _raw and str(_raw).strip():
-                tool = format_tool_name(str(_raw).strip())
-                break
+    raw_tool: str | None = getattr(owned_run, "tool", None) or None
+    if not raw_tool:
+        form_data = owned_run.submitted_form_data
+        if isinstance(form_data, dict):
+            for _key in ("tool", "mode"):
+                _raw = form_data.get(_key)
+                if _raw and str(_raw).strip():
+                    raw_tool = str(_raw).strip()
+                    break
+    tool = format_tool_name(raw_tool) if raw_tool else "Unknown"
     return JobDetailsResponse(
         id=run_id,
         jobName=_resolve_job_name(run_id, wf, owned_run),
-        workflow=(format_workflow_name(owned_run.workflow.name) if owned_run.workflow else None),
+        workflow=(format_workflow_name(owned_run.workflow.name) if owned_run.workflow else "Unknown"),
         tool=tool,
         status=ui_status,
         submittedAt=submitted_at,
