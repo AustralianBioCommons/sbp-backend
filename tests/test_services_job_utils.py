@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 import pytest
 
 from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services import job_utils, results_utils
+from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
 class _Result:
@@ -42,7 +42,7 @@ class _DB:
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
-    run.workflow = Workflow(id=uuid4(), name="de-novo")
+    run.workflow = Workflow(name="de-novo")
     run.submitted_form_data = {"mode": "bindcraft"}
 
 
@@ -60,13 +60,11 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
     """Test that get_owned_run_ids returns only runs owned by the specified user."""
     # Create two users
     user1 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user1",
         name="User One",
         email="user1@example.com",
     )
     user2 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user2",
         name="User Two",
         email="user2@example.com",
@@ -77,13 +75,11 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
 
     # Create runs for user1
     run1_user1 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-1",
         work_dir="workdir-1001",
     )
     run2_user1 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-2",
         work_dir="workdir-1002",
@@ -91,13 +87,11 @@ def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
 
     # Create runs for user2
     run1_user2 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-1",
         work_dir="workdir-2001",
     )
     run2_user2 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-2",
         work_dir="workdir-2002",
@@ -123,13 +117,11 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
     """Test that get_score_by_seqera_run_id returns only scores for the specified user."""
     # Create two users
     user1 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user1",
         name="User One",
         email="user1@example.com",
     )
     user2 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user2",
         name="User Two",
         email="user2@example.com",
@@ -139,13 +131,11 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
 
     # Create runs with metrics for user1
     run1_user1 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-1",
         work_dir="workdir-1001",
     )
     run2_user1 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user1.id,
         seqera_run_id="run-user1-2",
         work_dir="workdir-1002",
@@ -160,7 +150,6 @@ def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
 
     # Create runs with metrics for user2
     run1_user2 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user2.id,
         seqera_run_id="run-user2-1",
         work_dir="workdir-2001",
@@ -187,13 +176,11 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
     """Test that get_workflow_type_by_seqera_run_id returns only workflow types for the specified user."""
     # Create two users
     user1 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user1",
         name="User One",
         email="user1@example.com",
     )
     user2 = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|user2",
         name="User Two",
         email="user2@example.com",
@@ -203,12 +190,10 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
     # Create workflows
     workflow1 = Workflow(
-        id=uuid4(),
         name="BindCraft",
         description="Binding workflow",
     )
     workflow2 = Workflow(
-        id=uuid4(),
         name="OtherWorkflow",
         description="Other workflow",
     )
@@ -217,7 +202,6 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
     # Create runs for user1
     run1_user1 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user1.id,
         workflow_id=workflow1.id,
         seqera_run_id="run-user1-1",
@@ -227,7 +211,6 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
     # Create runs for user2
     run1_user2 = WorkflowRun(
-        id=uuid4(),
         owner_user_id=user2.id,
         workflow_id=workflow2.id,
         seqera_run_id="run-user2-1",
@@ -297,14 +280,14 @@ async def test_ensure_completed_bindcraft_score_branches():
 @pytest.mark.asyncio
 async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|score-user",
         name="Score User",
         email="score-user@example.com",
     )
+    workflow = Workflow(name="de-novo")
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
+        workflow=workflow,
         seqera_run_id="seqera-123",
         work_dir="workdir-score-1",
     )
@@ -312,8 +295,10 @@ async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_d
         object_key="run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
         uri="s3://bucket/run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
     )
+    test_db.add_all([user, workflow, run, output])
+    test_db.flush()
     run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
-    test_db.add_all([user, run, output, run_output])
+    test_db.add(run_output)
     test_db.commit()
 
     with (
@@ -341,14 +326,12 @@ async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_d
 async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_stats(test_db):
     sample_id = "Anne_test"
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|sample-user",
         name="Sample User",
         email="sample-user@example.com",
     )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-456",
         sample_id=sample_id,
         work_dir="workdir-score-2",
@@ -380,21 +363,19 @@ async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_st
 @pytest.mark.asyncio
 async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|snapshot-user",
         name="Snapshot User",
         email="snapshot-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-snapshot-1",
         sample_id="sampleA",
         work_dir="workdir-snapshot-1",
     )
     test_db.add_all([user, run])
     test_db.commit()
+    run_id = run.id
 
     snapshot_key = f"{run_id}/bindcraft/sampleA_0_output/sampleA_preview.png"
 
@@ -430,26 +411,27 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
 @pytest.mark.asyncio
 async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|snapshot-download-user",
         name="Snapshot Download User",
         email="snapshot-download-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-snapshot-download-1",
         sample_id="sampleB",
         work_dir="workdir-snapshot-download-1",
     )
     _configure_bindcraft_run(run)
+    test_db.add_all([user, run])
+    test_db.flush()
+    run_id = run.id
+
     snapshot_keys = [
         f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview.png",
         f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview_2.png",
     ]
     snapshots = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in snapshot_keys]
-    test_db.add_all([user, run, *snapshots])
+    test_db.add_all(snapshots)
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=key) for key in snapshot_keys])
     test_db.commit()
 
@@ -471,15 +453,12 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
 @pytest.mark.asyncio
 async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|snapshot-discovery-user",
         name="Snapshot Discovery User",
         email="snapshot-discovery-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-snapshot-download-2",
         sample_id="sampleC",
         work_dir="workdir-snapshot-download-2",
@@ -488,10 +467,10 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
     test_db.add_all([user, run])
     test_db.commit()
 
-    snapshot_key = f"{run_id}/bindcraft/sampleC_0_output/sampleC_preview.png"
+    snapshot_key = f"{run.id}/bindcraft/sampleC_0_output/sampleC_preview.png"
 
     def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/bindcraft/sampleC_0_output/":
+        if prefix == f"{run.id}/bindcraft/sampleC_0_output/":
             return [
                 {
                     "key": snapshot_key,
@@ -523,15 +502,12 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
 @pytest.mark.asyncio
 async def test_get_result_snapshot_downloads_returns_empty_when_missing(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|snapshot-missing-user",
         name="Snapshot Missing User",
         email="snapshot-missing-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-snapshot-download-3",
         sample_id="sampleD",
         work_dir="workdir-snapshot-download-3",
@@ -549,20 +525,20 @@ async def test_get_result_snapshot_downloads_returns_empty_when_missing(test_db)
 @pytest.mark.asyncio
 async def test_get_result_report_download_returns_tracked_report(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|report-download-user",
         name="Report Download User",
         email="report-download-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-report-download-1",
         sample_id="sampleE",
         work_dir="workdir-report-download-1",
     )
     _configure_bindcraft_run(run)
+    test_db.add_all([user, run])
+    test_db.flush()
+    run_id = run.id
     report_key = f"{run_id}/generate/sampleE_report.html"
     report = S3Object(
         object_key=report_key,
@@ -594,9 +570,13 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
 
 @pytest.mark.asyncio
 async def test_get_result_report_download_skips_sync_when_report_is_already_tracked(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|report-download-user",
+        name="Report Download User",
+        email="report-download-user@example.com",
+    )
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=uuid4(),
+        owner=user,
         seqera_run_id="seqera-report-fast-path-1",
         sample_id="sampleFast",
         work_dir="workdir-report-fast-path-1",
@@ -623,8 +603,6 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
 @pytest.mark.asyncio
 async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_tracked(test_db):
     run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=uuid4(),
         seqera_run_id="seqera-output-fast-path-1",
         sample_id="sampleTracked",
         work_dir="workdir-output-fast-path-1",
@@ -654,27 +632,25 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
 @pytest.mark.asyncio
 async def test_get_result_report_download_discovers_report_from_s3(test_db):
     user = AppUser(
-        id=uuid4(),
         auth0_user_id="auth0|report-discovery-user",
         name="Report Discovery User",
         email="report-discovery-user@example.com",
     )
-    run_id = uuid4()
     run = WorkflowRun(
-        id=run_id,
-        owner_user_id=user.id,
+        owner=user,
         seqera_run_id="seqera-report-download-2",
         sample_id="sampleF",
         work_dir="workdir-report-download-2",
     )
-    _configure_bindcraft_run(run)
     test_db.add_all([user, run])
+    test_db.flush()
+    _configure_bindcraft_run(run)
     test_db.commit()
 
-    report_key = f"{run_id}/generate/sampleF_report.html"
+    report_key = f"{run.id}/generate/sampleF_report.html"
 
     def _list_side_effect(prefix: str, file_extension=None):
-        if prefix == f"{run_id}/generate/":
+        if prefix == f"{run.id}/generate/":
             return [
                 {
                     "key": report_key,
@@ -706,14 +682,15 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
 
 @pytest.mark.asyncio
 async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_nothing(test_db):
-    run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=uuid4(),
+    user = AppUser(auth0_user_id="auth0|123", email="user@example.com")
+    run = WorkflowRunFactory.build(
+        owner=user,
         seqera_run_id="seqera-report-fallback-1",
         sample_id="sampleG",
         work_dir="workdir-report-fallback-1",
     )
     _configure_bindcraft_run(run)
+    test_db.commit()
     report_key = f"{run.id}/generate/sampleG_report.html"
 
     with (
@@ -741,9 +718,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
 
 @pytest.mark.asyncio
 async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_finds_nothing(test_db):
-    run = WorkflowRun(
-        id=uuid4(),
-        owner_user_id=uuid4(),
+    run = WorkflowRunFactory.build(
         seqera_run_id="seqera-snapshot-fallback-1",
         sample_id="sampleH",
         work_dir="workdir-snapshot-fallback-1",
