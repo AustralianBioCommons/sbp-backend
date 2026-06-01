@@ -109,21 +109,21 @@ def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, 
 
 
 def get_tool_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, str]:
-    """Return tool names keyed by seqera_run_id, reading from submitted_form_data JSON.
+    """Return tool names keyed by seqera_run_id.
 
-    Checks 'tool' then 'mode' keys (single-prediction stores the algorithm as 'mode').
+    Reads from workflow_runs.tool; falls back to submitted_form_data for older rows.
     Returns 'Unknown' when no value is found.
     """
     rows = db.execute(
-        select(WorkflowRun.seqera_run_id, WorkflowRun.submitted_form_data)
+        select(WorkflowRun.seqera_run_id, WorkflowRun.tool, WorkflowRun.submitted_form_data)
         .where(WorkflowRun.owner_user_id == user_id)
     ).all()
     result: dict[str, str] = {}
-    for seqera_run_id, form_data in rows:
+    for seqera_run_id, tool_col, form_data in rows:
         if not seqera_run_id:
             continue
-        tool: str | None = None
-        if isinstance(form_data, dict):
+        tool: str | None = tool_col or None
+        if not tool and isinstance(form_data, dict):
             for key in ("tool", "mode"):
                 raw = form_data.get(key)
                 if raw:

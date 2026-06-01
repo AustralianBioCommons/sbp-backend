@@ -226,6 +226,7 @@ async def launch_workflow(
         work_dir=run_work_dir,
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
+        tool=selected_tool,
     )
 
     db_session.add(workflow_run)

@@ -64,6 +64,7 @@ class WorkflowRun(Base):
     submission_timestamp: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    tool: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
