@@ -113,9 +113,7 @@ async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
                 "body": body,
             },
         )
-        raise SeqeraExecutorError(
-            f"Seqera dataset creation failed: {response.status_code} {body}"
-        )
+        raise SeqeraExecutorError(f"Seqera dataset creation failed: {response.status_code} {body}")
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
