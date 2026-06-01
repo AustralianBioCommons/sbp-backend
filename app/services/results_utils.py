@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 from urllib.parse import quote
 
 from sqlalchemy import select
@@ -229,7 +229,19 @@ def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
     return keys
 
 
-def get_tool_name(run: WorkflowRun) -> str | None:
+def get_workflow_name(run: WorkflowRun) -> WorkflowKind | None:
+    if run.workflow is None:
+        return None
+
+    workflow_name: str = run.workflow.name
+    assert workflow_name in get_args(WorkflowKind), (
+        f"Workflow name {workflow_name!r} not recognized: "
+        f"expected one of {get_args(WorkflowKind)}"
+    )
+    return cast(WorkflowKind, workflow_name)
+
+
+def get_tool_name(run: WorkflowRun) -> WorkflowTool | None:
     form_data = getattr(run, "submitted_form_data", None)
     if not isinstance(form_data, dict):
         return None
@@ -238,8 +250,12 @@ def get_tool_name(run: WorkflowRun) -> str | None:
 
 
 def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
-    workflow_name = run.workflow.name
+    workflow_name = get_workflow_name(run)
+    if workflow_name is None:
+        raise ValueError(f"Workflow name not found for run {run.id}")
     tool_name = get_tool_name(run)
+    if tool_name is None:
+        raise ValueError(f"Tool name not found for run {run.id}")
 
     spec = WORKFLOW_OUTPUT_SPECS.get(workflow_name, {}).get(tool_name)
     if spec is not None:
@@ -390,32 +406,9 @@ def _get_bindcraft_report_outputs(db: Session, run: WorkflowRun) -> list[str]:
     keys = _get_run_output_keys(db, run)
     for key in keys:
         classified = classify_bindcraft_output_key(key)
-        if classified and classified[0] == "report":
+        if classified and classified.category == "report":
             report_keys.append(key)
     return report_keys
-
-
-def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
-    run_uuid = str(getattr(run, "id", "") or "").strip()
-    if not run_uuid:
-        return []
-
-    # Always include run-UUID-only prefixes; these do not depend on sample_id.
-    prefixes: list[str] = [
-        f"{run_uuid}/ranker/",
-        f"{run_uuid}/generate/",
-    ]
-
-    # Append bindcraft sample-specific prefixes only when a sample_id is available.
-    sample_id = get_sample_id_for_result(run)
-    if sample_id:
-        prefixes.extend(
-            [
-                f"{run_uuid}/bindcraft/{sample_id}_0_output/",
-            ]
-        )
-
-    return prefixes
 
 
 def _build_s3_uri(key: str) -> str:
