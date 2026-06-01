@@ -158,6 +158,12 @@ async def launch_workflow(
             selected_tool = str(_raw).strip()
             break
 
+    if not selected_tool:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No tool selected. Provide 'tool' in formData before submitting.",
+        )
+
     # Workflow repo_url and revision come from the DB entry for this workflow name
     # ("single-prediction", "de-novo-design", etc.).
     workflow = db_session.scalar(
@@ -252,7 +258,7 @@ async def launch_workflow(
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor.
             # selected_tool carries the chosen algorithm ("bindcraft", "boltzgen", "rfdiffusion").
-            tool_mode = selected_tool or "bindcraft"
+            tool_mode = selected_tool
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(
                 bindcraft_launch_form,
