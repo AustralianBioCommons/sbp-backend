@@ -1,7 +1,6 @@
 """Core database models for workflows and run metadata."""
-from uuid import uuid4
-
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
