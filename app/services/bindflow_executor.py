@@ -48,6 +48,8 @@ async def launch_bindflow_workflow(
     pipeline: str,
     revision: str | None = None,
     output_id: str | None = None,
+    mode: str = "BindCraft",
+    form_data: dict[str, Any] | None = None,
     user_email: str,
     full_name: str,
     institute: str,
@@ -88,6 +90,13 @@ async def launch_bindflow_workflow(
     default_params["user_name"] = user_email
     default_params["timestamp"] = timestamp
     default_params["input"] = dataset_url
+    default_params["mode"] = mode
+
+    # Merge any tool-specific params forwarded from the frontend form
+    if form_data:
+        for key, value in form_data.items():
+            if key not in default_params and value is not None:
+                default_params[key] = value
 
     # Serialize to YAML
     params_text = str(yaml.dump(default_params, default_flow_style=False, sort_keys=False)).rstrip()

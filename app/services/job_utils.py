@@ -84,6 +84,16 @@ def get_score_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, float]:
     }
 
 
+def format_workflow_name(name: str) -> str:
+    """Format a workflow slug for display: 'de-novo-design' → 'De Novo Design'."""
+    return " ".join(word.capitalize() for word in name.replace("-", " ").split())
+
+
+def format_tool_name(name: str) -> str:
+    """Uppercase the first character of a tool id: 'colabfold' → 'Colabfold'."""
+    return name[0].upper() + name[1:] if name else name
+
+
 def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, str]:
     """Return workflow type labels from the local DB workflows table."""
     rows = db.execute(
@@ -91,7 +101,38 @@ def get_workflow_type_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, 
         .outerjoin(Workflow, Workflow.id == WorkflowRun.workflow_id)
         .where(WorkflowRun.owner_user_id == user_id)
     ).all()
-    return {seqera_run_id: workflow_name for seqera_run_id, workflow_name in rows if workflow_name}
+    return {
+        seqera_run_id: format_workflow_name(workflow_name)
+        for seqera_run_id, workflow_name in rows
+        if workflow_name
+    }
+
+
+def get_tool_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, str]:
+    """Return tool names keyed by seqera_run_id, reading from submitted_form_data JSON.
+
+    Checks 'tool' then 'mode' keys (single-prediction stores the algorithm as 'mode').
+    Returns 'Unknown' when no value is found.
+    """
+    rows = db.execute(
+        select(WorkflowRun.seqera_run_id, WorkflowRun.submitted_form_data)
+        .where(WorkflowRun.owner_user_id == user_id)
+    ).all()
+    result: dict[str, str] = {}
+    for seqera_run_id, form_data in rows:
+        if not seqera_run_id:
+            continue
+        tool: str | None = None
+        if isinstance(form_data, dict):
+            for key in ("tool", "mode"):
+                raw = form_data.get(key)
+                if raw:
+                    candidate = str(raw).strip()
+                    if candidate:
+                        tool = candidate
+                        break
+        result[seqera_run_id] = format_tool_name(tool) if tool else "Unknown"
+    return result
 
 
 def _get_sample_id_for_score(run: WorkflowRun) -> str | None:

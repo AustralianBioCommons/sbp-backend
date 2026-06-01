@@ -146,6 +146,20 @@ async def launch_workflow(
     form_id = _extract_form_id(payload.formData)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
+
+    # Extract the user-selected algorithm from formData.
+    # All pages now store it under 'tool' (e.g. "bindcraft", "colabfold").
+    # 'mode' is kept only as a fallback for records created before the rename.
+    form_data = payload.formData or {}
+    selected_tool: str | None = None
+    for _key in ("tool", "mode"):
+        _raw = form_data.get(_key)
+        if _raw and str(_raw).strip():
+            selected_tool = str(_raw).strip()
+            break
+
+    # Workflow repo_url and revision come from the DB entry for this workflow name
+    # ("single-prediction", "de-novo-design", etc.).
     workflow = db_session.scalar(
         select(Workflow).where(func.lower(Workflow.name) == requested_tool)
     )
@@ -215,9 +229,12 @@ async def launch_workflow(
 
     try:
         result: BindflowLaunchResult | ProteinfoldLaunchResult
-        if requested_tool == "proteinfold":
-            mode = str((payload.formData or {}).get("mode", "alphafold2"))
-            seqera_run_name = build_unique_run_name(payload.launch.runName or "")
+        workflow_name = workflow.name.lower()
+        seqera_run_name = build_unique_run_name(payload.launch.runName or "")
+        if workflow_name in ("single-prediction", "proteinfold"):
+            # single-prediction → proteinfold executor.
+            # selected_tool carries the chosen algorithm ("colabfold", "alphafold2", "boltz").
+            tool_algo = selected_tool
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,
@@ -225,15 +242,17 @@ async def launch_workflow(
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
-                mode=mode,
+                mode=tool_algo,
                 form_data=payload.formData,
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
                 ip_address=ip_address,
             )
-        elif requested_tool in ("bindflow", "bindcraft"):
-            seqera_run_name = build_unique_run_name(payload.launch.runName or "")
+        elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
+            # de-novo-design → bindflow executor.
+            # selected_tool carries the chosen algorithm ("bindcraft", "boltzgen", "rfdiffusion").
+            tool_mode = selected_tool or "bindcraft"
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(
                 bindcraft_launch_form,
@@ -241,6 +260,8 @@ async def launch_workflow(
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
+                mode=tool_mode,
+                form_data=payload.formData,
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
@@ -250,7 +271,7 @@ async def launch_workflow(
             db_session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"No executor configured for tool '{payload.launch.tool}'.",
+                detail=f"No executor configured for workflow '{workflow.name}'.",
             )
         workflow_run.seqera_run_id = result.workflow_id
         db_session.commit()
