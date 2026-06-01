@@ -11,8 +11,8 @@ import pytest
 from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
     ClassifiedOutput,
-    build_bindcraft_output_listing_prefixes,
     _build_s3_uri,
+    build_bindcraft_output_listing_prefixes,
     classify_bindcraft_output_key,
     format_log_entries,
     get_sample_id_for_result,

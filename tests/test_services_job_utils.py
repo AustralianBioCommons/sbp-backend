@@ -9,7 +9,7 @@ import pytest
 
 from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services import job_utils, results_utils
-from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import WorkflowRunFactory
 
 
 class _Result:

@@ -1,9 +1,10 @@
 import random
 import uuid
 
-from app.db.models.core import AppUser, RunInput, RunMetric, RunOutput, Workflow, WorkflowRun
 from faker import Faker
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
+
+from app.db.models.core import AppUser, RunInput, RunOutput, Workflow, WorkflowRun
 
 fake = Faker()
 
