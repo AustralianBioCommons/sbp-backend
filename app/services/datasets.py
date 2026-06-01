@@ -7,13 +7,17 @@ import io
 import json
 import logging
 import os
-import time
+import random
+import re
+import string
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
-from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
+from ..schemas.workflows import SequenceItem
+from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise BindflowConfigurationError(f"Missing required environment variable: {key}")
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -35,6 +39,18 @@ def _stringify_field(value: Any) -> str:
     return str(value)
 
 
+def build_unique_dataset_name(name: str) -> str:
+    """Build a unique dataset name. E.g. 'my-run' -> 'my-run_20240101-120000_ab3x'"""
+    base = name.strip()
+    slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)
+    slug = re.sub(r"-{2,}", "-", slug)
+    slug = slug.strip("-") or "dataset"
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%d-%H%M%S")
+    rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    return f"{slug}_{ts}_{rand}"
+
+
 def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
     """Convert a record of form data into a single-row CSV string."""
     if not form_data:
@@ -43,11 +59,11 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
     headers = list(form_data.keys())
     row = [_stringify_field(form_data[key]) for key in headers]
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(headers)
-    writer.writerow(row)
-    return output.getvalue()
+    with io.StringIO() as output:
+        writer = csv.writer(output)
+        writer.writerow(headers)
+        writer.writerow(row)
+        return output.getvalue()
 
 
 @dataclass
@@ -64,19 +80,14 @@ class DatasetUploadResult:
     raw_response: dict[str, Any] | None = None
 
 
-async def create_seqera_dataset(
-    name: str | None = None, description: str | None = None
-) -> DatasetCreationResult:
+async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
     """Create a dataset on the Seqera Platform."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
 
-    dataset_name = name or f"dataset-{int(time.time() * 1000)}"
-    payload = {
-        "name": dataset_name,
-        "description": description or "Dataset for workflow submission",
-    }
+    dataset_name = build_unique_dataset_name(name)
+    payload = {"name": dataset_name}
 
     url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/"
     headers = {
@@ -86,7 +97,7 @@ async def create_seqera_dataset(
 
     logger.info(
         "Creating Seqera dataset",
-        extra={"url": url, "workspaceId": workspace_id, "datasetName": dataset_name},
+        extra={"datasetName": dataset_name},
     )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
@@ -102,14 +113,12 @@ async def create_seqera_dataset(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(
-            f"Seqera dataset creation failed: {response.status_code} {body}"
-        )
+        raise SeqeraExecutorError(f"Seqera dataset creation failed: {response.status_code} {body}")
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
     if not dataset_id:
-        raise BindflowExecutorError(
+        raise SeqeraExecutorError(
             "Seqera dataset creation succeeded but response lacked dataset id"
         )
 
@@ -139,7 +148,7 @@ async def upload_dataset_to_seqera(
 
     logger.info(
         "Uploading dataset to Seqera",
-        extra={"datasetId": dataset_id, "workspaceId": workspace_id, "url": url},
+        extra={"datasetId": dataset_id},
     )
 
     files = {
@@ -159,7 +168,7 @@ async def upload_dataset_to_seqera(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
+        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
 
     data = response.json()
     returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
@@ -167,6 +176,90 @@ async def upload_dataset_to_seqera(
 
     logger.info(
         "Seqera dataset upload completed",
+        extra={"datasetId": returned_dataset_id, "status": response.status_code},
+    )
+
+    return DatasetUploadResult(
+        success=True,
+        dataset_id=returned_dataset_id,
+        message=message,
+        raw_response=data,
+    )
+
+
+INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_screening"
+
+
+async def upload_interaction_screening_dataset(
+    dataset_id: str,
+    sequences: list[SequenceItem],
+    run_id: str,
+) -> DatasetUploadResult:
+    """Build and upload an interaction screening samplesheet to a Seqera dataset."""
+    if not dataset_id:
+        raise ValueError("dataset_id is required")
+    if not sequences:
+        raise ValueError("sequences cannot be empty")
+    if not run_id:
+        raise ValueError("run_id is required")
+
+    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
+    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
+    workspace_id = _get_required_env("WORK_SPACE")
+
+    unique_run_path = build_unique_dataset_name(run_id)
+    rows = [
+        {
+            "id": s.id,
+            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s.id}.fasta",
+            "group": "g1" if s.group == "query" else "g2",
+            "type": "protein",
+        }
+        for s in sequences
+    ]
+
+    with io.StringIO() as output:
+        writer = csv.DictWriter(output, fieldnames=["id", "sequence", "group", "type"])
+        writer.writeheader()
+        writer.writerows(rows)
+        csv_content = output.getvalue()
+
+    url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
+    headers = {
+        "Authorization": f"Bearer {seqera_token}",
+        "Accept": "application/json",
+    }
+
+    logger.info(
+        "Uploading interaction screening samplesheet to Seqera",
+        extra={"datasetId": dataset_id},
+    )
+
+    files = {
+        "file": ("samplesheet.csv", csv_content, "text/csv"),
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
+        response = await client.post(url, headers=headers, files=files)
+
+    if response.is_error:
+        body = response.text
+        logger.error(
+            "Seqera interaction screening dataset upload failed",
+            extra={
+                "status": response.status_code,
+                "reason": response.reason_phrase,
+                "body": body,
+            },
+        )
+        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
+
+    data = response.json()
+    returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
+    message = data.get("message") or "Upload successful"
+
+    logger.info(
+        "Seqera interaction screening dataset upload completed",
         extra={"datasetId": returned_dataset_id, "status": response.status_code},
     )
 

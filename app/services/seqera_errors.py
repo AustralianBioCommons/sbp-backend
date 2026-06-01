@@ -1,8 +1,14 @@
 """Error types for Seqera service operations."""
 
+from __future__ import annotations
+
 
 class SeqeraConfigurationError(RuntimeError):
     """Raised when required Seqera configuration is missing."""
+
+
+class SeqeraExecutorError(RuntimeError):
+    """Raised when a Seqera Platform API call fails at runtime."""
 
 
 class SeqeraAPIError(RuntimeError):

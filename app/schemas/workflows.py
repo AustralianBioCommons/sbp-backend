@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -150,8 +150,6 @@ class DatasetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     formData: dict[str, Any]
-    datasetName: str | None = Field(default=None)
-    datasetDescription: str | None = Field(default=None)
 
     @field_validator("formData")
     @classmethod
@@ -166,6 +164,20 @@ class DatasetUploadResponse(BaseModel):
     datasetId: str
     success: bool
     details: dict[str, Any] | None = None
+
+
+class SequenceItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    group: Literal["query", "target"]
+
+
+class InteractionScreeningDatasetUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sequences: list[SequenceItem]
+    runId: str
 
 
 class PdbUploadResponse(BaseModel):
