@@ -43,6 +43,7 @@ dev = [
     "respx~=0.21",
     "sqlalchemy-data-model-visualizer~=0.1",
     "groovy-parser @ git+https://github.com/inab/python-groovy-parser.git@5e7f3a4e7dcc5fb2e186fe7ca30df260ce5efeb8",
+    "faker>=40.1.0",
 ]
 
 [tool.pytest.ini_options]
