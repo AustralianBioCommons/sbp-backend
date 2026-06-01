@@ -1,12 +1,12 @@
-"""add tool to workflow_runs"""
+"""add tool to worklow_runs"""
 
 from alembic import op
 import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'add_tool_workflow_runs'
-down_revision = '0405f3482868'
+revision = '797ec472e447'
+down_revision = 'add_tool_workflow_runs'
 branch_labels = None
 depends_on = None
 
