@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from ..schemas.workflows import SequenceItem
-from .bindflow_executor import BindflowConfigurationError, BindflowExecutorError
+from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise BindflowConfigurationError(f"Missing required environment variable: {key}")
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -113,14 +113,14 @@ async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
                 "body": body,
             },
         )
-        raise BindflowExecutorError(
+        raise SeqeraExecutorError(
             f"Seqera dataset creation failed: {response.status_code} {body}"
         )
 
     data = response.json()
     dataset_id = data.get("dataset", {}).get("id")
     if not dataset_id:
-        raise BindflowExecutorError(
+        raise SeqeraExecutorError(
             "Seqera dataset creation succeeded but response lacked dataset id"
         )
 
@@ -170,7 +170,7 @@ async def upload_dataset_to_seqera(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
+        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
 
     data = response.json()
     returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
@@ -254,7 +254,7 @@ async def upload_interaction_screening_dataset(
                 "body": body,
             },
         )
-        raise BindflowExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
+        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
 
     data = response.json()
     returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id

@@ -18,16 +18,13 @@ from .bindflow_config import (
     get_bindflow_default_params,
     get_bindflow_executor_script,
 )
+from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 logger = logging.getLogger(__name__)
 
-
-class BindflowConfigurationError(RuntimeError):
-    """Raised when required configuration is missing."""
-
-
-class BindflowExecutorError(RuntimeError):
-    """Raised when bindflow workflow execution fails."""
+# Backward-compatible aliases — use SeqeraConfigurationError / SeqeraExecutorError in new code.
+BindflowConfigurationError = SeqeraConfigurationError
+BindflowExecutorError = SeqeraExecutorError
 
 
 @dataclass

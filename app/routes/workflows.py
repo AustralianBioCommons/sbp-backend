@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import random
 import re
 import string
@@ -43,6 +42,7 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
+from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -344,25 +344,31 @@ async def upload_dataset(
     """Create a Seqera dataset and upload form data as CSV content."""
     try:
         dataset = await create_seqera_dataset(name="dataset")
-    except BindflowConfigurationError as exc:
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset creation failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    await asyncio.sleep(2)
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset creation failed: {exc}",
+        ) from exc
 
     try:
         upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except BindflowConfigurationError as exc:
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset upload failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset upload failed: {exc}",
+        ) from exc
 
     return DatasetUploadResponse(
         message="Dataset created and uploaded successfully",
@@ -382,14 +388,16 @@ async def upload_interaction_screening_dataset_endpoint(
     """Create a Seqera dataset and upload an interaction screening samplesheet."""
     try:
         dataset = await create_seqera_dataset(name=payload.runId)
-    except BindflowConfigurationError as exc:
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset creation failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    await asyncio.sleep(2)
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset creation failed: {exc}",
+        ) from exc
 
     try:
         upload_result = await upload_interaction_screening_dataset(
@@ -397,12 +405,16 @@ async def upload_interaction_screening_dataset_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except BindflowConfigurationError as exc:
+    except SeqeraConfigurationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset upload failed: {exc}",
         ) from exc
-    except BindflowExecutorError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except SeqeraExecutorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dataset upload failed: {exc}",
+        ) from exc
 
     return DatasetUploadResponse(
         message="Dataset created and uploaded successfully",
