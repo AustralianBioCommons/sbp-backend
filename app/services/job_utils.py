@@ -115,8 +115,9 @@ def get_tool_by_seqera_run_id(db: Session, user_id: UUID) -> dict[str, str]:
     Returns 'Unknown' when no value is found.
     """
     rows = db.execute(
-        select(WorkflowRun.seqera_run_id, WorkflowRun.tool, WorkflowRun.submitted_form_data)
-        .where(WorkflowRun.owner_user_id == user_id)
+        select(WorkflowRun.seqera_run_id, WorkflowRun.tool, WorkflowRun.submitted_form_data).where(
+            WorkflowRun.owner_user_id == user_id
+        )
     ).all()
     result: dict[str, str] = {}
     for seqera_run_id, tool_col, form_data in rows:

@@ -90,7 +90,12 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"id": "s1", "binder_name": "PDL1", "number_of_final_designs": 20, "tool": "bindcraft"},
+        "formData": {
+            "id": "s1",
+            "binder_name": "PDL1",
+            "number_of_final_designs": 20,
+            "tool": "bindcraft",
+        },
     }
 
     response = client.post("/api/workflows/launch", json=payload)

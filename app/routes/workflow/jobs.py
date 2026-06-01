@@ -213,7 +213,9 @@ async def get_job_details(
     return JobDetailsResponse(
         id=run_id,
         jobName=_resolve_job_name(run_id, wf, owned_run),
-        workflow=(format_workflow_name(owned_run.workflow.name) if owned_run.workflow else "Unknown"),
+        workflow=(
+            format_workflow_name(owned_run.workflow.name) if owned_run.workflow else "Unknown"
+        ),
         tool=tool,
         status=ui_status,
         submittedAt=submitted_at,
