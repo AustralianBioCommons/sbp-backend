@@ -242,11 +242,23 @@ def get_workflow_name(run: WorkflowRun) -> WorkflowKind | None:
 
 
 def get_tool_name(run: WorkflowRun) -> WorkflowTool | None:
-    form_data = getattr(run, "submitted_form_data", None)
-    if not isinstance(form_data, dict):
-        return None
+    """
+    Get the tool name for a workflow run.
 
-    return form_data.get("mode")
+    Prefer the
+    """
+    if run.tool is not None:
+        return cast(WorkflowTool, run.tool)
+
+    # Fall back to submitted form data if not available in run.tool
+    form_data = getattr(run, "submitted_form_data", None)
+    if isinstance(form_data, dict):
+        for key in ("tool", "mode"):
+            raw = form_data.get(key)
+            if raw and str(raw).strip():
+                return cast(WorkflowTool, str(raw).strip())
+
+    return None
 
 
 def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
