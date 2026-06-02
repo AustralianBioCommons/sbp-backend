@@ -10,11 +10,19 @@ import pytest
 
 from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
-    _build_bindcraft_output_listing_prefixes,
+    ClassifiedOutput,
     _build_s3_uri,
-    _classify_bindcraft_output_key,
+    build_alphafold2_proteinfold_output_listing_prefixes,
+    build_bindcraft_output_listing_prefixes,
+    build_boltz_proteinfold_output_listing_prefixes,
+    build_colabfold_proteinfold_output_listing_prefixes,
+    classify_alphafold2_proteinfold_output,
+    classify_bindcraft_output_key,
+    classify_boltz_proteinfold_output,
+    classify_colabfold_proteinfold_output,
     format_log_entries,
     get_sample_id_for_result,
+    get_tool_name,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
@@ -73,6 +81,41 @@ def test_resolve_submitted_form_data_returns_none_when_nothing_available():
     assert resolve_submitted_form_data(run) is None
 
 
+def test_get_tool_name_uses_tool_column():
+    run = SimpleNamespace(tool="colabfold", submitted_form_data=None)
+    assert get_tool_name(run) == "colabfold"
+
+
+def test_get_tool_name_strips_and_lowercases_tool_column():
+    run = SimpleNamespace(tool="  BindCraft  ", submitted_form_data=None)
+    assert get_tool_name(run) == "bindcraft"
+
+
+def test_get_tool_name_falls_back_to_form_data_tool_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"tool": "alphafold2"})
+    assert get_tool_name(run) == "alphafold2"
+
+
+def test_get_tool_name_strips_and_lowercases_form_data_tool_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"tool": "  AlphaFold2  "})
+    assert get_tool_name(run) == "alphafold2"
+
+
+def test_get_tool_name_falls_back_to_form_data_mode_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"mode": "boltz"})
+    assert get_tool_name(run) == "boltz"
+
+
+def test_get_tool_name_tool_column_takes_priority():
+    run = SimpleNamespace(tool="colabfold", submitted_form_data={"mode": "alphafold2"})
+    assert get_tool_name(run) == "colabfold"
+
+
+def test_get_tool_name_returns_none_when_nothing_available():
+    run = SimpleNamespace(tool=None, submitted_form_data=None)
+    assert get_tool_name(run) is None
+
+
 def test_s3_uri_to_key_handles_empty_non_s3_and_invalid_s3_values():
     assert s3_uri_to_key(None) is None
     assert s3_uri_to_key("   ") is None
@@ -94,27 +137,35 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
 def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
-    assert _classify_bindcraft_output_key(" ") is None
-    assert _classify_bindcraft_output_key("folder/") is None
-    assert _classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
-    assert _classify_bindcraft_output_key(f"{run.id}/generate/bindcraft_report.html") == (
+    assert classify_bindcraft_output_key(" ") is None
+    assert classify_bindcraft_output_key("folder/") is None
+    assert classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
+    assert classify_bindcraft_output_key(
+        f"{run.id}/generate/bindcraft_report.html"
+    ) == ClassifiedOutput(
         "report",
         "bindcraft_report.html",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/bindcraft/sampleZ_0_output/preview.png") == (
+    assert classify_bindcraft_output_key(
+        f"{run.id}/bindcraft/sampleZ_0_output/preview.png"
+    ) == ClassifiedOutput(
         "snapshot",
         "preview.png",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_ranked/model.pdb") == (
+    assert classify_bindcraft_output_key(
+        f"{run.id}/ranker/sampleZ_ranked/model.pdb"
+    ) == ClassifiedOutput(
         "pdb",
         "model.pdb",
     )
-    assert _classify_bindcraft_output_key(f"{run.id}/ranker/sampleZ_final_design_stats.csv") == (
+    assert classify_bindcraft_output_key(
+        f"{run.id}/ranker/sampleZ_final_design_stats.csv"
+    ) == ClassifiedOutput(
         "stats_csv",
         "sampleZ_final_design_stats.csv",
     )
 
-    prefixes = _build_bindcraft_output_listing_prefixes(run)
+    prefixes = build_bindcraft_output_listing_prefixes(run)
     assert prefixes == [
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
@@ -122,7 +173,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     ]
 
     run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
-    assert _build_bindcraft_output_listing_prefixes(run_without_sample) == [
+    assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
     ]
@@ -131,6 +182,178 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    assert classify_boltz_proteinfold_output(" ") is None
+    assert classify_boltz_proteinfold_output("folder/") is None
+
+    # With sample_id, paths use the sample_id name
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/reports/T1024_boltz_report.html", "T1024"
+    ) == ClassifiedOutput("report", "T1024_boltz_report.html")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/T1024/paes/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/mmseqs/T1024.a3m", "T1024"
+    ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert (
+        classify_boltz_proteinfold_output(
+            f"{run.id}/boltz/top_ranked_structures/single_prediction.pdb", "T1024"
+        )
+        is None
+    )
+    assert (
+        classify_boltz_proteinfold_output(f"{run.id}/boltz/single_prediction/abcd1234.tsv", "T1024")
+        is None
+    )
+    assert (
+        classify_boltz_proteinfold_output(f"{run.id}/mmseqs/single_prediction.a3m", "T1024") is None
+    )
+
+    # Without sample_id, falls back to matching "single_prediction"
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/mmseqs/single_prediction.a3m"
+    ) == ClassifiedOutput("alignment", "single_prediction.a3m")
+
+    assert build_boltz_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/boltz/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/boltz/T1024/",
+    ]
+
+
+def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    # With sample_id, paths use the sample_id name
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/reports/T1024_alphafold2_report.html", "T1024"
+    ) == ClassifiedOutput("report", "T1024_alphafold2_report.html")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/paes/T1024_0_pae.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    # No alignment expected for alphafold2
+    assert (
+        classify_alphafold2_proteinfold_output(f"{run.id}/mmseqs/results/T1024.a3m", "T1024")
+        is None
+    )
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert (
+        classify_alphafold2_proteinfold_output(
+            f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction.pdb",
+            "T1024",
+        )
+        is None
+    )
+    assert (
+        classify_alphafold2_proteinfold_output(
+            f"{run.id}/alphafold2/split_msa_prediction/single_prediction/abcd1234.tsv", "T1024"
+        )
+        is None
+    )
+
+    # Without sample_id, falls back to matching "single_prediction"
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/single_prediction/paes/T1024_0_pae.tsv"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+
+    assert build_alphafold2_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+    ]
+
+
+def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    # With sample_id, paths use the sample_id name
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/reports/T1024_colabfold_report.html", "T1024"
+    ) == ClassifiedOutput("report", "T1024_colabfold_report.html")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/T1024/paes/T1024_0_pae.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/mmseqs/T1024.a3m", "T1024"
+    ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert (
+        classify_colabfold_proteinfold_output(
+            f"{run.id}/colabfold/top_ranked_structures/single_prediction.pdb", "T1024"
+        )
+        is None
+    )
+    assert (
+        classify_colabfold_proteinfold_output(
+            f"{run.id}/colabfold/single_prediction/abcd1234.tsv", "T1024"
+        )
+        is None
+    )
+    assert (
+        classify_colabfold_proteinfold_output(f"{run.id}/mmseqs/single_prediction.a3m", "T1024")
+        is None
+    )
+
+    # Without sample_id, falls back to matching "single_prediction"
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/single_prediction/paes/T1024_0_pae.tsv"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/mmseqs/single_prediction.a3m"
+    ) == ClassifiedOutput("alignment", "single_prediction.a3m")
+
+    assert build_colabfold_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/colabfold/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/colabfold/T1024/",
+    ]
 
 
 @pytest.mark.asyncio

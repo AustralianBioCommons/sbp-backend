@@ -69,6 +69,15 @@ def build_unique_run_name(job_name: str) -> str:
     return f"{slug}_{ts}_{rand}"
 
 
+def build_sample_id(workflow_name: str) -> str:
+    """
+    Build a sample ID for a workflow run - only needed if one
+    wasn't received from the form data.
+    """
+    chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    return f"{workflow_name}-{chars}"
+
+
 def _require_launch_var(name: str, value: str | None) -> str:
     if not value:
         raise HTTPException(
@@ -144,6 +153,8 @@ async def launch_workflow(
         )
 
     form_id = _extract_form_id(payload.formData)
+    if form_id is None:
+        form_id = build_sample_id(requested_tool)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
 

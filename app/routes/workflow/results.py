@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from ...schemas.workflows import (
     JobSettingParamsResponse,
-    ResultDownloadItem,
     ResultDownloadsResponse,
     ResultLogsResponse,
     ResultReportResponse,
@@ -128,7 +127,7 @@ async def get_result_downloads(
 
     return ResultDownloadsResponse(
         runId=run_id,
-        downloads=[ResultDownloadItem(**download) for download in downloads],
+        downloads=downloads,
     )
 
 
@@ -154,7 +153,7 @@ async def get_result_snapshots(
 
     return ResultSnapshotsResponse(
         runId=run_id,
-        snapshots=[ResultDownloadItem(**snapshot) for snapshot in snapshots],
+        snapshots=snapshots,
     )
 
 
@@ -171,6 +170,8 @@ async def get_result_report(
 
     try:
         report = await get_result_report_download(db, owned_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -178,7 +179,4 @@ async def get_result_report(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultReportResponse(
-        runId=run_id,
-        report=ResultDownloadItem(**report) if report is not None else None,
-    )
+    return ResultReportResponse(runId=run_id, report=report)
