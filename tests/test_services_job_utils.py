@@ -43,6 +43,7 @@ class _DB:
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
     run.workflow = Workflow(name="de-novo")
+    run.tool = "bindcraft"
     run.submitted_form_data = {"mode": "bindcraft"}
 
 
