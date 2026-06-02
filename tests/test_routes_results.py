@@ -387,6 +387,108 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "expected_outputs"),
+    [
+        (
+            "boltz",
+            [
+                ("report", "T1024_boltz_report.html", "reports/T1024_boltz_report.html"),
+                ("stats_csv", "confidence.tsv", "boltz/T1024/confidence.tsv"),
+                ("pdb", "T1024.pdb", "boltz/top_ranked_structures/T1024.pdb"),
+                ("alignment", "T1024.a3m", "mmseqs/T1024.a3m"),
+            ],
+        ),
+        (
+            "alphafold2",
+            [
+                ("report", "T1024_alphafold2_report.html", "reports/T1024_alphafold2_report.html"),
+                (
+                    "stats_csv",
+                    "ranking.tsv",
+                    "alphafold2/split_msa_prediction/T1024/ranking.tsv",
+                ),
+                (
+                    "pdb",
+                    "T1024.pdb",
+                    "alphafold2/split_msa_prediction/top_ranked_structures/T1024.pdb",
+                ),
+            ],
+        ),
+        (
+            "colabfold",
+            [
+                ("report", "T1024_colabfold_report.html", "reports/T1024_colabfold_report.html"),
+                ("stats_csv", "scores.tsv", "colabfold/T1024/scores.tsv"),
+                ("pdb", "T1024.pdb", "colabfold/top_ranked_structures/T1024.pdb"),
+                ("alignment", "T1024.a3m", "mmseqs/T1024.a3m"),
+            ],
+        ),
+    ],
+)
+async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outputs(
+    test_db, tool, expected_outputs
+):
+    user = AppUser(
+        auth0_user_id=f"auth0|results-proteinfold-downloads-{tool}",
+        name=f"Proteinfold Downloads {tool}",
+        email=f"results-proteinfold-downloads-{tool}@example.com",
+    )
+    workflow = Workflow(name="proteinfold")
+    run = WorkflowRun(
+        owner=user,
+        workflow=workflow,
+        tool=tool,
+        submitted_form_data={"tool": tool},
+        seqera_run_id=f"wf-proteinfold-downloads-{tool}",
+        sample_id="T1024",
+        work_dir=f"/tmp/wf-proteinfold-downloads-{tool}",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.commit()
+
+    outputs = [
+        S3Object(
+            object_key=f"{run.id}/{relative_key}",
+            uri=f"s3://bucket/{run.id}/{relative_key}",
+        )
+        for _, _, relative_key in expected_outputs
+    ]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new_callable=AsyncMock,
+        side_effect=lambda key: f"https://signed.example/{key}",
+    ) as mock_presign, patch(
+        "app.services.results_utils.list_s3_files",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as mock_list_s3_files:
+        result = await get_result_downloads(
+            f"wf-proteinfold-downloads-{tool}", user.id, test_db
+        )
+
+    assert result.runId == f"wf-proteinfold-downloads-{tool}"
+    assert [item.category for item in result.downloads] == [
+        category for category, _, _ in expected_outputs
+    ]
+    assert [item.label for item in result.downloads] == [label for _, label, _ in expected_outputs]
+    assert [item.key for item in result.downloads] == [
+        f"{run.id}/{relative_key}" for _, _, relative_key in expected_outputs
+    ]
+    assert [item.url for item in result.downloads] == [
+        f"https://signed.example/{run.id}/{relative_key}"
+        for _, _, relative_key in expected_outputs
+    ]
+    assert mock_presign.await_count == len(expected_outputs)
+    mock_list_s3_files.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
     user = AppUser(
         auth0_user_id="auth0|results-user-downloads-missing",
