@@ -515,47 +515,6 @@ def _filter_outputs_by_category(
     return {key: output for key, output in outputs.items() if output.category == category}
 
 
-def _get_bindcraft_outputs(
-    db: Session, run: WorkflowRun, current_outputs=None
-) -> dict[str, tuple[OutputCategory, str]]:
-    """
-    Return bindcraft output keys and their categories for a given workflow run.
-    If current_outputs is given, outputs are added to the existing dictionary."""
-    if current_outputs is None:
-        outputs = {}
-    else:
-        outputs = current_outputs
-    keys = _get_run_output_keys(db, run)
-    for key in keys:
-        classified = classify_bindcraft_output_key(key)
-        if classified and key not in outputs:
-            outputs[key] = classified
-    return outputs
-
-
-def _get_bindcrafts_outputs_by_category(
-    db: Session, run: WorkflowRun, category: OutputCategory
-) -> list[str]:
-    """
-    Return bindcraft output keys for a given category for a run
-    """
-    outputs = _get_bindcraft_outputs(db, run)
-    return [key for key, (found_category, _) in outputs.items() if found_category == category]
-
-
-def _get_bindcraft_report_outputs(db: Session, run: WorkflowRun) -> list[str]:
-    """
-    Return the bindcraft report output key(s) for a run
-    """
-    report_keys = []
-    keys = _get_run_output_keys(db, run)
-    for key in keys:
-        classified = classify_bindcraft_output_key(key)
-        if classified and classified.category == "report":
-            report_keys.append(key)
-    return report_keys
-
-
 def _build_s3_uri(key: str) -> str:
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if bucket_name:
