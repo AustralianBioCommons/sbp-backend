@@ -79,6 +79,7 @@ class WorkflowRunAdmin(ModelView):
     fields = [
         "id",
         "workflow_id",
+        "tool",
         "owner_user_id",
         HasOne("workflow", identity="workflow"),
         HasOne("owner", identity="app-user"),
