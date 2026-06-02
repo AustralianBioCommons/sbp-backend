@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
 
 from sqlalchemy import select
@@ -27,6 +27,13 @@ WorkflowTool = Literal["bindcraft", "boltz", "colabfold", "alphafold2"]
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
 
 
+class OutputClassifier(Protocol):
+    """Function that classifies a workflow output key into a category."""
+
+    def __call__(self, key: str, sample_id: str | None) -> ClassifiedOutput | None:
+        ...
+
+
 @dataclass(frozen=True)
 class ClassifiedOutput:
     category: OutputCategory
@@ -44,7 +51,7 @@ class WorkflowResultsSpec:
     tool: WorkflowTool
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
-    classify: Callable[[str], ClassifiedOutput | None]
+    classify: OutputClassifier
 
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
@@ -277,7 +284,7 @@ def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
     )
 
 
-def classify_bindcraft_output_key(key: str) -> ClassifiedOutput | None:
+def classify_bindcraft_output_key(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
@@ -320,33 +327,33 @@ def classify_proteinfold_output_key(
     return None
 
 
-def classify_boltz_proteinfold_output(key: str) -> ClassifiedOutput | None:
+def classify_boltz_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+    sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=r"/boltz/top_ranked_structures/single_prediction\.pdb",
-        stats_pattern=r"/boltz/single_prediction/.+\.tsv",
-        alignment_pattern=r"/mmseqs/single_prediction\.a3m",
+        pdb_pattern=rf"/boltz/top_ranked_structures/{sample_id_pattern}\.pdb",
+        # Find across all subfolders
+        stats_pattern=rf"/boltz/{sample_id_pattern}/.+\.tsv",
+        alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
     )
 
 
-def classify_alphafold2_proteinfold_output(key: str) -> ClassifiedOutput | None:
+def classify_alphafold2_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+    sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=(
-            r"/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction\.pdb"
-        ),
-        stats_pattern=(
-            r"/alphafold2/split_msa_prediction/single_prediction/.+\.tsv"
-        ),
+        pdb_pattern=rf"/alphafold2/split_msa_prediction/top_ranked_structures/{sample_id_pattern}\.pdb",
+        stats_pattern=rf"/alphafold2/split_msa_prediction/{sample_id_pattern}/.+\.tsv",
     )
 
 
-def classify_colabfold_proteinfold_output(key: str) -> ClassifiedOutput | None:
+def classify_colabfold_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+    sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=r"/colabfold/top_ranked_structures/single_prediction\.pdb",
-        stats_pattern=r"/colabfold/single_prediction/.+\.tsv",
-        alignment_pattern=r"/mmseqs/single_prediction\.a3m",
+        pdb_pattern=rf"/colabfold/top_ranked_structures/{sample_id_pattern}\.pdb",
+        stats_pattern=rf"/colabfold/{sample_id_pattern}/.+\.tsv",
+        alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
     )
 
 
@@ -478,8 +485,9 @@ def collect_outputs(
     Return output keys and their categories for a given workflow run.
     """
     outputs = {}
+    sample_id = get_sample_id_for_result(run)
     for key in _get_run_output_keys(db, run):
-        classified = spec.classify(key)
+        classified = spec.classify(key, sample_id)
         if classified is not None:
             outputs[key] = classified
     return outputs
@@ -499,8 +507,9 @@ def collect_classified_outputs(
     spec: WorkflowResultsSpec,
 ) -> dict[str, ClassifiedOutput]:
     outputs = {}
+    sample_id = get_sample_id_for_result(run)
     for key in _get_run_output_keys(db, run):
-        classified = spec.classify(key)
+        classified = spec.classify(key, sample_id)
         if classified:
             outputs[key] = classified
     return outputs
@@ -594,6 +603,7 @@ async def list_workflow_outputs_from_s3(
 ) -> dict[str, ClassifiedOutput]:
     """Discover workflow result artifacts in S3"""
     outputs: dict[str, ClassifiedOutput] = {}
+    sample_id = get_sample_id_for_result(run)
 
     for prefix in spec.get_prefixes(run):
         try:
@@ -619,7 +629,7 @@ async def list_workflow_outputs_from_s3(
             if not key or key in outputs:
                 continue
 
-            classified = spec.classify(key)
+            classified = spec.classify(key, sample_id)
             if classified is not None:
                 outputs[key] = classified
 
