@@ -486,21 +486,6 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
 }
 
 
-def collect_outputs(
-    db: Session, run: WorkflowRun, spec: WorkflowResultsSpec
-) -> dict[str, ClassifiedOutput]:
-    """
-    Return output keys and their categories for a given workflow run.
-    """
-    outputs = {}
-    sample_id = get_sample_id_for_result(run)
-    for key in _get_run_output_keys(db, run):
-        classified = spec.classify(key, sample_id)
-        if classified is not None:
-            outputs[key] = classified
-    return outputs
-
-
 def missing_required_categories(
     outputs: dict[str, ClassifiedOutput],
     spec: WorkflowResultsSpec,
