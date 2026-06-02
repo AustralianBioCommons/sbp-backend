@@ -12,8 +12,14 @@ from app.db.models.core import WorkflowRun
 from app.services.results_utils import (
     ClassifiedOutput,
     _build_s3_uri,
+    build_alphafold2_proteinfold_output_listing_prefixes,
     build_bindcraft_output_listing_prefixes,
+    build_boltz_proteinfold_output_listing_prefixes,
+    build_colabfold_proteinfold_output_listing_prefixes,
+    classify_alphafold2_proteinfold_output,
     classify_bindcraft_output_key,
+    classify_boltz_proteinfold_output,
+    classify_colabfold_proteinfold_output,
     format_log_entries,
     get_sample_id_for_result,
     resolve_pdb_presigned_urls,
@@ -140,6 +146,89 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    assert classify_boltz_proteinfold_output(" ") is None
+    assert classify_boltz_proteinfold_output("folder/") is None
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/reports/T1024_boltz_report.html"
+    ) == ClassifiedOutput("report", "T1024_boltz_report.html")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/single_prediction/paes/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/mmseqs/single_prediction.a3m"
+    ) == ClassifiedOutput("alignment", "single_prediction.a3m")
+
+    assert build_boltz_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/boltz/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/boltz/T1024/",
+    ]
+
+
+def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/reports/T1024_alphafold2_report.html"
+    ) == ClassifiedOutput("report", "T1024_alphafold2_report.html")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/single_prediction/paes/T1024_0_pae.tsv"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    # No alignment expected for alphafol2
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/mmseqs/results/T1024.a3m"
+    ) is None
+
+    assert build_alphafold2_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+    ]
+
+
+def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/reports/T1024_colabfold_report.html"
+    ) == ClassifiedOutput("report", "T1024_colabfold_report.html")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/single_prediction.pdb"
+    ) == ClassifiedOutput("pdb", "single_prediction.pdb")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/single_prediction/abcd1234.tsv"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/T1024/paes/T1024_0_pae.tsv"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/mmseqs/T1024.a3m"
+    ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    assert build_colabfold_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/colabfold/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/colabfold/T1024/",
+    ]
 
 
 @pytest.mark.asyncio

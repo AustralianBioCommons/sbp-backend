@@ -284,6 +284,60 @@ def classify_bindcraft_output_key(key: str) -> ClassifiedOutput | None:
     return None
 
 
+def classify_proteinfold_output_key(
+    key: str,
+    *,
+    pdb_pattern: str,
+    stats_pattern: str,
+    alignment_pattern: str | None = None,
+) -> ClassifiedOutput | None:
+    report_pattern = r"/reports/[^/]+_report\.html"
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+    filename = normalized.rsplit("/", 1)[-1]
+
+    if re.search(report_pattern, normalized):
+        return ClassifiedOutput(category="report", label=filename)
+    if re.search(pdb_pattern, normalized):
+        return ClassifiedOutput(category="pdb", label=filename)
+    if re.search(stats_pattern, normalized):
+        return ClassifiedOutput(category="stats_csv", label=filename)
+    if alignment_pattern is not None and re.search(alignment_pattern, normalized):
+        return ClassifiedOutput(category="alignment", label=filename)
+    return None
+
+
+def classify_boltz_proteinfold_output(key: str) -> ClassifiedOutput | None:
+    return classify_proteinfold_output_key(
+        key,
+        pdb_pattern=r"/boltz/top_ranked_structures/single_prediction\.pdb",
+        stats_pattern=r"/boltz/single_prediction/.+\.tsv",
+        alignment_pattern=r"/mmseqs/single_prediction\.a3m",
+    )
+
+
+def classify_alphafold2_proteinfold_output(key: str) -> ClassifiedOutput | None:
+    return classify_proteinfold_output_key(
+        key,
+        pdb_pattern=(
+            r"/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction\.pdb"
+        ),
+        stats_pattern=(
+            r"/alphafold2/split_msa_prediction/single_prediction/.+\.tsv"
+        ),
+    )
+
+
+def classify_colabfold_proteinfold_output(key: str) -> ClassifiedOutput | None:
+    return classify_proteinfold_output_key(
+        key,
+        pdb_pattern=r"/colabfold/top_ranked_structures/single_prediction\.pdb",
+        stats_pattern=r"/colabfold/single_prediction/.+\.tsv",
+        alignment_pattern=r"/mmseqs/single_prediction\.a3m",
+    )
+
+
 def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
@@ -307,6 +361,68 @@ def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     return prefixes
 
 
+def build_boltz_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+
+    sample_id = get_sample_id_for_result(run)
+
+    prefixes = [
+        f"{run_uuid}/reports/",
+        f"{run_uuid}/boltz/top_ranked_structures/",
+        f"{run_uuid}/mmseqs/",
+    ]
+
+    if sample_id:
+        prefixes.append(f"{run_uuid}/boltz/{sample_id}/")
+    else:
+        prefixes.append(f"{run_uuid}/boltz/")
+
+    return prefixes
+
+
+def build_alphafold2_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+
+    sample_id = get_sample_id_for_result(run)
+
+    prefixes = [
+        f"{run_uuid}/reports/",
+        f"{run_uuid}/alphafold2/split_msa_prediction/top_ranked_structures/",
+    ]
+
+    if sample_id:
+        prefixes.append(f"{run_uuid}/alphafold2/split_msa_prediction/{sample_id}/")
+    else:
+        prefixes.append(f"{run_uuid}/alphafold2/split_msa_prediction/")
+
+    return prefixes
+
+
+def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+
+    sample_id = get_sample_id_for_result(run)
+
+    prefixes = [
+        f"{run_uuid}/reports/",
+        f"{run_uuid}/colabfold/top_ranked_structures/",
+        f"{run_uuid}/mmseqs/",
+    ]
+
+    if sample_id:
+        prefixes.append(f"{run_uuid}/colabfold/{sample_id}/")
+    else:
+        prefixes.append(f"{run_uuid}/colabfold/")
+
+    return prefixes
+
+
 WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec]] = {
     "de-novo": {
         "bindcraft": WorkflowResultsSpec(
@@ -317,14 +433,29 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
             classify=classify_bindcraft_output_key,
         ),
     },
-    # "proteinfold": {
-    #     "colabfold": WorkflowOutputSpec(
-    #     kind="proteinfold",
-    #     tool="colabfold",
-    #     required_download_categories=frozenset({"report", "pdb", "stats_tsv"}),
-    #     listing_prefixes=build_proteinfold_output_listing_prefixes,
-    #     classify_key=classify_proteinfold_output_key,
-    # ),
+    "proteinfold": {
+        "boltz": WorkflowResultsSpec(
+            kind="proteinfold",
+            tool="boltz",
+            required_categories={"report", "pdb", "stats_csv", "alignment"},
+            get_prefixes=build_boltz_proteinfold_output_listing_prefixes,
+            classify=classify_boltz_proteinfold_output,
+        ),
+        "alphafold2": WorkflowResultsSpec(
+            kind="proteinfold",
+            tool="alphafold2",
+            required_categories={"report", "pdb", "stats_csv"},
+            get_prefixes=build_alphafold2_proteinfold_output_listing_prefixes,
+            classify=classify_alphafold2_proteinfold_output,
+        ),
+        "colabfold": WorkflowResultsSpec(
+            kind="proteinfold",
+            tool="colabfold",
+            required_categories={"report", "pdb", "stats_csv", "alignment"},
+            get_prefixes=build_colabfold_proteinfold_output_listing_prefixes,
+            classify=classify_colabfold_proteinfold_output,
+        ),
+    }
 }
 
 
