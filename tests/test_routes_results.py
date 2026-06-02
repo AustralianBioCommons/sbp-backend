@@ -794,6 +794,32 @@ async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
 
 
 @pytest.mark.asyncio
+async def test_get_result_report_maps_multiple_reports_to_409(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|results-user-report-conflict",
+        name="Results User Report Conflict",
+        email="results-report-conflict@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-report-conflict",
+        work_dir="/tmp/wf-report-conflict",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(side_effect=ValueError("Multiple report outputs found")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_report("wf-report-conflict", user.id, test_db)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Multiple report outputs found"
+
+
+@pytest.mark.asyncio
 async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-config-error",

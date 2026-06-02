@@ -524,6 +524,32 @@ async def test_get_result_snapshot_downloads_returns_empty_when_missing(test_db)
 
 
 @pytest.mark.asyncio
+async def test_get_result_snapshot_downloads_skips_s3_for_proteinfold_workflows(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|proteinfold-no-snapshot-user",
+        name="Proteinfold No Snapshot User",
+        email="proteinfold-no-snapshot-user@example.com",
+    )
+    workflow = Workflow(name="proteinfold")
+    run = WorkflowRun(
+        owner=user,
+        workflow=workflow,
+        tool="boltz",
+        seqera_run_id="seqera-proteinfold-no-snapshots",
+        sample_id="T1024",
+        work_dir="workdir-proteinfold-no-snapshots",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.commit()
+
+    with patch("app.services.results_utils.list_s3_files", new_callable=AsyncMock) as mocked_list:
+        result = await results_utils.get_result_snapshot_downloads(test_db, run)
+
+    assert result == []
+    mocked_list.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_result_report_download_returns_tracked_report(test_db):
     user = AppUser(
         auth0_user_id="auth0|report-download-user",
