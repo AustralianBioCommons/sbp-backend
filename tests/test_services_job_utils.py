@@ -221,12 +221,12 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
     # Get workflow types for user1
     user1_types = job_utils.get_workflow_type_by_seqera_run_id(test_db, user1.id)
-    assert user1_types == {"run-user1-1": "BindCraft"}
+    assert user1_types == {"run-user1-1": "Bindcraft"}
     assert "run-user2-1" not in user1_types
 
     # Get workflow types for user2
     user2_types = job_utils.get_workflow_type_by_seqera_run_id(test_db, user2.id)
-    assert user2_types == {"run-user2-1": "OtherWorkflow"}
+    assert user2_types == {"run-user2-1": "Otherworkflow"}
     assert "run-user1-1" not in user2_types
 
 

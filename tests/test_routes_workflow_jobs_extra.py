@@ -95,7 +95,7 @@ async def test_get_job_details_success(test_db):
 
     assert result.id == "wf-1"
     assert result.jobName == "PDL1"
-    assert result.workflowType == "BindCraft"
+    assert result.workflow == "Bindcraft"
     assert result.score == 0.912
 
 

@@ -310,7 +310,8 @@ def test_job_list_item_valid():
     job = JobListItem(
         id="wf-123",
         jobName="Test Job",
-        workflowType="BindCraft",
+        workflow="BindCraft",
+        tool="BindCraft",
         status="Completed",
         submittedAt=datetime(2026, 2, 1, 10, 0, 0),
         score=0.95,
@@ -318,7 +319,7 @@ def test_job_list_item_valid():
 
     assert job.id == "wf-123"
     assert job.jobName == "Test Job"
-    assert job.workflowType == "BindCraft"
+    assert job.workflow == "BindCraft"
     assert job.status == "Completed"
     assert job.score == 0.95
 
@@ -328,13 +329,14 @@ def test_job_list_item_optional_fields():
     job = JobListItem(
         id="wf-456",
         jobName="Another Job",
-        workflowType=None,
+        workflow="Unknown",
+        tool="Unknown",
         status="In progress",
         submittedAt=datetime(2026, 2, 2, 11, 0, 0),
         score=None,
     )
 
-    assert job.workflowType is None
+    assert job.workflow == "Unknown"
     assert job.score is None
 
 
@@ -344,12 +346,16 @@ def test_job_list_response_valid():
         JobListItem(
             id="wf-1",
             jobName="Job 1",
+            workflow="Unknown",
+            tool="Unknown",
             status="Completed",
             submittedAt=datetime(2026, 2, 1, 10, 0, 0),
         ),
         JobListItem(
             id="wf-2",
             jobName="Job 2",
+            workflow="Unknown",
+            tool="Unknown",
             status="In progress",
             submittedAt=datetime(2026, 2, 2, 11, 0, 0),
         ),
