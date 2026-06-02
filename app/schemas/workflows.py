@@ -163,6 +163,7 @@ class DatasetUploadResponse(BaseModel):
     message: str
     datasetId: str
     success: bool
+    splitOutputDir: str | None = None
     details: dict[str, Any] | None = None
 
 

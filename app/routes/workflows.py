@@ -42,6 +42,12 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
+from ..services.wisps_executor import (
+    WispsConfigurationError,
+    WispsExecutorError,
+    WispsLaunchResult,
+    launch_wisps_workflow,
+)
 from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from .dependencies import (
     get_client_ip,
@@ -148,7 +154,7 @@ async def launch_workflow(
     final_design_count = _extract_final_design_count(payload.formData)
 
     # Extract the user-selected algorithm from formData.
-    # All pages now store it under 'tool' (e.g. "bindcraft", "colabfold").
+    # All pages store it under 'tool' (e.g. "Proteinfold", "BindCraft").
     # 'mode' is kept only as a fallback for records created before the rename.
     form_data = payload.formData or {}
     selected_tool: str | None = None
@@ -226,7 +232,7 @@ async def launch_workflow(
         work_dir=run_work_dir,
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
-        tool=selected_tool,
+        tool=str(form_data.get("mode") or selected_tool or "").strip() or selected_tool,
     )
 
     db_session.add(workflow_run)
@@ -234,9 +240,30 @@ async def launch_workflow(
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
     db_session.commit()
 
+    workflow_name = workflow.name.lower()
+
+    # Validate interaction-screening-specific fields before entering the try block
+    # so that HTTPException is not swallowed by the generic except Exception handler.
+    wisps_fasta_s3_uri: str | None = None
+    wisps_split_output_dir: str | None = None
+    wisps_tool: str | None = None
+    if workflow_name == "interaction-screening":
+        wisps_fasta_s3_uri = str(form_data.get("fastaS3Uri") or "").strip() or None
+        wisps_split_output_dir = str(form_data.get("splitOutputDir") or "").strip() or None
+        wisps_tool = str(form_data.get("mode") or "").strip() or None
+        if not wisps_fasta_s3_uri:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="'fastaS3Uri' is required in formData for interaction-screening.",
+            )
+        if not wisps_split_output_dir:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="'splitOutputDir' is required in formData for interaction-screening.",
+            )
+
     try:
-        result: BindflowLaunchResult | ProteinfoldLaunchResult
-        workflow_name = workflow.name.lower()
+        result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
@@ -274,6 +301,28 @@ async def launch_workflow(
                 institute=institute,
                 ip_address=ip_address,
             )
+        elif workflow_name == "interaction-screening":
+            if not workflow.config_path:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
+                )
+            wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            result = await launch_wisps_workflow(
+                wisps_launch_form,
+                dataset_id,
+                pipeline=workflow.repo_url,
+                revision=workflow.default_revision,
+                config_path=workflow.config_path,
+                output_id=str(run_id),
+                tool=wisps_tool,
+                fasta_s3_uri=wisps_fasta_s3_uri,  # type: ignore[arg-type]
+                split_output_dir=wisps_split_output_dir,  # type: ignore[arg-type]
+                user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
+            )
         else:
             db_session.rollback()
             raise HTTPException(
@@ -282,12 +331,15 @@ async def launch_workflow(
             )
         workflow_run.seqera_run_id = result.workflow_id
         db_session.commit()
-    except (BindflowConfigurationError, ProteinfoldConfigurationError) as exc:
+    except HTTPException:
+        db_session.rollback()
+        raise
+    except (BindflowConfigurationError, ProteinfoldConfigurationError, WispsConfigurationError) as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except (BindflowExecutorError, ProteinfoldExecutorError) as exc:
+    except (BindflowExecutorError, ProteinfoldExecutorError, WispsExecutorError) as exc:
         db_session.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:
@@ -450,5 +502,6 @@ async def upload_interaction_screening_dataset_endpoint(
         message="Dataset created and uploaded successfully",
         datasetId=upload_result.dataset_id,
         success=upload_result.success,
+        splitOutputDir=upload_result.split_output_dir,
         details=upload_result.raw_response,
     )
