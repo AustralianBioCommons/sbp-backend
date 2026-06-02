@@ -46,6 +46,10 @@ async def test_list_jobs_success(mock_db, mock_user_id):
             return_value={run_id: "BindCraft"},
         ),
         patch(
+            "app.routes.workflow.jobs.get_tool_by_seqera_run_id",
+            return_value={run_id: "BindCraft"},
+        ),
+        patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             return_value={
@@ -73,7 +77,7 @@ async def test_list_jobs_success(mock_db, mock_user_id):
     assert response.jobs[0].id == run_id
     assert response.jobs[0].jobName == "Test Job"
     assert response.jobs[0].status == "Completed"
-    assert response.jobs[0].workflowType == "BindCraft"
+    assert response.jobs[0].workflow == "BindCraft"
 
 
 @pytest.mark.asyncio
@@ -88,6 +92,7 @@ async def test_list_jobs_with_search(mock_db, mock_user_id):
             "app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id",
             return_value={run_id: "BindCraft"},
         ),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -122,6 +127,7 @@ async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -150,6 +156,7 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -178,6 +185,7 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=run_ids),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -209,6 +217,7 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -241,6 +250,7 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
@@ -269,6 +279,7 @@ async def test_list_jobs_seqera_5xx_error_propagates(mock_db, mock_user_id):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -297,6 +308,8 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
 
     owned_run = mocker.Mock(spec=WorkflowRun)
     owned_run.workflow = workflow
+    owned_run.tool = None
+    owned_run.submitted_form_data = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
@@ -326,7 +339,7 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
     assert response.id == run_id
     assert response.jobName == "Test Job Details"
     assert response.status == "Completed"
-    assert response.workflowType == "BindCraft"
+    assert response.workflow == "Bindcraft"
     assert response.score == 0.95
 
 
@@ -350,6 +363,8 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
     """Test that in-progress jobs don't return a score."""
     owned_run = mocker.Mock(spec=WorkflowRun)
     owned_run.workflow = None
+    owned_run.tool = None
+    owned_run.submitted_form_data = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
@@ -409,6 +424,7 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mocker):
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,

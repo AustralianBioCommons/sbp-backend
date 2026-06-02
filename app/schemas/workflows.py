@@ -208,9 +208,8 @@ class JobListItem(BaseModel):
 
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(
-        None, description="Workflow type (e.g., BindCraft, De novo design)"
-    )
+    workflow: str = Field(..., description="Workflow name from the workflows table")
+    tool: str = Field(..., description="Tool used (e.g., BindCraft)")
     status: str = Field(..., description="UI-friendly status (e.g., Completed, In progress)")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")
@@ -231,7 +230,8 @@ class JobDetailsResponse(BaseModel):
 
     id: str = Field(..., description="Workflow run ID")
     jobName: str = Field(..., description="Human-readable job name")
-    workflowType: str | None = Field(None, description="Workflow type")
+    workflow: str = Field(..., description="Workflow name from the workflows table")
+    tool: str = Field(..., description="Tool used (e.g., BindCraft); 'Unknown' if not recorded")
     status: str = Field(..., description="UI-friendly status")
     submittedAt: datetime = Field(..., description="Submission date and time")
     score: float | None = Field(None, description="Job score/metric")

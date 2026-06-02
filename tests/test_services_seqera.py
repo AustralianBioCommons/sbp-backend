@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import httpx
 import pytest
 import respx
@@ -45,6 +48,8 @@ async def test_launch_success_minimal():
         form,
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
+        mode="bindcraft",
+        form_data={},
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -82,6 +87,8 @@ async def test_launch_success_with_all_params():
         dataset_id="dataset_789",
         pipeline="https://github.com/test/repo",
         revision="main",
+        mode="bindcraft",
+        form_data={},
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -92,8 +99,6 @@ async def test_launch_success_with_all_params():
     assert result.workflow_id == "wf_full_456"
     assert route.called
     request = route.calls.last.request
-    import json
-
     payload = json.loads(request.content)
     assert "datasetIds" in payload["launch"]
     assert "dataset_789" in payload["launch"]["datasetIds"]
@@ -113,6 +118,8 @@ async def test_launch_includes_default_params():
         form,
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
+        mode="bindcraft",
+        form_data={},
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -121,8 +128,6 @@ async def test_launch_includes_default_params():
     )
 
     request = route.calls.last.request
-    import json
-
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
@@ -145,6 +150,8 @@ async def test_launch_with_dataset_adds_input_url():
         form,
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
+        mode="bindcraft",
+        form_data={},
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -153,8 +160,6 @@ async def test_launch_with_dataset_adds_input_url():
     )
 
     request = route.calls.last.request
-    import json
-
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
@@ -178,6 +183,8 @@ async def test_launch_api_error_response():
             form,
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
+            mode="bindcraft",
+            form_data={},
             user_email="test@example.com",
             full_name="Test_User",
             institute="example.com",
@@ -201,6 +208,8 @@ async def test_launch_missing_workflow_id_in_response():
             form,
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
+            mode="bindcraft",
+            form_data={},
             user_email="test@example.com",
             full_name="Test_User",
             institute="example.com",
@@ -213,19 +222,19 @@ def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
     form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-custom-params")
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv("SEQERA_API_URL", raising=False)
-        mp.delenv("SEQERA_ACCESS_TOKEN", raising=False)
-        mp.delenv("WORK_SPACE", raising=False)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.delenv("SEQERA_API_URL", raising=False)
+        monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("WORK_SPACE", raising=False)
 
         with pytest.raises(BindflowConfigurationError):
-            import asyncio
-
             asyncio.run(
                 launch_bindflow_workflow(
                     form,
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
+                    mode="bindcraft",
+                    form_data={},
                     user_email="test@example.com",
                     full_name="Test_User",
                     institute="example.com",
@@ -253,6 +262,8 @@ async def test_launch_with_custom_params_text():
         form,
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
+        mode="bindcraft",
+        form_data={},
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -261,8 +272,6 @@ async def test_launch_with_custom_params_text():
     )
 
     request = route.calls.last.request
-    import json
-
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 

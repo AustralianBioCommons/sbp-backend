@@ -24,9 +24,12 @@ from ...services.job_utils import (
     coerce_workflow_payload,
     ensure_completed_bindcraft_score,
     extract_pipeline_status,
+    format_tool_name,
+    format_workflow_name,
     get_owned_run,
     get_owned_run_ids,
     get_score_by_seqera_run_id,
+    get_tool_by_seqera_run_id,
     get_workflow_type_by_seqera_run_id,
     parse_submit_datetime,
 )
@@ -99,6 +102,7 @@ async def list_jobs(
         owned_run_ids = get_owned_run_ids(db, current_user_id)
         score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
         workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
+        tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
         search_text = (search or "").strip().lower()
         allowed_statuses = set(status_filter or [])
         jobs: list[JobListItem] = []
@@ -118,7 +122,8 @@ async def list_jobs(
             if allowed_statuses and ui_status not in allowed_statuses:
                 continue
 
-            workflow_type = workflow_type_by_run_id.get(run_id)
+            workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
+            tool = tool_by_run_id.get(run_id, "Unknown")
             job_name = _resolve_job_name(run_id, wf, owned_run)
             if (
                 search_text
@@ -135,7 +140,8 @@ async def list_jobs(
                 JobListItem(
                     id=run_id,
                     jobName=job_name,
-                    workflowType=workflow_type,
+                    workflow=workflow_type,
+                    tool=tool,
                     status=ui_status,
                     submittedAt=parse_submit_datetime(payload) or datetime.now(timezone.utc),
                     score=score if ui_status == "Completed" else None,
@@ -194,10 +200,23 @@ async def get_job_details(
     if ui_status != "Completed":
         score = None
 
+    raw_tool: str | None = getattr(owned_run, "tool", None) or None
+    if not raw_tool:
+        form_data = owned_run.submitted_form_data
+        if isinstance(form_data, dict):
+            for _key in ("tool", "mode"):
+                _raw = form_data.get(_key)
+                if _raw and str(_raw).strip():
+                    raw_tool = str(_raw).strip()
+                    break
+    tool = format_tool_name(raw_tool) if raw_tool else "Unknown"
     return JobDetailsResponse(
         id=run_id,
         jobName=_resolve_job_name(run_id, wf, owned_run),
-        workflowType=(owned_run.workflow.name if owned_run.workflow else None),
+        workflow=(
+            format_workflow_name(owned_run.workflow.name) if owned_run.workflow else "Unknown"
+        ),
+        tool=tool,
         status=ui_status,
         submittedAt=submitted_at,
         score=score,
