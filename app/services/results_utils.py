@@ -284,7 +284,9 @@ def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
     )
 
 
-def classify_bindcraft_output_key(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_bindcraft_output_key(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
@@ -327,7 +329,9 @@ def classify_proteinfold_output_key(
     return None
 
 
-def classify_boltz_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_boltz_proteinfold_output(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
@@ -338,7 +342,9 @@ def classify_boltz_proteinfold_output(key: str, sample_id: str | None = None) ->
     )
 
 
-def classify_alphafold2_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_alphafold2_proteinfold_output(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
@@ -347,7 +353,9 @@ def classify_alphafold2_proteinfold_output(key: str, sample_id: str | None = Non
     )
 
 
-def classify_colabfold_proteinfold_output(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_colabfold_proteinfold_output(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
@@ -474,7 +482,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_colabfold_proteinfold_output_listing_prefixes,
             classify=classify_colabfold_proteinfold_output,
         ),
-    }
+    },
 }
 
 

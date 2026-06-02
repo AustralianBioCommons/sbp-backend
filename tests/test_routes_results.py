@@ -468,9 +468,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
         new_callable=AsyncMock,
         return_value=[],
     ) as mock_list_s3_files:
-        result = await get_result_downloads(
-            f"wf-proteinfold-downloads-{tool}", user.id, test_db
-        )
+        result = await get_result_downloads(f"wf-proteinfold-downloads-{tool}", user.id, test_db)
 
     assert result.runId == f"wf-proteinfold-downloads-{tool}"
     assert [item.category for item in result.downloads] == [
@@ -481,8 +479,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
         f"{run.id}/{relative_key}" for _, _, relative_key in expected_outputs
     ]
     assert [item.url for item in result.downloads] == [
-        f"https://signed.example/{run.id}/{relative_key}"
-        for _, _, relative_key in expected_outputs
+        f"https://signed.example/{run.id}/{relative_key}" for _, _, relative_key in expected_outputs
     ]
     assert mock_presign.await_count == len(expected_outputs)
     mock_list_s3_files.assert_not_awaited()
