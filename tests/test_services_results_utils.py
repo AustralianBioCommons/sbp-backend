@@ -22,6 +22,7 @@ from app.services.results_utils import (
     classify_colabfold_proteinfold_output,
     format_log_entries,
     get_sample_id_for_result,
+    get_tool_name,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
@@ -78,6 +79,31 @@ def test_resolve_submitted_form_data_returns_none_when_nothing_available():
     run = SimpleNamespace(submitted_form_data=None, sample_id=None, binder_name=None, metrics=None)
 
     assert resolve_submitted_form_data(run) is None
+
+
+def test_get_tool_name_uses_tool_column():
+    run = SimpleNamespace(tool="colabfold", submitted_form_data=None)
+    assert get_tool_name(run) == "colabfold"
+
+
+def test_get_tool_name_falls_back_to_form_data_tool_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"tool": "alphafold2"})
+    assert get_tool_name(run) == "alphafold2"
+
+
+def test_get_tool_name_falls_back_to_form_data_mode_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"mode": "boltz"})
+    assert get_tool_name(run) == "boltz"
+
+
+def test_get_tool_name_tool_column_takes_priority():
+    run = SimpleNamespace(tool="colabfold", submitted_form_data={"mode": "alphafold2"})
+    assert get_tool_name(run) == "colabfold"
+
+
+def test_get_tool_name_returns_none_when_nothing_available():
+    run = SimpleNamespace(tool=None, submitted_form_data=None)
+    assert get_tool_name(run) is None
 
 
 def test_s3_uri_to_key_handles_empty_non_s3_and_invalid_s3_values():
