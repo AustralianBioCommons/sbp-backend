@@ -179,17 +179,41 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
 
     assert classify_boltz_proteinfold_output(" ") is None
     assert classify_boltz_proteinfold_output("folder/") is None
+
+    # With sample_id, paths use the sample_id name
     assert classify_boltz_proteinfold_output(
-        f"{run.id}/reports/T1024_boltz_report.html"
+        f"{run.id}/reports/T1024_boltz_report.html", "T1024"
     ) == ClassifiedOutput("report", "T1024_boltz_report.html")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/T1024/paes/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/mmseqs/T1024.a3m", "T1024"
+    ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/single_prediction.pdb", "T1024"
+    ) is None
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/single_prediction/abcd1234.tsv", "T1024"
+    ) is None
+    assert classify_boltz_proteinfold_output(
+        f"{run.id}/mmseqs/single_prediction.a3m", "T1024"
+    ) is None
+
+    # Without sample_id, falls back to matching "single_prediction"
     assert classify_boltz_proteinfold_output(
         f"{run.id}/boltz/top_ranked_structures/single_prediction.pdb"
     ) == ClassifiedOutput("pdb", "single_prediction.pdb")
     assert classify_boltz_proteinfold_output(
         f"{run.id}/boltz/single_prediction/abcd1234.tsv"
-    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
-    assert classify_boltz_proteinfold_output(
-        f"{run.id}/boltz/single_prediction/paes/abcd1234.tsv"
     ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
     assert classify_boltz_proteinfold_output(
         f"{run.id}/mmseqs/single_prediction.a3m"
@@ -206,9 +230,34 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
 def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
+    # With sample_id, paths use the sample_id name
     assert classify_alphafold2_proteinfold_output(
-        f"{run.id}/reports/T1024_alphafold2_report.html"
+        f"{run.id}/reports/T1024_alphafold2_report.html", "T1024"
     ) == ClassifiedOutput("report", "T1024_alphafold2_report.html")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/paes/T1024_0_pae.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    # No alignment expected for alphafold2
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/mmseqs/results/T1024.a3m", "T1024"
+    ) is None
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction.pdb",
+        "T1024",
+    ) is None
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/single_prediction/abcd1234.tsv", "T1024"
+    ) is None
+
+    # Without sample_id, falls back to matching "single_prediction"
     assert classify_alphafold2_proteinfold_output(
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/single_prediction.pdb"
     ) == ClassifiedOutput("pdb", "single_prediction.pdb")
@@ -218,10 +267,6 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
     assert classify_alphafold2_proteinfold_output(
         f"{run.id}/alphafold2/split_msa_prediction/single_prediction/paes/T1024_0_pae.tsv"
     ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
-    # No alignment expected for alphafol2
-    assert classify_alphafold2_proteinfold_output(
-        f"{run.id}/mmseqs/results/T1024.a3m"
-    ) is None
 
     assert build_alphafold2_proteinfold_output_listing_prefixes(run) == [
         f"{run.id}/reports/",
@@ -233,9 +278,35 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
 def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
+    # With sample_id, paths use the sample_id name
     assert classify_colabfold_proteinfold_output(
-        f"{run.id}/reports/T1024_colabfold_report.html"
+        f"{run.id}/reports/T1024_colabfold_report.html", "T1024"
     ) == ClassifiedOutput("report", "T1024_colabfold_report.html")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/T1024.pdb", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/T1024/abcd1234.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/T1024/paes/T1024_0_pae.tsv", "T1024"
+    ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/mmseqs/T1024.a3m", "T1024"
+    ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # "single_prediction" paths do not match when sample_id is set
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/single_prediction.pdb", "T1024"
+    ) is None
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/single_prediction/abcd1234.tsv", "T1024"
+    ) is None
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/mmseqs/single_prediction.a3m", "T1024"
+    ) is None
+
+    # Without sample_id, falls back to matching "single_prediction"
     assert classify_colabfold_proteinfold_output(
         f"{run.id}/colabfold/top_ranked_structures/single_prediction.pdb"
     ) == ClassifiedOutput("pdb", "single_prediction.pdb")
