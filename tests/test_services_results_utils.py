@@ -217,11 +217,11 @@ def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
         f"{run.id}/colabfold/single_prediction/abcd1234.tsv"
     ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
     assert classify_colabfold_proteinfold_output(
-        f"{run.id}/colabfold/T1024/paes/T1024_0_pae.tsv"
+        f"{run.id}/colabfold/single_prediction/paes/T1024_0_pae.tsv"
     ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
     assert classify_colabfold_proteinfold_output(
-        f"{run.id}/mmseqs/T1024.a3m"
-    ) == ClassifiedOutput("alignment", "T1024.a3m")
+        f"{run.id}/mmseqs/single_prediction.a3m"
+    ) == ClassifiedOutput("alignment", "single_prediction.a3m")
 
     assert build_colabfold_proteinfold_output_listing_prefixes(run) == [
         f"{run.id}/reports/",
