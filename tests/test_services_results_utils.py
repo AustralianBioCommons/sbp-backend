@@ -86,8 +86,18 @@ def test_get_tool_name_uses_tool_column():
     assert get_tool_name(run) == "colabfold"
 
 
+def test_get_tool_name_strips_and_lowercases_tool_column():
+    run = SimpleNamespace(tool="  BindCraft  ", submitted_form_data=None)
+    assert get_tool_name(run) == "bindcraft"
+
+
 def test_get_tool_name_falls_back_to_form_data_tool_key():
     run = SimpleNamespace(tool=None, submitted_form_data={"tool": "alphafold2"})
+    assert get_tool_name(run) == "alphafold2"
+
+
+def test_get_tool_name_strips_and_lowercases_form_data_tool_key():
+    run = SimpleNamespace(tool=None, submitted_form_data={"tool": "  AlphaFold2  "})
     assert get_tool_name(run) == "alphafold2"
 
 

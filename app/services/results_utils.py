@@ -52,6 +52,7 @@ class WorkflowResultsSpec:
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
     classify: OutputClassifier
+    supports_snapshots: bool = False
 
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
@@ -255,7 +256,9 @@ def get_tool_name(run: WorkflowRun) -> WorkflowTool | None:
     Prefer the
     """
     if run.tool is not None:
-        return cast(WorkflowTool, run.tool)
+        tool = str(run.tool).strip().lower()
+        if tool:
+            return cast(WorkflowTool, tool)
 
     # Fall back to submitted form data if not available in run.tool
     form_data = getattr(run, "submitted_form_data", None)
@@ -263,7 +266,7 @@ def get_tool_name(run: WorkflowRun) -> WorkflowTool | None:
         for key in ("tool", "mode"):
             raw = form_data.get(key)
             if raw and str(raw).strip():
-                return cast(WorkflowTool, str(raw).strip())
+                return cast(WorkflowTool, str(raw).strip().lower())
 
     return None
 
@@ -458,6 +461,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
             required_categories={"report", "stats_csv", "pdb"},
             get_prefixes=build_bindcraft_output_listing_prefixes,
             classify=classify_bindcraft_output_key,
+            supports_snapshots=True,
         ),
     },
     "proteinfold": {
@@ -723,6 +727,9 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDow
 async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
     """Return pre-signed snapshot image links for the result view."""
     results_spec = get_output_spec(run)
+    if not results_spec.supports_snapshots:
+        return []
+
     outputs = collect_classified_outputs(db, run, results_spec)
     snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
