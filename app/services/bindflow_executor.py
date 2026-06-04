@@ -93,7 +93,7 @@ async def launch_bindflow_workflow(
     default_params["mode"] = mode
 
     # Merge any tool-specific params forwarded from the frontend form
-    for key, value in form_data.model_extra.items():
+    for key, value in form_data.extra_fields.items():
         if key not in default_params and value is not None:
             default_params[key] = value
 

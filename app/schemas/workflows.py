@@ -75,6 +75,10 @@ class WorkflowFormData(BaseModel):
     # Allow extra fields to be included in the form data
     model_config = ConfigDict(extra="allow")
 
+    @property
+    def extra_fields(self) -> dict[str, Any]:
+        return self.model_extra or {}
+
     workflow: WorkflowName = Field(..., description="Workflow name")
     tool: WorkflowTool = Field(..., description="Requested tool name")
     configProfiles: list[str] = Field(

@@ -91,7 +91,7 @@ def _extract_form_id(form_data: WorkflowFormData | None) -> str | None:
     if not isinstance(form_data, WorkflowFormData):
         return None
     for key in ("id", "sample_id"):
-        value = form_data.model_extra.get(key)
+        value = form_data.extra_fields.get(key)
         if value is None:
             continue
         text = str(value).strip()
@@ -103,7 +103,7 @@ def _extract_form_id(form_data: WorkflowFormData | None) -> str | None:
 def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
     if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.model_extra.get("binder_name")
+    value = form_data.extra_fields.get("binder_name")
     if value is None:
         return None
     text = str(value).strip()
@@ -113,7 +113,7 @@ def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
 def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
     if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.model_extra.get("number_of_final_designs")
+    value = form_data.extra_fields.get("number_of_final_designs")
     if value is None:
         return None
     try:
