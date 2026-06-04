@@ -46,7 +46,8 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
 class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tool: str = Field(..., description="Requested tool name")
+    tool: str = Field(..., description="Algorithm/tool to run (e.g. 'boltz', 'bindcraft')")
+    workflow: str = Field(..., description="Workflow name for DB lookup (e.g. 'interaction-screening', 'de-novo-design')")
     configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )
@@ -59,6 +60,14 @@ class WorkflowLaunchForm(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("tool is required")
+        return stripped
+
+    @field_validator("workflow")
+    @classmethod
+    def validate_workflow(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("workflow is required")
         return stripped
 
 

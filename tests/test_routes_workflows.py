@@ -86,7 +86,8 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "tool": "bindcraft",
+            "workflow": "BindCraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
@@ -94,7 +95,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             "id": "s1",
             "binder_name": "PDL1",
             "number_of_final_designs": 20,
-            "tool": "bindcraft",
         },
     }
 
@@ -106,7 +106,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
     assert data["status"] == "submitted"
     assert "submitTime" in data
     launch_form_arg = mock_launch.call_args[0][0]
-    assert launch_form_arg.tool == "BindCraft"
+    assert launch_form_arg.tool == "bindcraft"
     assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
     assert mock_launch.call_args.kwargs["revision"] == "dev"
     assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
@@ -146,11 +146,12 @@ def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_en
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "tool": "bindcraft",
+            "workflow": "BindCraft",
             "runName": "test-with-data",
         },
         "datasetId": "dataset_456",  # Use existing dataset
-        "formData": {"tool": "bindcraft"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -178,11 +179,12 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "tool": "bindcraft",
+            "workflow": "BindCraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "bindcraft"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -203,11 +205,12 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "tool": "bindcraft",
+            "workflow": "BindCraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "bindcraft"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -237,7 +240,8 @@ def test_launch_rejects_blank_dataset_id(client: TestClient):
     """datasetId must be non-empty after trimming."""
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "tool": "bindcraft",
+            "workflow": "BindCraft",
             "runName": "test-run",
         },
         "datasetId": "   ",
@@ -255,29 +259,15 @@ def test_cancel_workflow_endpoint_removed(client: TestClient):
     assert response.status_code == 404
 
 
-def test_launch_rejects_unavailable_tool(client: TestClient):
+def test_launch_rejects_unknown_workflow(client: TestClient):
     payload = {
         "launch": {
-            "tool": "BoltzGen",
+            "tool": "boltz",
+            "workflow": "unknown-workflow",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "boltzgen"},
-    }
-
-    response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "not configured" in response.json()["detail"]
-
-
-def test_launch_rejects_unknown_tool(client: TestClient):
-    payload = {
-        "launch": {
-            "tool": "UnknownTool",
-            "runName": "test-run",
-        },
-        "datasetId": "dataset_123",
-        "formData": {"tool": "unknowntool"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -490,9 +480,9 @@ def test_launch_missing_repo_url(client: TestClient, app, test_engine):
         db.commit()
 
     payload = {
-        "launch": {"tool": "norepo", "runName": "test-run"},
+        "launch": {"tool": "anyalgo", "workflow": "norepo", "runName": "test-run"},
         "datasetId": "dataset_123",
-        "formData": {"tool": "anyalgo"},
+        "formData": {},
     }
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
@@ -514,9 +504,9 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
         db.commit()
 
     payload = {
-        "launch": {"tool": "norev", "runName": "test-run"},
+        "launch": {"tool": "anyalgo", "workflow": "norev", "runName": "test-run"},
         "datasetId": "dataset_123",
-        "formData": {"tool": "anyalgo"},
+        "formData": {},
     }
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
@@ -556,9 +546,9 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
     )
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-1"},
+        "launch": {"tool": "alphafold2", "workflow": "proteinfold", "runName": "pf-run-1"},
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -577,9 +567,9 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
     mock_launch.side_effect = ProteinfoldConfigurationError("Missing SEQERA_API_URL")
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-cfg-err"},
+        "launch": {"tool": "alphafold2", "workflow": "proteinfold", "runName": "pf-run-cfg-err"},
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -594,9 +584,9 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
     mock_launch.side_effect = ProteinfoldExecutorError("Seqera API 503")
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-exec-err"},
+        "launch": {"tool": "alphafold2", "workflow": "proteinfold", "runName": "pf-run-exec-err"},
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -610,9 +600,9 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
 
 
 _LAUNCH_PAYLOAD = {
-    "launch": {"tool": "BindCraft", "runName": "role-test-run"},
+    "launch": {"tool": "bindcraft", "workflow": "BindCraft", "runName": "role-test-run"},
     "datasetId": "dataset_role",
-    "formData": {"tool": "bindcraft"},
+    "formData": {},
 }
 
 

@@ -143,7 +143,8 @@ async def launch_workflow(
     db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
-    requested_tool = payload.launch.tool.strip().lower()
+    requested_workflow = payload.launch.workflow.strip().lower()
+    selected_tool = payload.launch.tool.strip()
 
     dataset_id = payload.datasetId.strip()
     if not dataset_id:
@@ -154,37 +155,20 @@ async def launch_workflow(
 
     form_id = _extract_form_id(payload.formData)
     if form_id is None:
-        form_id = build_sample_id(requested_tool)
+        form_id = build_sample_id(selected_tool)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
 
-    # Extract the user-selected algorithm from formData.
-    # All pages now store it under 'tool' (e.g. "bindcraft", "colabfold").
-    # 'mode' is kept only as a fallback for records created before the rename.
-    form_data = payload.formData or {}
-    selected_tool: str | None = None
-    for _key in ("tool", "mode"):
-        _raw = form_data.get(_key)
-        if _raw and str(_raw).strip():
-            selected_tool = str(_raw).strip()
-            break
-
-    if not selected_tool:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No tool selected. Provide 'tool' in formData before submitting.",
-        )
-
     # Workflow repo_url and revision come from the DB entry for this workflow name
-    # ("single-prediction", "de-novo-design", etc.).
+    # ("single-prediction", "interaction-screening", "de-novo-design", etc.).
     workflow = db_session.scalar(
-        select(Workflow).where(func.lower(Workflow.name) == requested_tool)
+        select(Workflow).where(func.lower(Workflow.name) == requested_workflow)
     )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{payload.launch.tool}' is not configured in workflows table. "
+                f"Workflow '{payload.launch.workflow}' is not configured in workflows table. "
                 "Seed the workflows catalog before launching."
             ),
         )

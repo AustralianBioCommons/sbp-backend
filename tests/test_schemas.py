@@ -29,7 +29,7 @@ from app.schemas.workflows import (
 
 def test_valid_minimal_form():
     """Test WorkflowLaunchForm with minimal valid data."""
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design")
 
     assert form.tool == "BindCraft"
     assert form.configProfiles == []
@@ -41,6 +41,7 @@ def test_valid_complete_form():
     """Test WorkflowLaunchForm with all fields."""
     form = WorkflowLaunchForm(
         tool="BindCraft",
+        workflow="de-novo-design",
         configProfiles=["docker", "test"],
         runName="my-test-run",
         paramsText="param1: value1\nparam2: value2",
@@ -62,19 +63,19 @@ def test_tool_required_and_not_empty():
 
 def test_tool_whitespace_stripped():
     """Test that tool whitespace is stripped."""
-    form = WorkflowLaunchForm(tool="  BindCraft  ")
+    form = WorkflowLaunchForm(tool="  BindCraft  ", workflow="de-novo-design")
     assert form.tool == "BindCraft"
 
 
 def test_extra_fields_forbidden():
     """Test that extra fields are not allowed."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchForm(tool="BindCraft", extraField="not allowed")
+        WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", extraField="not allowed")
 
 
 def test_valid_payload_with_launch_only():
     """Test payload with required launch and dataset ID."""
-    payload = WorkflowLaunchPayload(launch={"tool": "BindCraft"}, datasetId="dataset_123")
+    payload = WorkflowLaunchPayload(launch={"tool": "BindCraft", "workflow": "de-novo-design"}, datasetId="dataset_123")
 
     assert payload.launch.tool == "BindCraft"
     assert payload.datasetId == "dataset_123"
@@ -84,7 +85,7 @@ def test_valid_payload_with_launch_only():
 def test_valid_payload_with_dataset_id():
     """Test payload with dataset ID."""
     payload = WorkflowLaunchPayload(
-        launch={"tool": "BindCraft"},
+        launch={"tool": "BindCraft", "workflow": "de-novo-design"},
         datasetId="dataset_123",
     )
 
@@ -99,7 +100,7 @@ def test_valid_payload_with_form_data():
         "param": 42,
     }
     payload = WorkflowLaunchPayload(
-        launch={"tool": "BindCraft"},
+        launch={"tool": "BindCraft", "workflow": "de-novo-design"},
         formData=form_data,
         datasetId="dataset_123",
     )
@@ -110,12 +111,12 @@ def test_valid_payload_with_form_data():
 def test_payload_extra_fields_forbidden():
     """Test that extra fields are not allowed in payload."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(launch={"tool": "BindCraft"}, unknownField="value")
+        WorkflowLaunchPayload(launch={"tool": "BindCraft", "workflow": "de-novo-design"}, unknownField="value")
 
 
 def test_payload_requires_dataset_id():
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(launch={"tool": "BindCraft"})
+        WorkflowLaunchPayload(launch={"tool": "BindCraft", "workflow": "de-novo-design"})
 
 
 def test_valid_response():
