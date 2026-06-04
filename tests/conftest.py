@@ -157,7 +157,7 @@ def app(test_engine):
     setup_session.add(
         Workflow(
             id=uuid4(),
-            name="BindCraft",
+            name="de-novo-design",
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
@@ -200,8 +200,8 @@ def sample_workflow_launch_form():
     NOTE: Consider using WorkflowLaunchFormFactory.build() directly in tests.
     """
     return {
-        "tool": "BindCraft",
-        "revision": "main",
+        "workflow": "de-novo-design",
+        "tool": "bindcraft",
         "configProfiles": ["singularity"],
         "runName": "test-workflow-run",
         "paramsText": "test_param: value",

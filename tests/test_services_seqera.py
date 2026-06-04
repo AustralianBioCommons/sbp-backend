@@ -9,7 +9,11 @@ import httpx
 import pytest
 import respx
 
-from app.schemas.workflows import WorkflowLaunchForm
+from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+
+
+def _empty_form_data() -> WorkflowFormData:
+    return WorkflowFormData(workflow="de-novo-design", tool="bindcraft")
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
@@ -42,14 +46,14 @@ async def test_launch_success_minimal():
         )
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-test-minimal")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-test-minimal")
 
     result = await launch_bindflow_workflow(
         form,
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
         mode="bindcraft",
-        form_data={},
+        form_data=_empty_form_data(),
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -76,7 +80,8 @@ async def test_launch_success_with_all_params():
     )
 
     form = WorkflowLaunchForm(
-        tool="BindCraft",
+        workflow="de-novo-design",
+        tool="bindcraft",
         runName="my-custom-run",
         configProfiles=["docker", "test"],
         paramsText="custom_param: value",
@@ -88,7 +93,7 @@ async def test_launch_success_with_all_params():
         pipeline="https://github.com/test/repo",
         revision="main",
         mode="bindcraft",
-        form_data={},
+        form_data=_empty_form_data(),
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -112,14 +117,14 @@ async def test_launch_includes_default_params():
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-default-params")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-default-params")
 
     await launch_bindflow_workflow(
         form,
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
         mode="bindcraft",
-        form_data={},
+        form_data=_empty_form_data(),
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -144,14 +149,14 @@ async def test_launch_with_dataset_adds_input_url():
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-dataset-url")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-dataset-url")
 
     await launch_bindflow_workflow(
         form,
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
         mode="bindcraft",
-        form_data={},
+        form_data=_empty_form_data(),
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",
@@ -176,7 +181,7 @@ async def test_launch_api_error_response():
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-api-error")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-api-error")
 
     with pytest.raises(BindflowExecutorError, match="400"):
         await launch_bindflow_workflow(
@@ -184,7 +189,7 @@ async def test_launch_api_error_response():
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
             mode="bindcraft",
-            form_data={},
+            form_data=_empty_form_data(),
             user_email="test@example.com",
             full_name="Test_User",
             institute="example.com",
@@ -201,7 +206,7 @@ async def test_launch_missing_workflow_id_in_response():
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-missing-workflow-id")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-missing-workflow-id")
 
     with pytest.raises(BindflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(
@@ -209,7 +214,7 @@ async def test_launch_missing_workflow_id_in_response():
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
             mode="bindcraft",
-            form_data={},
+            form_data=_empty_form_data(),
             user_email="test@example.com",
             full_name="Test_User",
             institute="example.com",
@@ -220,7 +225,7 @@ async def test_launch_missing_workflow_id_in_response():
 
 def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(tool="BindCraft", runName="seqera-custom-params")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="seqera-custom-params")
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.delenv("SEQERA_API_URL", raising=False)
@@ -234,7 +239,7 @@ def test_launch_missing_env_vars():
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
                     mode="bindcraft",
-                    form_data={},
+                    form_data=_empty_form_data(),
                     user_email="test@example.com",
                     full_name="Test_User",
                     institute="example.com",
@@ -253,7 +258,8 @@ async def test_launch_with_custom_params_text():
     )
 
     form = WorkflowLaunchForm(
-        tool="BindCraft",
+        workflow="de-novo-design",
+        tool="bindcraft",
         runName="seqera-custom-params",
         paramsText="my_custom_param: 42\nanother_param: test",
     )
@@ -263,7 +269,7 @@ async def test_launch_with_custom_params_text():
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
         mode="bindcraft",
-        form_data={},
+        form_data=_empty_form_data(),
         user_email="test@example.com",
         full_name="Test_User",
         institute="example.com",

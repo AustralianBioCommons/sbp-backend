@@ -44,7 +44,7 @@ def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     return {
         key: form_data.model_extra[key]
         for key in _TOOL_PARAM_KEYS
-        if key in form_data and form_data.model_extra[key] is not None
+        if key in form_data.model_extra and form_data.model_extra[key] is not None
     }
 
 

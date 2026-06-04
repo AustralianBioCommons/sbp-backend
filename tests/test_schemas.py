@@ -29,9 +29,10 @@ from app.schemas.workflows import (
 
 def test_valid_minimal_form():
     """Test WorkflowLaunchForm with minimal valid data."""
-    form = WorkflowLaunchForm(tool="BindCraft")
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft")
 
-    assert form.tool == "BindCraft"
+    assert form.workflow == "de-novo-design"
+    assert form.tool == "bindcraft"
     assert form.configProfiles == []
     assert form.runName is None
     assert form.paramsText is None
@@ -40,51 +41,62 @@ def test_valid_minimal_form():
 def test_valid_complete_form():
     """Test WorkflowLaunchForm with all fields."""
     form = WorkflowLaunchForm(
-        tool="BindCraft",
+        workflow="de-novo-design",
+        tool="bindcraft",
         configProfiles=["docker", "test"],
         runName="my-test-run",
         paramsText="param1: value1\nparam2: value2",
     )
 
-    assert form.tool == "BindCraft"
+    assert form.workflow == "de-novo-design"
+    assert form.tool == "bindcraft"
     assert form.configProfiles == ["docker", "test"]
     assert form.runName == "my-test-run"
     assert "param1" in form.paramsText
 
 
 def test_tool_required_and_not_empty():
-    """Test that tool is required and cannot be empty."""
+    """Test that workflow and tool are required and cannot be empty."""
     with pytest.raises(ValidationError):
         WorkflowLaunchForm()
-    with pytest.raises(ValidationError, match="tool is required"):
-        WorkflowLaunchForm(tool="")
+    with pytest.raises(ValidationError):
+        WorkflowLaunchForm(workflow="de-novo-design", tool="")
+    with pytest.raises(ValidationError):
+        WorkflowLaunchForm(workflow="", tool="bindcraft")
 
 
-def test_tool_whitespace_stripped():
-    """Test that tool whitespace is stripped."""
-    form = WorkflowLaunchForm(tool="  BindCraft  ")
-    assert form.tool == "BindCraft"
+def test_tool_must_be_exact_literal():
+    """Literal types don't accept whitespace-padded values."""
+    with pytest.raises(ValidationError):
+        WorkflowLaunchForm(workflow="  de-novo-design  ", tool="bindcraft")
+    with pytest.raises(ValidationError):
+        WorkflowLaunchForm(workflow="de-novo-design", tool="  bindcraft  ")
 
 
 def test_extra_fields_forbidden():
     """Test that extra fields are not allowed."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchForm(tool="BindCraft", extraField="not allowed")
+        WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", extraField="not allowed")
 
 
-def test_valid_payload_with_launch_only():
-    """Test payload with required launch and dataset ID."""
-    payload = WorkflowLaunchPayload(launch={"tool": "BindCraft"}, datasetId="dataset_123")
+def test_valid_payload_minimal():
+    """Test payload with required launch, formData, and dataset ID."""
+    payload = WorkflowLaunchPayload(
+        launch={"workflow": "de-novo-design", "tool": "bindcraft"},
+        formData={"workflow": "de-novo-design", "tool": "bindcraft"},
+        datasetId="dataset_123",
+    )
 
-    assert payload.launch.tool == "BindCraft"
+    assert payload.launch.workflow == "de-novo-design"
+    assert payload.launch.tool == "bindcraft"
     assert payload.datasetId == "dataset_123"
-    assert payload.formData is None
 
 
 def test_valid_payload_with_dataset_id():
     """Test payload with dataset ID."""
     payload = WorkflowLaunchPayload(
-        launch={"tool": "BindCraft"},
+        launch={"workflow": "de-novo-design", "tool": "bindcraft"},
+        formData={"workflow": "de-novo-design", "tool": "bindcraft"},
         datasetId="dataset_123",
     )
 
@@ -92,30 +104,40 @@ def test_valid_payload_with_dataset_id():
 
 
 def test_valid_payload_with_form_data():
-    """Test payload with form data."""
-    form_data = {
-        "sample": "test",
-        "input": "/path/to/file",
-        "param": 42,
-    }
+    """Test payload with extra form data fields."""
     payload = WorkflowLaunchPayload(
-        launch={"tool": "BindCraft"},
-        formData=form_data,
+        launch={"workflow": "de-novo-design", "tool": "bindcraft"},
+        formData={
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "sample": "test",
+            "input": "/path/to/file",
+            "param": 42,
+        },
         datasetId="dataset_123",
     )
 
-    assert payload.formData == form_data
+    assert payload.formData.tool == "bindcraft"
+    assert payload.formData.model_extra["sample"] == "test"
 
 
 def test_payload_extra_fields_forbidden():
     """Test that extra fields are not allowed in payload."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(launch={"tool": "BindCraft"}, unknownField="value")
+        WorkflowLaunchPayload(
+            launch={"workflow": "de-novo-design", "tool": "bindcraft"},
+            formData={"workflow": "de-novo-design", "tool": "bindcraft"},
+            datasetId="dataset_123",
+            unknownField="value",
+        )
 
 
 def test_payload_requires_dataset_id():
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(launch={"tool": "BindCraft"})
+        WorkflowLaunchPayload(
+            launch={"workflow": "de-novo-design", "tool": "bindcraft"},
+            formData={"workflow": "de-novo-design", "tool": "bindcraft"},
+        )
 
 
 def test_valid_response():
