@@ -15,6 +15,10 @@ from ..db.models.core import AppUser
 from .dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["users"])
+admin_router = APIRouter(
+    tags=["users"],
+    dependencies=[Depends(require_admin_access)],
+)
 
 
 class UserCreditResponse(BaseModel):
@@ -95,10 +99,9 @@ def get_my_credit(
     return UserCreditResponse(userId=str(current_user_id), credit=credit)
 
 
-@router.get(
+@admin_router.get(
     "/credits",
     response_model=UserCreditListResponse,
-    dependencies=[Depends(require_admin_access)],
 )
 def list_user_credits(
     page: int = Query(1, ge=1),
@@ -142,10 +145,9 @@ def list_user_credits(
     )
 
 
-@router.get(
+@admin_router.get(
     "/credits/{auth0_user_id:path}",
     response_model=UserCreditListItem,
-    dependencies=[Depends(require_admin_access)],
 )
 def get_user_credit(
     auth0_user_id: str,
@@ -175,7 +177,7 @@ def get_user_credit(
     )
 
 
-@router.put(
+@admin_router.put(
     "/credits/{auth0_user_id:path}",
     response_model=UserCreditListItem,
 )
