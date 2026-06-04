@@ -34,19 +34,25 @@ from app.services.workflow_config_fetcher import (
 
 
 def test_get_wisps_default_params_required_keys():
-    params = get_wisps_default_params(out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv")
+    params = get_wisps_default_params(
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv"
+    )
     assert "outdir" in params
     assert "input" in params
     assert "mode" in params
 
 
 def test_get_wisps_default_params_no_tool():
-    params = get_wisps_default_params(out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool=None)
+    params = get_wisps_default_params(
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool=None
+    )
     assert "tools" not in params
 
 
 def test_get_wisps_default_params_with_tool():
-    params = get_wisps_default_params(out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool="boltz")
+    params = get_wisps_default_params(
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool="boltz"
+    )
     assert params["tools"] == "boltz"
 
 
@@ -161,7 +167,9 @@ def test_params_to_yaml_text_empty():
 
 
 def test_params_to_yaml_text_scalars():
-    result = _params_to_yaml_text({"outdir": "s3://bucket", "input": "https://sheet", "mode": "g1-g2"})
+    result = _params_to_yaml_text(
+        {"outdir": "s3://bucket", "input": "https://sheet", "mode": "g1-g2"}
+    )
     assert "outdir: s3://bucket" in result
     assert "input: https://sheet" in result
     assert "mode: g1-g2" in result
@@ -254,14 +262,22 @@ async def test_launch_wisps_workflow_success(monkeypatch):
 
     mock_result = WispsLaunchResult(workflow_id="wf_xyz", status="submitted")
 
-    with patch("app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)), \
-         patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"), \
-         patch("app.services.wisps_executor.get_wisps_default_params", return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"}):
-
-        form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
+    with patch(
+        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+    ), patch(
+        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
+    ), patch(
+        "app.services.wisps_executor.get_wisps_default_params",
+        return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
+    ):
+        form = WorkflowLaunchForm(
+            workflow="interaction-screening", tool="boltz", runName="test-run"
+        )
         form_data = InteractionScreeningFormData(
-            workflow="interaction-screening", tool="boltz",
-            fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+            workflow="interaction-screening",
+            tool="boltz",
+            fastaS3Uri="s3://bucket/seqs.fa",
+            splitOutputDir="/tmp/split",
         )
         result = await launch_wisps_workflow(
             form=form,
@@ -285,8 +301,10 @@ async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
     form_data = InteractionScreeningFormData(
-        workflow="interaction-screening", tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        workflow="interaction-screening",
+        tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa",
+        splitOutputDir="/tmp/split",
     )
     with pytest.raises(WispsConfigurationError, match="SEQERA_API_URL"):
         await launch_wisps_workflow(
@@ -314,8 +332,10 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
     form_data = InteractionScreeningFormData(
-        workflow="interaction-screening", tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        workflow="interaction-screening",
+        tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa",
+        splitOutputDir="/tmp/split",
     )
     with pytest.raises(WispsConfigurationError, match="output identifier"):
         await launch_wisps_workflow(
@@ -343,8 +363,10 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
     form_data = InteractionScreeningFormData(
-        workflow="interaction-screening", tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        workflow="interaction-screening",
+        tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa",
+        splitOutputDir="/tmp/split",
     )
     with pytest.raises(WispsConfigurationError):
         await launch_wisps_workflow(
@@ -372,8 +394,10 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName=None)
     form_data = InteractionScreeningFormData(
-        workflow="interaction-screening", tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        workflow="interaction-screening",
+        tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa",
+        splitOutputDir="/tmp/split",
     )
     with pytest.raises(WispsConfigurationError, match="run name"):
         await launch_wisps_workflow(
@@ -401,14 +425,27 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
 
     mock_result = WispsLaunchResult(workflow_id="wf_tool", status="submitted")
 
-    with patch("app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)), \
-         patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"), \
-         patch("app.services.wisps_executor.get_wisps_default_params", return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2", "tools": "boltz"}):
-
-        form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run-tool")
+    with patch(
+        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+    ), patch(
+        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
+    ), patch(
+        "app.services.wisps_executor.get_wisps_default_params",
+        return_value={
+            "outdir": "s3://out",
+            "input": "https://sheet",
+            "mode": "g1-g2",
+            "tools": "boltz",
+        },
+    ):
+        form = WorkflowLaunchForm(
+            workflow="interaction-screening", tool="boltz", runName="test-run-tool"
+        )
         form_data = InteractionScreeningFormData(
-            workflow="interaction-screening", tool="boltz",
-            fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+            workflow="interaction-screening",
+            tool="boltz",
+            fastaS3Uri="s3://bucket/seqs.fa",
+            splitOutputDir="/tmp/split",
         )
         result = await launch_wisps_workflow(
             form=form,
@@ -471,7 +508,9 @@ def test_fetch_workflow_config_http():
         respx.get("https://raw.githubusercontent.com/org/repo/main/file.config").mock(
             return_value=httpx.Response(200, text="config text")
         )
-        result = fetch_workflow_config("https://raw.githubusercontent.com/org/repo/main/file.config")
+        result = fetch_workflow_config(
+            "https://raw.githubusercontent.com/org/repo/main/file.config"
+        )
     assert result == "config text"
 
 

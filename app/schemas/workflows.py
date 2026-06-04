@@ -91,8 +91,12 @@ class WorkflowFormData(BaseModel):
 class InteractionScreeningFormData(WorkflowFormData):
     """Form data for the interaction-screening (WISPS) workflow."""
 
-    fastaS3Uri: str = Field(..., description="S3 URI of the combined FASTA file to split and screen")
-    splitOutputDir: str = Field(..., description="Cluster filesystem path for per-sequence FASTA files")
+    fastaS3Uri: str = Field(
+        ..., description="S3 URI of the combined FASTA file to split and screen"
+    )
+    splitOutputDir: str = Field(
+        ..., description="Cluster filesystem path for per-sequence FASTA files"
+    )
 
 
 class WorkflowLaunchPayload(BaseModel):

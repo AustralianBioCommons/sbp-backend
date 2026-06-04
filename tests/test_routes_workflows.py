@@ -728,9 +728,7 @@ def wisps_client(test_engine):
 
     from sqlalchemy import select as sa_select
 
-    existing_bc = setup_session.scalar(
-        sa_select(Workflow).where(Workflow.name == "BindCraft")
-    )
+    existing_bc = setup_session.scalar(sa_select(Workflow).where(Workflow.name == "BindCraft"))
     if not existing_bc:
         setup_session.add(
             Workflow(

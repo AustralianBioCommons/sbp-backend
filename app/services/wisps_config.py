@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 _AWK = (
-    "awk -v o=\"$D\" '/^>/{if(f)close(f);"
-    "match($0,/^>([^ \\t]+)/,a);f=o\"/\"a[1]\".fasta\"}"
+    'awk -v o="$D" \'/^>/{if(f)close(f);'
+    'match($0,/^>([^ \\t]+)/,a);f=o"/"a[1]".fasta"}'
     "{print>f}' /tmp/w.fa"
 )
 
@@ -52,7 +52,7 @@ def get_wisps_executor_script(
         "export RCLONE_S3_REGION=$AWS_REGION",
         f'rclone copyto ":s3:{s3_path}" /tmp/w.fa',
         f'D="{split_output_dir}"',
-        "mkdir -p \"$D\"",
+        'mkdir -p "$D"',
         _AWK,
     ]
     return "\n".join(lines) + "\n"
@@ -80,6 +80,7 @@ def get_wisps_config_text(
     """
     if config_file_path.startswith(("http://", "https://")):
         import httpx
+
         response = httpx.get(config_file_path, timeout=30, follow_redirects=True)
         response.raise_for_status()
         base = response.text

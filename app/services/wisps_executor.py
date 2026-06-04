@@ -71,16 +71,12 @@ async def _post_to_seqera(
             response.reason_phrase,
             body,
         )
-        raise WispsExecutorError(
-            f"WISPS workflow launch failed: {response.status_code} {body}"
-        )
+        raise WispsExecutorError(f"WISPS workflow launch failed: {response.status_code} {body}")
 
     data = response.json()
     workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
     if not workflow_id:
-        raise WispsExecutorError(
-            "WISPS workflow launch succeeded but did not return a workflowId"
-        )
+        raise WispsExecutorError("WISPS workflow launch succeeded but did not return a workflowId")
     return WispsLaunchResult(
         workflow_id=workflow_id,
         status=data.get("status", "submitted"),
@@ -107,7 +103,9 @@ async def launch_wisps_workflow(
         getattr(form_data, "fastaS3Uri", None) or form_data.extra_fields.get("fastaS3Uri") or ""
     ).strip()
     split_output_dir = str(
-        getattr(form_data, "splitOutputDir", None) or form_data.extra_fields.get("splitOutputDir") or ""
+        getattr(form_data, "splitOutputDir", None)
+        or form_data.extra_fields.get("splitOutputDir")
+        or ""
     ).strip()
     tool: str | None = form_data.tool or None
 

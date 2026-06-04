@@ -9,12 +9,11 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
-from pydantic import ValidationError
-
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
@@ -256,7 +255,9 @@ async def launch_workflow(
                 detail="Workflow 'interaction-screening' is missing config_path in workflows table.",
             )
         try:
-            wisps_form_data = InteractionScreeningFormData.model_validate(payload.formData.model_dump())
+            wisps_form_data = InteractionScreeningFormData.model_validate(
+                payload.formData.model_dump()
+            )
         except ValidationError as exc:
             missing = next(
                 (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
@@ -332,7 +333,11 @@ async def launch_workflow(
     except HTTPException:
         db_session.rollback()
         raise
-    except (BindflowConfigurationError, ProteinfoldConfigurationError, WispsConfigurationError) as exc:
+    except (
+        BindflowConfigurationError,
+        ProteinfoldConfigurationError,
+        WispsConfigurationError,
+    ) as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
