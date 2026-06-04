@@ -42,7 +42,7 @@ class _DB:
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
-    run.workflow = Workflow(name="de-novo")
+    run.workflow = Workflow(name="de-novo-design")
     run.tool = "bindcraft"
     run.submitted_form_data = {"mode": "bindcraft"}
 
@@ -285,7 +285,7 @@ async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_d
         name="Score User",
         email="score-user@example.com",
     )
-    workflow = Workflow(name="de-novo")
+    workflow = Workflow(name="de-novo-design")
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -530,7 +530,7 @@ async def test_get_result_snapshot_downloads_skips_s3_for_proteinfold_workflows(
         name="Proteinfold No Snapshot User",
         email="proteinfold-no-snapshot-user@example.com",
     )
-    workflow = Workflow(name="proteinfold")
+    workflow = Workflow(name="single-prediction")
     run = WorkflowRun(
         owner=user,
         workflow=workflow,

@@ -20,7 +20,7 @@ from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
-    run.workflow = Workflow(name="de-novo")
+    run.workflow = Workflow(name="de-novo-design")
     run.submitted_form_data = {"mode": "bindcraft"}
 
 
@@ -328,7 +328,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         name="Results User 5",
         email="results5@example.com",
     )
-    workflow = Workflow(name="de-novo")
+    workflow = Workflow(name="de-novo-design")
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -434,7 +434,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
         name=f"Proteinfold Downloads {tool}",
         email=f"results-proteinfold-downloads-{tool}@example.com",
     )
-    workflow = Workflow(name="proteinfold")
+    workflow = Workflow(name="single-prediction")
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -561,7 +561,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
         name="Results User Snapshots 1",
         email="results-snapshots1@example.com",
     )
-    workflow = Workflow(name="de-novo")
+    workflow = Workflow(name="de-novo-design")
     run = WorkflowRun(
         workflow=workflow,
         owner=user,
