@@ -47,7 +47,10 @@ class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool: str = Field(..., description="Algorithm/tool to run (e.g. 'boltz', 'bindcraft')")
-    workflow: str = Field(..., description="Workflow name for DB lookup (e.g. 'interaction-screening', 'de-novo-design')")
+    workflow: str = Field(
+        ...,
+        description="Workflow name for DB lookup (e.g. 'interaction-screening', 'de-novo-design')",
+    )
     configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )

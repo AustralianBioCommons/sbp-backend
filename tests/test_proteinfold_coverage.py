@@ -208,7 +208,12 @@ async def test_post_to_seqera_missing_workflow_id():
 
 
 def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
-    defaults = {"tool": "proteinfold", "workflow": "single-prediction", "runName": "test-run", "paramsText": None}
+    defaults = {
+        "tool": "proteinfold",
+        "workflow": "single-prediction",
+        "runName": "test-run",
+        "paramsText": None,
+    }
     defaults.update(kwargs)
     return WorkflowLaunchForm(**defaults)
 

@@ -75,7 +75,9 @@ def test_extra_fields_forbidden():
 
 def test_valid_payload_with_launch_only():
     """Test payload with required launch and dataset ID."""
-    payload = WorkflowLaunchPayload(launch={"tool": "BindCraft", "workflow": "de-novo-design"}, datasetId="dataset_123")
+    payload = WorkflowLaunchPayload(
+        launch={"tool": "BindCraft", "workflow": "de-novo-design"}, datasetId="dataset_123"
+    )
 
     assert payload.launch.tool == "BindCraft"
     assert payload.datasetId == "dataset_123"
@@ -111,7 +113,9 @@ def test_valid_payload_with_form_data():
 def test_payload_extra_fields_forbidden():
     """Test that extra fields are not allowed in payload."""
     with pytest.raises(ValidationError):
-        WorkflowLaunchPayload(launch={"tool": "BindCraft", "workflow": "de-novo-design"}, unknownField="value")
+        WorkflowLaunchPayload(
+            launch={"tool": "BindCraft", "workflow": "de-novo-design"}, unknownField="value"
+        )
 
 
 def test_payload_requires_dataset_id():

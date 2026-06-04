@@ -42,7 +42,9 @@ async def test_launch_success_minimal():
         )
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-test-minimal")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-test-minimal"
+    )
 
     result = await launch_bindflow_workflow(
         form,
@@ -113,7 +115,9 @@ async def test_launch_includes_default_params():
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-default-params")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-default-params"
+    )
 
     await launch_bindflow_workflow(
         form,
@@ -145,7 +149,9 @@ async def test_launch_with_dataset_adds_input_url():
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-dataset-url")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-dataset-url"
+    )
 
     await launch_bindflow_workflow(
         form,
@@ -177,7 +183,9 @@ async def test_launch_api_error_response():
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-api-error")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-api-error"
+    )
 
     with pytest.raises(BindflowExecutorError, match="400"):
         await launch_bindflow_workflow(
@@ -202,7 +210,9 @@ async def test_launch_missing_workflow_id_in_response():
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-missing-workflow-id")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-missing-workflow-id"
+    )
 
     with pytest.raises(BindflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(
@@ -221,7 +231,9 @@ async def test_launch_missing_workflow_id_in_response():
 
 def test_launch_missing_env_vars():
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(tool="BindCraft", workflow="de-novo-design", runName="seqera-custom-params")
+    form = WorkflowLaunchForm(
+        tool="BindCraft", workflow="de-novo-design", runName="seqera-custom-params"
+    )
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.delenv("SEQERA_API_URL", raising=False)
