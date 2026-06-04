@@ -10,10 +10,6 @@ import respx
 from groovy_parser.parser import parse_groovy_content
 
 from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
-
-
-def _form_data(**extra) -> WorkflowFormData:
-    return WorkflowFormData(workflow="single-prediction", tool="colabfold", **extra)
 from app.services._nf_config import (
     GADI_TRACE_SECTION,
     Raw,
@@ -38,6 +34,10 @@ from app.services.proteinfold_executor import (
     _tool_params,
     launch_proteinfold_workflow,
 )
+
+
+def _form_data(**extra) -> WorkflowFormData:
+    return WorkflowFormData(workflow="single-prediction", tool="colabfold", **extra)
 
 # =============================================================================
 # Tests for _params_to_yaml_text()
@@ -143,7 +143,7 @@ def test_build_params_text_custom_params_strips_trailing():
 
 
 def test_build_params_text_empty_form_data_dict():
-    text = _build_params_text("s3://bucket/out", "https://sheet.url", "boltz", {}, None)
+    text = _build_params_text("s3://bucket/out", "https://sheet.url", "boltz", None, None)
     assert "mode: boltz" in text
 
 

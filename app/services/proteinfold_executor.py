@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ..schemas.workflows import WorkflowLaunchForm, WorkflowFormData
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,

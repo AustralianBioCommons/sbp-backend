@@ -10,10 +10,6 @@ import pytest
 import respx
 
 from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
-
-
-def _empty_form_data() -> WorkflowFormData:
-    return WorkflowFormData(workflow="de-novo-design", tool="bindcraft")
 from app.services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
@@ -21,6 +17,10 @@ from app.services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
 )
+
+
+def _empty_form_data() -> WorkflowFormData:
+    return WorkflowFormData(workflow="de-novo-design", tool="bindcraft")
 
 
 def test_get_existing_env_variable():

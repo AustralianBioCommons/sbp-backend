@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ..schemas.workflows import WorkflowLaunchForm, WorkflowFormData
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
