@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import RunOutput, S3Object, WorkflowRun
-from ..schemas.workflows import ResultDownloadItem, ResultLogEntry
+from ..schemas.workflows import ResultDownloadItem, ResultLogEntry, WorkflowName, WorkflowTool
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -22,8 +22,6 @@ from .s3 import (
     list_s3_files,
 )
 
-WorkflowKind = Literal["de-novo", "proteinfold"]
-WorkflowTool = Literal["bindcraft", "boltz", "colabfold", "alphafold2"]
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
 
 
@@ -47,7 +45,7 @@ class WorkflowResultsSpec:
     with functions to classify outputs into these categories
     """
 
-    kind: WorkflowKind
+    kind: WorkflowName
     tool: WorkflowTool
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
@@ -237,16 +235,16 @@ def _get_run_output_keys(db: Session, run: WorkflowRun) -> list[str]:
     return keys
 
 
-def get_workflow_name(run: WorkflowRun) -> WorkflowKind | None:
+def get_workflow_name(run: WorkflowRun) -> WorkflowName | None:
     if run.workflow is None:
         return None
 
     workflow_name: str = run.workflow.name
-    assert workflow_name in get_args(WorkflowKind), (
+    assert workflow_name in get_args(WorkflowName), (
         f"Workflow name {workflow_name!r} not recognized: "
-        f"expected one of {get_args(WorkflowKind)}"
+        f"expected one of {get_args(WorkflowName)}"
     )
-    return cast(WorkflowKind, workflow_name)
+    return cast(WorkflowName, workflow_name)
 
 
 def get_tool_name(run: WorkflowRun) -> WorkflowTool | None:
@@ -453,10 +451,10 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
     return prefixes
 
 
-WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec]] = {
-    "de-novo": {
+WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec]] = {
+    "de-novo-design": {
         "bindcraft": WorkflowResultsSpec(
-            kind="de-novo",
+            kind="de-novo-design",
             tool="bindcraft",
             required_categories={"report", "stats_csv", "pdb"},
             get_prefixes=build_bindcraft_output_listing_prefixes,
@@ -464,23 +462,23 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowKind, dict[WorkflowTool, WorkflowResultsSpec
             supports_snapshots=True,
         ),
     },
-    "proteinfold": {
+    "single-prediction": {
         "boltz": WorkflowResultsSpec(
-            kind="proteinfold",
+            kind="single-prediction",
             tool="boltz",
             required_categories={"report", "pdb", "stats_csv", "alignment"},
             get_prefixes=build_boltz_proteinfold_output_listing_prefixes,
             classify=classify_boltz_proteinfold_output,
         ),
         "alphafold2": WorkflowResultsSpec(
-            kind="proteinfold",
+            kind="single-prediction",
             tool="alphafold2",
             required_categories={"report", "pdb", "stats_csv"},
             get_prefixes=build_alphafold2_proteinfold_output_listing_prefixes,
             classify=classify_alphafold2_proteinfold_output,
         ),
         "colabfold": WorkflowResultsSpec(
-            kind="proteinfold",
+            kind="single-prediction",
             tool="colabfold",
             required_categories={"report", "pdb", "stats_csv", "alignment"},
             get_prefixes=build_colabfold_proteinfold_output_listing_prefixes,

@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ..schemas.workflows import WorkflowLaunchForm
+from ..schemas.workflows import WorkflowLaunchForm, WorkflowFormData
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -49,7 +49,7 @@ async def launch_bindflow_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     mode: str,
-    form_data: dict[str, Any],
+    form_data: WorkflowFormData,
     user_email: str,
     full_name: str,
     institute: str,
@@ -93,7 +93,7 @@ async def launch_bindflow_workflow(
     default_params["mode"] = mode
 
     # Merge any tool-specific params forwarded from the frontend form
-    for key, value in form_data.items():
+    for key, value in form_data.model_extra.items():
         if key not in default_params and value is not None:
             default_params[key] = value
 

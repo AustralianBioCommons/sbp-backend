@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ..schemas.workflows import WorkflowLaunchForm
+from ..schemas.workflows import WorkflowLaunchForm, WorkflowFormData
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
@@ -40,11 +40,11 @@ def _params_to_yaml_text(params: dict[str, Any]) -> str:
     return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
-def _tool_params(form_data: dict[str, Any]) -> dict[str, Any]:
+def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     return {
-        key: form_data[key]
+        key: form_data.model_extra[key]
         for key in _TOOL_PARAM_KEYS
-        if key in form_data and form_data[key] is not None
+        if key in form_data and form_data.model_extra[key] is not None
     }
 
 
@@ -83,7 +83,7 @@ def _build_params_text(
     out_dir: str,
     samplesheet_url: str,
     mode: str,
-    form_data: dict[str, Any] | None,
+    form_data: WorkflowFormData | None,
     custom_params: str | None,
     extra_params: dict[str, Any] | None = None,
 ) -> str:
@@ -139,7 +139,7 @@ async def launch_proteinfold_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     mode: str = "alphafold2",
-    form_data: dict[str, Any] | None = None,
+    form_data: WorkflowFormData | None = None,
     user_email: str,
     full_name: str,
     institute: str,
