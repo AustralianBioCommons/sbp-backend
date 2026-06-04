@@ -83,6 +83,8 @@ def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):
 
 def test_app_user_admin_includes_credit_column() -> None:
     assert "credit" in AppUserAdmin.fields
+    assert "credit_updated_at" in AppUserAdmin.fields
+    assert "credit_updated_by" in AppUserAdmin.fields
 
 
 async def test_admin_s3_object_relation_serializes_url_safe_detail_url() -> None:

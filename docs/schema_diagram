@@ -21,6 +21,12 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">credit</TD>
                          <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">credit_updated_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">credit_updated_by</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR></TABLE>> URL="http://AppUser_details.html"]
 	AppUser -> WorkflowRun [label=workflow_runs color="#1E88E5" style=dashed tooltip="Relation between AppUser and WorkflowRun"]
 	Workflow [label=<
