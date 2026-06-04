@@ -73,9 +73,7 @@ def get_wisps_config_text(
 ) -> str:
     """Read wisps config and append a process override block with runtime values.
 
-    clusterOptions uses ${params.xxx} in the config file, but Nextflow evaluates
-    those at config-parse time — before params are resolved — so unknown params
-    cause 'Unknown config attribute' errors. Appending a process block with the
+    Appending a process block with the
     values embedded directly overrides the file's clusterOptions.
     """
     if config_file_path.startswith(("http://", "https://")):
