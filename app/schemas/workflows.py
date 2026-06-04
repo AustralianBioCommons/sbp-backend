@@ -8,6 +8,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+WorkflowName = Literal["single-prediction", "de-novo-design", "interaction-screening"]
+WorkflowTool = Literal[
+    "alphafold2", "bindcraft", "boltz", "boltzgen", "colabfold", "rfdiffusion"
+]
+
 
 class PipelineStatus(str, Enum):
     """Pipeline status values from Seqera Platform."""
@@ -46,20 +51,39 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
 class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tool: str = Field(..., description="Requested tool name")
+    workflow: WorkflowName = Field(..., description="Workflow name")
+    tool: WorkflowTool = Field(..., description="Requested tool name")
     configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )
     runName: str | None = Field(default=None, description="Human-readable workflow run name")
     paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
 
-    @field_validator("tool")
+    @field_validator("tool", "workflow")
     @classmethod
     def validate_tool(cls, value: str) -> str:
         stripped = value.strip()
         if not stripped:
-            raise ValueError("tool is required")
+            raise ValueError("This field is required")
         return stripped
+
+
+class WorkflowFormData(BaseModel):
+    """
+    Model for form data submitted by the frontend - this will
+    be different for each model, and may include additional fields.
+    """
+    # Allow extra fields to be included in the form data
+    model_config = ConfigDict(extra="allow")
+
+    workflow: WorkflowName = Field(..., description="Workflow name")
+    tool: WorkflowTool = Field(..., description="Requested tool name")
+    configProfiles: list[str] = Field(
+        default_factory=list, description="Profiles that customize the workflow"
+    )
+    runName: str | None = Field(default=None, description="Human-readable workflow run name")
+    paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
+
 
 
 class WorkflowLaunchPayload(BaseModel):
@@ -70,13 +94,9 @@ class WorkflowLaunchPayload(BaseModel):
         ...,
         description="Seqera dataset ID to attach to the workflow",
     )
-    formData: dict[str, Any] | None = Field(
-        default=None,
+    formData: WorkflowFormData = Field(
+        ...,
         description="Optional form data to convert to CSV and upload as a dataset",
-    )
-    pdbFileKey: str | None = Field(
-        default=None,
-        description="Optional S3 file key for PDB file. A pre-signed URL will be generated and added to formData",
     )
 
 
