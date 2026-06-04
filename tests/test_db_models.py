@@ -81,6 +81,7 @@ def test_app_user_model():
     assert "auth0_user_id" in column_names
     assert "name" in column_names
     assert "email" in column_names
+    assert "credit" in column_names
 
     # Check relationships
     assert hasattr(AppUser, "workflow_runs")

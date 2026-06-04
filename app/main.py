@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
     from .routes.fasta_upload import router as fasta_router
     from .routes.pdb_upload import router as pdb_router
     from .routes.s3_files import router as s3_router
+    from .routes.users import router as users_router
     from .routes.workflow.jobs import router as workflow_jobs_router
     from .routes.workflow.results import router as results_router
     from .routes.workflows import router as workflow_router
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(results_router, prefix="/api/results")
     app.include_router(pdb_router, prefix="/api/workflows/pdb")
     app.include_router(fasta_router, prefix="/api/workflows/fasta")
+    app.include_router(users_router, prefix="/api/users")
     app.include_router(s3_router)
     mount_db_admin(app)
 

@@ -62,6 +62,7 @@ class AppUserAdmin(ModelView):
         "auth0_user_id",
         "name",
         "email",
+        "credit",
     ]
 
     async def repr(self, obj: Any, request: Request) -> str:
