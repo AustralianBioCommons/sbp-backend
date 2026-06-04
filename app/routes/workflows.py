@@ -42,13 +42,13 @@ from ..services.proteinfold_executor import (
     ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
+from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from ..services.wisps_executor import (
     WispsConfigurationError,
     WispsExecutorError,
     WispsLaunchResult,
     launch_wisps_workflow,
 )
-from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from .dependencies import (
     get_client_ip,
     get_current_user_id,

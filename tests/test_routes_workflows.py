@@ -22,6 +22,11 @@ from app.services.proteinfold_executor import (
     ProteinfoldExecutorError,
     ProteinfoldLaunchResult,
 )
+from app.services.wisps_executor import (
+    WispsConfigurationError,
+    WispsExecutorError,
+    WispsLaunchResult,
+)
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
@@ -662,3 +667,313 @@ def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch):
         from app.main import create_app
 
         create_app()
+
+
+# =============================================================================
+# Fixtures and tests for interaction-screening (WISPS) launch path
+# =============================================================================
+
+
+@pytest.fixture
+def wisps_client(test_engine):
+    """Test client with both BindCraft and interaction-screening workflows in the DB."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.main import create_app
+
+    application = create_app()
+    user_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    SessionLocal = sessionmaker(
+        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
+    )
+    setup_session = SessionLocal()
+
+    if not setup_session.get(AppUser, user_id):
+        setup_session.add(
+            AppUser(
+                id=user_id,
+                auth0_user_id="auth0|test-user",
+                name="Test User",
+                email="test@example.com",
+            )
+        )
+
+    from sqlalchemy import select as sa_select
+
+    existing_bc = setup_session.scalar(
+        sa_select(Workflow).where(Workflow.name == "BindCraft")
+    )
+    if not existing_bc:
+        setup_session.add(
+            Workflow(
+                id=uuid4(),
+                name="BindCraft",
+                description="Test BindCraft workflow",
+                repo_url="https://github.com/test/repo",
+                default_revision="dev",
+            )
+        )
+
+    existing_wisps = setup_session.scalar(
+        sa_select(Workflow).where(Workflow.name == "interaction-screening")
+    )
+    if not existing_wisps:
+        setup_session.add(
+            Workflow(
+                id=uuid4(),
+                name="interaction-screening",
+                description="WISPS interaction screening workflow",
+                repo_url="https://github.com/test/wisps",
+                default_revision="main",
+                config_path="/some/config.nf",
+            )
+        )
+
+    setup_session.commit()
+    setup_session.close()
+
+    def _get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    from app.routes.dependencies import require_workflow_execution_role
+
+    application.dependency_overrides[get_db] = _get_db
+    application.dependency_overrides[get_current_user_id] = lambda: user_id
+    application.dependency_overrides[require_workflow_execution_role] = lambda: None
+
+    with TestClient(application) as c:
+        yield c
+
+
+@pytest.fixture
+def wisps_no_config_client(test_engine):
+    """Test client with an interaction-screening workflow that has config_path=None."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.main import create_app
+
+    application = create_app()
+    user_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    SessionLocal = sessionmaker(
+        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
+    )
+    setup_session = SessionLocal()
+
+    if not setup_session.get(AppUser, user_id):
+        setup_session.add(
+            AppUser(
+                id=user_id,
+                auth0_user_id="auth0|test-user",
+                name="Test User",
+                email="test@example.com",
+            )
+        )
+
+    setup_session.add(
+        Workflow(
+            id=uuid4(),
+            name="interaction-screening",
+            description="WISPS workflow without config_path",
+            repo_url="https://github.com/test/wisps",
+            default_revision="main",
+            config_path=None,
+        )
+    )
+
+    setup_session.commit()
+    setup_session.close()
+
+    def _get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    from app.routes.dependencies import require_workflow_execution_role
+
+    application.dependency_overrides[get_db] = _get_db
+    application.dependency_overrides[get_current_user_id] = lambda: user_id
+    application.dependency_overrides[require_workflow_execution_role] = lambda: None
+
+    with TestClient(application) as c:
+        yield c
+
+
+@patch("app.routes.workflows.launch_wisps_workflow")
+def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClient):
+    """Test successful interaction-screening workflow launch."""
+    mock_wisps.return_value = WispsLaunchResult(
+        workflow_id="wisps_wf_001",
+        status="submitted",
+    )
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-run",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["runId"] == "wisps_wf_001"
+    mock_wisps.assert_called_once()
+    call_kwargs = mock_wisps.call_args.kwargs
+    assert call_kwargs["fasta_s3_uri"] == "s3://bucket/test.fasta"
+    assert call_kwargs["split_output_dir"] == "/data/split"
+
+
+def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
+    """Missing fastaS3Uri in formData should return 422."""
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 422
+    assert "fastaS3Uri" in response.json()["detail"]
+
+
+def test_launch_interaction_screening_missing_split_output_dir(wisps_client: TestClient):
+    """Missing splitOutputDir in formData should return 422."""
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 422
+    assert "splitOutputDir" in response.json()["detail"]
+
+
+@patch("app.routes.workflows.launch_wisps_workflow")
+def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: TestClient):
+    """WispsConfigurationError should return 500."""
+    mock_wisps.side_effect = WispsConfigurationError("missing token")
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-run-cfg-err",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 500
+    assert "missing token" in response.json()["detail"]
+
+
+@patch("app.routes.workflows.launch_wisps_workflow")
+def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: TestClient):
+    """WispsExecutorError should return 502."""
+    mock_wisps.side_effect = WispsExecutorError("seqera 502")
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-run-exec-err",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 502
+    assert "seqera 502" in response.json()["detail"]
+
+
+def test_launch_interaction_screening_missing_config_path(wisps_no_config_client: TestClient):
+    """interaction-screening workflow missing config_path should return 500."""
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-run-no-cfg",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_no_config_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 500
+    assert "config_path" in response.json()["detail"]
+
+
+@patch("app.routes.workflows.launch_wisps_workflow")
+def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClient):
+    """The new frontend format using launch.workflow is accepted alongside launch.tool."""
+    mock_wisps.return_value = WispsLaunchResult(
+        workflow_id="wisps_wf_002",
+        status="submitted",
+    )
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-run-workflow-field",
+        },
+        "datasetId": "dataset_wisps",
+        "formData": {
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["runId"] == "wisps_wf_002"

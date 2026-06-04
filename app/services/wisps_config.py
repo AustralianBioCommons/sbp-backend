@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .workflow_config_fetcher import fetch_workflow_config
+
+
 def get_wisps_default_params(
     out_dir: str,
     samplesheet_url: str,
@@ -82,7 +85,6 @@ def get_wisps_config_text(
     cause 'Unknown config attribute' errors. Appending a process block with the
     values embedded directly overrides the file's clusterOptions.
     """
-    from .workflow_config_fetcher import fetch_workflow_config
     base = fetch_workflow_config(config_file_path)
 
     cluster_opts = (
