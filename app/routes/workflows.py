@@ -6,7 +6,6 @@ import random
 import re
 import string
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -21,6 +20,7 @@ from ..schemas.workflows import (
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
+    WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
 )
@@ -87,11 +87,11 @@ def _require_launch_var(name: str, value: str | None) -> str:
     return value
 
 
-def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
-    if not isinstance(form_data, dict):
+def _extract_form_id(form_data: WorkflowFormData | None) -> str | None:
+    if not isinstance(form_data, WorkflowFormData):
         return None
     for key in ("id", "sample_id"):
-        value = form_data.get(key)
+        value = form_data.model_extra.get(key)
         if value is None:
             continue
         text = str(value).strip()
@@ -100,20 +100,20 @@ def _extract_form_id(form_data: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _extract_binder_name(form_data: dict[str, Any] | None) -> str | None:
-    if not isinstance(form_data, dict):
+def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
+    if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.get("binder_name")
+    value = form_data.model_extra.get("binder_name")
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _extract_final_design_count(form_data: dict[str, Any] | None) -> int | None:
-    if not isinstance(form_data, dict):
+def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
+    if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.get("number_of_final_designs")
+    value = form_data.model_extra.get("number_of_final_designs")
     if value is None:
         return None
     try:
@@ -143,7 +143,7 @@ async def launch_workflow(
     db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
-    requested_tool = payload.launch.tool.strip().lower()
+    requested_workflow = payload.launch.workflow.strip().lower()
 
     dataset_id = payload.datasetId.strip()
     if not dataset_id:
@@ -154,21 +154,11 @@ async def launch_workflow(
 
     form_id = _extract_form_id(payload.formData)
     if form_id is None:
-        form_id = build_sample_id(requested_tool)
+        form_id = build_sample_id(requested_workflow)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
 
-    # Extract the user-selected algorithm from formData.
-    # All pages now store it under 'tool' (e.g. "bindcraft", "colabfold").
-    # 'mode' is kept only as a fallback for records created before the rename.
-    form_data = payload.formData or {}
-    selected_tool: str | None = None
-    for _key in ("tool", "mode"):
-        _raw = form_data.get(_key)
-        if _raw and str(_raw).strip():
-            selected_tool = str(_raw).strip()
-            break
-
+    selected_tool = payload.launch.tool or payload.formData.tool
     if not selected_tool:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -178,13 +168,13 @@ async def launch_workflow(
     # Workflow repo_url and revision come from the DB entry for this workflow name
     # ("single-prediction", "de-novo-design", etc.).
     workflow = db_session.scalar(
-        select(Workflow).where(func.lower(Workflow.name) == requested_tool)
+        select(Workflow).where(func.lower(Workflow.name) == requested_workflow)
     )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{payload.launch.tool}' is not configured in workflows table. "
+                f"Workflow '{payload.launch.workflow}' is not configured in workflows table. "
                 "Seed the workflows catalog before launching."
             ),
         )
@@ -261,7 +251,7 @@ async def launch_workflow(
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 mode=tool_algo,
-                form_data=payload.formData or {},
+                form_data=payload.formData,
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
@@ -279,7 +269,7 @@ async def launch_workflow(
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 mode=tool_mode,
-                form_data=payload.formData or {},
+                form_data=payload.formData,
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
