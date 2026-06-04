@@ -308,13 +308,14 @@ async def launch_workflow(
                 ip_address=ip_address,
             )
         elif workflow_name == "interaction-screening":
+            assert wisps_form_data is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_wisps_workflow(
                 wisps_launch_form,
                 dataset_id,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
-                config_path=workflow.config_path,
+                config_path=workflow.config_path or "",
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_email=user_email,
