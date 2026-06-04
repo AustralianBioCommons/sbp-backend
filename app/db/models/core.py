@@ -39,6 +39,7 @@ class Workflow(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     repo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="workflow")
 

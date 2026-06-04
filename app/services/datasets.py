@@ -78,6 +78,7 @@ class DatasetUploadResult:
     dataset_id: str
     message: str
     raw_response: dict[str, Any] | None = None
+    split_output_dir: str | None = None
 
 
 async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
@@ -263,9 +264,12 @@ async def upload_interaction_screening_dataset(
         extra={"datasetId": returned_dataset_id, "status": response.status_code},
     )
 
+    split_output_dir = f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}"
+
     return DatasetUploadResult(
         success=True,
         dataset_id=returned_dataset_id,
         message=message,
         raw_response=data,
+        split_output_dir=split_output_dir,
     )

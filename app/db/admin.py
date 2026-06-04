@@ -69,7 +69,7 @@ class AppUserAdmin(ModelView):
 
 
 class WorkflowAdmin(ModelView):
-    fields = ["id", "name", "description", "repo_url", "default_revision"]
+    fields = ["id", "name", "description", "repo_url", "default_revision", "config_path"]
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.name}"
