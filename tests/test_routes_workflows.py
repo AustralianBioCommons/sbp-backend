@@ -849,6 +849,7 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
             "splitOutputDir": "/data/split",
@@ -862,8 +863,8 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
     assert data["runId"] == "wisps_wf_001"
     mock_wisps.assert_called_once()
     call_kwargs = mock_wisps.call_args.kwargs
-    assert call_kwargs["fasta_s3_uri"] == "s3://bucket/test.fasta"
-    assert call_kwargs["split_output_dir"] == "/data/split"
+    assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
+    assert call_kwargs["form_data"].splitOutputDir == "/data/split"
 
 
 def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
@@ -875,6 +876,7 @@ def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "splitOutputDir": "/data/split",
         },
@@ -895,6 +897,7 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
         },
@@ -919,6 +922,7 @@ def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: Tes
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
             "splitOutputDir": "/data/split",
@@ -944,6 +948,7 @@ def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: T
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
             "splitOutputDir": "/data/split",
@@ -966,6 +971,7 @@ def test_launch_interaction_screening_missing_config_path(wisps_no_config_client
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
             "splitOutputDir": "/data/split",
@@ -994,6 +1000,7 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
         },
         "datasetId": "dataset_wisps",
         "formData": {
+            "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/test.fasta",
             "splitOutputDir": "/data/split",

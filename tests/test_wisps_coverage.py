@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, mock_open, patch
 
 import httpx
 import pytest
 import respx
 
-from app.schemas.workflows import WorkflowLaunchForm
+from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchForm
 from app.services.wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
@@ -108,7 +108,7 @@ def test_get_wisps_config_profiles_contains_singularity():
 
 
 def test_get_wisps_config_text_appends_process_block():
-    with patch("app.services.wisps_config.fetch_workflow_config", return_value="base_config"):
+    with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
@@ -123,7 +123,7 @@ def test_get_wisps_config_text_appends_process_block():
 
 
 def test_get_wisps_config_text_contains_job_fields():
-    with patch("app.services.wisps_config.fetch_workflow_config", return_value="base_config"):
+    with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
@@ -138,7 +138,7 @@ def test_get_wisps_config_text_contains_job_fields():
 
 
 def test_get_wisps_config_text_contains_base_config():
-    with patch("app.services.wisps_config.fetch_workflow_config", return_value="base_config"):
+    with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
@@ -258,14 +258,17 @@ async def test_launch_wisps_workflow_success(monkeypatch):
          patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"), \
          patch("app.services.wisps_executor.get_wisps_default_params", return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"}):
 
-        form = WorkflowLaunchForm(tool="interaction-screening", runName="test-run")
+        form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
+        form_data = InteractionScreeningFormData(
+            workflow="interaction-screening", tool="boltz",
+            fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        )
         result = await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",
@@ -280,15 +283,18 @@ async def test_launch_wisps_workflow_success(monkeypatch):
 async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
     monkeypatch.delenv("SEQERA_API_URL", raising=False)
 
-    form = WorkflowLaunchForm(tool="interaction-screening", runName="test-run")
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening", tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+    )
     with pytest.raises(WispsConfigurationError, match="SEQERA_API_URL"):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",
@@ -306,15 +312,18 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    form = WorkflowLaunchForm(tool="interaction-screening", runName="test-run")
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening", tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+    )
     with pytest.raises(WispsConfigurationError, match="output identifier"):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",
@@ -332,15 +341,18 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    form = WorkflowLaunchForm(tool="interaction-screening", runName="test-run")
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening", tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+    )
     with pytest.raises(WispsConfigurationError):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",
@@ -358,15 +370,18 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    form = WorkflowLaunchForm(tool="interaction-screening", runName=None)
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName=None)
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening", tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+    )
     with pytest.raises(WispsConfigurationError, match="run name"):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",
@@ -390,15 +405,17 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
          patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"), \
          patch("app.services.wisps_executor.get_wisps_default_params", return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2", "tools": "boltz"}):
 
-        form = WorkflowLaunchForm(tool="boltz", runName="test-run-tool")
+        form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run-tool")
+        form_data = InteractionScreeningFormData(
+            workflow="interaction-screening", tool="boltz",
+            fastaS3Uri="s3://bucket/seqs.fa", splitOutputDir="/tmp/split",
+        )
         result = await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
-            tool="boltz",
-            fasta_s3_uri="s3://bucket/seqs.fa",
-            split_output_dir="/tmp/split",
+            form_data=form_data,
             user_email="user@test.com",
             full_name="Test User",
             institute="USYD",

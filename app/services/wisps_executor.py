@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ..schemas.workflows import WorkflowLaunchForm
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
@@ -94,17 +94,23 @@ async def launch_wisps_workflow(
     *,
     pipeline: str,
     config_path: str,
+    form_data: WorkflowFormData,
     revision: str | None = None,
     output_id: str | None = None,
-    tool: str | None = None,
-    fasta_s3_uri: str,
-    split_output_dir: str,
     user_email: str,
     full_name: str,
     institute: str,
     ip_address: str,
 ) -> WispsLaunchResult:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
+    fasta_s3_uri = str(
+        getattr(form_data, "fastaS3Uri", None) or form_data.extra_fields.get("fastaS3Uri") or ""
+    ).strip()
+    split_output_dir = str(
+        getattr(form_data, "splitOutputDir", None) or form_data.extra_fields.get("splitOutputDir") or ""
+    ).strip()
+    tool: str | None = form_data.tool or None
+
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")

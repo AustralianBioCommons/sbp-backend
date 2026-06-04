@@ -13,10 +13,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
+from pydantic import ValidationError
+
 from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
     InteractionScreeningDatasetUploadRequest,
+    InteractionScreeningFormData,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
@@ -233,7 +236,7 @@ async def launch_workflow(
         work_dir=run_work_dir,
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
-        tool=str(form_data.get("mode") or selected_tool or "").strip() or selected_tool,
+        tool=selected_tool,
     )
 
     db_session.add(workflow_run)
@@ -245,23 +248,24 @@ async def launch_workflow(
 
     # Validate interaction-screening-specific fields before entering the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.
-    wisps_fasta_s3_uri: str | None = None
-    wisps_split_output_dir: str | None = None
-    wisps_tool: str | None = None
+    wisps_form_data: InteractionScreeningFormData | None = None
     if workflow_name == "interaction-screening":
-        wisps_fasta_s3_uri = str(form_data.get("fastaS3Uri") or "").strip() or None
-        wisps_split_output_dir = str(form_data.get("splitOutputDir") or "").strip() or None
-        wisps_tool = selected_tool
-        if not wisps_fasta_s3_uri:
+        if not workflow.config_path:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Workflow 'interaction-screening' is missing config_path in workflows table.",
+            )
+        try:
+            wisps_form_data = InteractionScreeningFormData.model_validate(payload.formData.model_dump())
+        except ValidationError as exc:
+            missing = next(
+                (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
+                "formData",
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="'fastaS3Uri' is required in formData for interaction-screening.",
-            )
-        if not wisps_split_output_dir:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="'splitOutputDir' is required in formData for interaction-screening.",
-            )
+                detail=f"'{missing}' is required in formData for interaction-screening.",
+            ) from exc
 
     try:
         result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
@@ -297,6 +301,21 @@ async def launch_workflow(
                 output_id=str(run_id),
                 mode=tool_mode,
                 form_data=payload.formData,
+                user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
+            )
+        elif workflow_name == "interaction-screening":
+            wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            result = await launch_wisps_workflow(
+                wisps_launch_form,
+                dataset_id,
+                pipeline=workflow.repo_url,
+                revision=workflow.default_revision,
+                config_path=workflow.config_path,
+                form_data=wisps_form_data,
+                output_id=str(run_id),
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
