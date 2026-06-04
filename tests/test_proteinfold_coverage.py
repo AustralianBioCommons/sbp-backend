@@ -9,7 +9,7 @@ import pytest
 import respx
 from groovy_parser.parser import parse_groovy_content
 
-from app.schemas.workflows import WorkflowLaunchForm
+from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from app.services._nf_config import (
     GADI_TRACE_SECTION,
     Raw,
@@ -34,6 +34,11 @@ from app.services.proteinfold_executor import (
     _tool_params,
     launch_proteinfold_workflow,
 )
+
+
+def _form_data(**extra) -> WorkflowFormData:
+    return WorkflowFormData(workflow="single-prediction", tool="colabfold", **extra)
+
 
 # =============================================================================
 # Tests for _params_to_yaml_text()
@@ -64,43 +69,40 @@ def test_params_to_yaml_text_empty():
 
 
 def test_tool_params_empty_form():
-    result = _tool_params({})
+    result = _tool_params(_form_data())
     assert result == {}
 
 
 def test_tool_params_irrelevant_keys():
-    result = _tool_params({"unknown_key": "value", "another_key": 123})
+    result = _tool_params(_form_data(unknown_key="value", another_key=123))
     assert result == {}
 
 
 def test_tool_params_with_bool():
-    result = _tool_params({"alphafold2_full_dbs": True})
+    result = _tool_params(_form_data(alphafold2_full_dbs=True))
     assert result == {"alphafold2_full_dbs": True}
 
 
 def test_tool_params_with_int():
-    result = _tool_params({"colabfold_num_recycles": 3})
+    result = _tool_params(_form_data(colabfold_num_recycles=3))
     assert result == {"colabfold_num_recycles": 3}
 
 
 def test_tool_params_with_str():
-    result = _tool_params({"alphafold2_random_seed": "42"})
+    result = _tool_params(_form_data(alphafold2_random_seed="42"))
     assert result == {"alphafold2_random_seed": "42"}
 
 
 def test_tool_params_none_value_excluded():
-    result = _tool_params({"alphafold2_full_dbs": None, "colabfold_num_recycles": 5})
+    result = _tool_params(_form_data(alphafold2_full_dbs=None, colabfold_num_recycles=5))
     assert "alphafold2_full_dbs" not in result
     assert result["colabfold_num_recycles"] == 5
 
 
 def test_tool_params_multiple_keys():
-    form_data = {
-        "alphafold2_full_dbs": False,
-        "colabfold_num_recycles": 2,
-        "boltz_use_potentials": True,
-    }
-    result = _tool_params(form_data)
+    result = _tool_params(
+        _form_data(alphafold2_full_dbs=False, colabfold_num_recycles=2, boltz_use_potentials=True)
+    )
     assert len(result) == 3
 
 
@@ -117,7 +119,7 @@ def test_build_params_text_no_form_data_no_custom():
 
 
 def test_build_params_text_with_form_data():
-    form_data = {"colabfold_num_recycles": 4}
+    form_data = _form_data(colabfold_num_recycles=4)
     text = _build_params_text("s3://bucket/out", "https://sheet.url", "colabfold", form_data, None)
     assert "colabfold_num_recycles: 4" in text
 
@@ -142,7 +144,7 @@ def test_build_params_text_custom_params_strips_trailing():
 
 
 def test_build_params_text_empty_form_data_dict():
-    text = _build_params_text("s3://bucket/out", "https://sheet.url", "boltz", {}, None)
+    text = _build_params_text("s3://bucket/out", "https://sheet.url", "boltz", None, None)
     assert "mode: boltz" in text
 
 
@@ -208,7 +210,12 @@ async def test_post_to_seqera_missing_workflow_id():
 
 
 def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
-    defaults = {"tool": "proteinfold", "runName": "test-run", "paramsText": None}
+    defaults = {
+        "workflow": "single-prediction",
+        "tool": "colabfold",
+        "runName": "test-run",
+        "paramsText": None,
+    }
     defaults.update(kwargs)
     return WorkflowLaunchForm(**defaults)
 
@@ -326,7 +333,7 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
             revision="main",
             output_id="run-output-id",
             mode="colabfold",
-            form_data={"colabfold_num_recycles": 3, "colabfold_use_templates": True},
+            form_data=_form_data(colabfold_num_recycles=3, colabfold_use_templates=True),
             user_email="test@example.com",
             full_name="Test_User",
             institute="example.com",

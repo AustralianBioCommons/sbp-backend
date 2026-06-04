@@ -58,7 +58,7 @@ def role_check_client(test_engine):
     setup_session.add(
         Workflow(
             id=uuid4(),
-            name="BindCraft",
+            name="de-novo-design",
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
@@ -91,15 +91,17 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
         "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "id": "s1",
             "binder_name": "PDL1",
             "number_of_final_designs": 20,
-            "tool": "bindcraft",
         },
     }
 
@@ -111,7 +113,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
     assert data["status"] == "submitted"
     assert "submitTime" in data
     launch_form_arg = mock_launch.call_args[0][0]
-    assert launch_form_arg.tool == "BindCraft"
+    assert launch_form_arg.tool == "bindcraft"
     assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
     assert mock_launch.call_args.kwargs["revision"] == "dev"
     assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
@@ -133,7 +135,10 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "s1"
-        assert created_run.submitted_form_data == payload["formData"]
+        # submitted_form_data may include Pydantic default fields; check that all
+        # submitted fields are present rather than exact equality.
+        for key, value in payload["formData"].items():
+            assert created_run.submitted_form_data[key] == value
         assert created_run.submission_timestamp is not None
         metric = db.execute(
             select(RunMetric).where(RunMetric.run_id == created_run.id)
@@ -151,11 +156,12 @@ def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_en
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "runName": "test-with-data",
         },
         "datasetId": "dataset_456",  # Use existing dataset
-        "formData": {"tool": "bindcraft"},
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -183,11 +189,12 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "bindcraft"},
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -208,11 +215,12 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
 
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "bindcraft"},
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -242,10 +250,12 @@ def test_launch_rejects_blank_dataset_id(client: TestClient):
     """datasetId must be non-empty after trimming."""
     payload = {
         "launch": {
-            "tool": "BindCraft",
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
             "runName": "test-run",
         },
         "datasetId": "   ",
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -260,14 +270,16 @@ def test_cancel_workflow_endpoint_removed(client: TestClient):
     assert response.status_code == 404
 
 
-def test_launch_rejects_unavailable_tool(client: TestClient):
+def test_launch_rejects_workflow_not_in_db(client: TestClient):
+    """A valid workflow name with no DB entry returns 500 not configured."""
     payload = {
         "launch": {
-            "tool": "BoltzGen",
+            "workflow": "interaction-screening",
+            "tool": "boltz",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "boltzgen"},
+        "formData": {"workflow": "interaction-screening", "tool": "boltz"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -275,19 +287,20 @@ def test_launch_rejects_unavailable_tool(client: TestClient):
     assert "not configured" in response.json()["detail"]
 
 
-def test_launch_rejects_unknown_tool(client: TestClient):
+def test_launch_rejects_invalid_workflow_schema(client: TestClient):
+    """An unknown workflow name that fails schema validation returns 422."""
     payload = {
         "launch": {
-            "tool": "UnknownTool",
+            "workflow": "unknown-workflow",
+            "tool": "bindcraft",
             "runName": "test-run",
         },
         "datasetId": "dataset_123",
-        "formData": {"tool": "unknowntool"},
+        "formData": {"workflow": "unknown-workflow", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "not configured" in response.json()["detail"]
+    assert response.status_code == 422
 
 
 def test_get_logs_success(client: TestClient):
@@ -332,47 +345,53 @@ def test_list_runs_placeholder(client: TestClient):
 # =============================================================================
 
 
+def _form_data(**extra):
+    from app.schemas.workflows import WorkflowFormData
+
+    return WorkflowFormData(workflow="de-novo-design", tool="bindcraft", **extra)
+
+
 def test_extract_form_id_none_input():
     from app.routes.workflows import _extract_form_id
 
     assert _extract_form_id(None) is None
 
 
-def test_extract_form_id_not_dict():
+def test_extract_form_id_not_workflowformdata():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id("not a dict") is None  # type: ignore[arg-type]
+    assert _extract_form_id("not a WorkflowFormData") is None  # type: ignore[arg-type]
     assert _extract_form_id(42) is None  # type: ignore[arg-type]
 
 
 def test_extract_form_id_missing_keys():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id({"unrelated_key": "value"}) is None
+    assert _extract_form_id(_form_data()) is None
 
 
 def test_extract_form_id_empty_string_value():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id({"id": "  ", "sample_id": ""}) is None
+    assert _extract_form_id(_form_data(id="  ", sample_id="")) is None
 
 
 def test_extract_form_id_uses_id_key():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id({"id": "sample_001"}) == "sample_001"
+    assert _extract_form_id(_form_data(id="sample_001")) == "sample_001"
 
 
 def test_extract_form_id_falls_back_to_sample_id():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id({"sample_id": "s_002"}) == "s_002"
+    assert _extract_form_id(_form_data(sample_id="s_002")) == "s_002"
 
 
 def test_extract_form_id_strips_whitespace():
     from app.routes.workflows import _extract_form_id
 
-    assert _extract_form_id({"id": "  s1  "}) == "s1"
+    assert _extract_form_id(_form_data(id="  s1  ")) == "s1"
 
 
 # =============================================================================
@@ -386,34 +405,34 @@ def test_extract_binder_name_none_input():
     assert _extract_binder_name(None) is None
 
 
-def test_extract_binder_name_not_dict():
+def test_extract_binder_name_not_workflowformdata():
     from app.routes.workflows import _extract_binder_name
 
-    assert _extract_binder_name("not a dict") is None  # type: ignore[arg-type]
+    assert _extract_binder_name("not a WorkflowFormData") is None  # type: ignore[arg-type]
 
 
 def test_extract_binder_name_missing_key():
     from app.routes.workflows import _extract_binder_name
 
-    assert _extract_binder_name({"other_key": "value"}) is None
+    assert _extract_binder_name(_form_data()) is None
 
 
 def test_extract_binder_name_blank_value():
     from app.routes.workflows import _extract_binder_name
 
-    assert _extract_binder_name({"binder_name": "  "}) is None
+    assert _extract_binder_name(_form_data(binder_name="  ")) is None
 
 
 def test_extract_binder_name_valid():
     from app.routes.workflows import _extract_binder_name
 
-    assert _extract_binder_name({"binder_name": "PDL1"}) == "PDL1"
+    assert _extract_binder_name(_form_data(binder_name="PDL1")) == "PDL1"
 
 
 def test_extract_binder_name_strips_whitespace():
     from app.routes.workflows import _extract_binder_name
 
-    assert _extract_binder_name({"binder_name": "  CTLA4  "}) == "CTLA4"
+    assert _extract_binder_name(_form_data(binder_name="  CTLA4  ")) == "CTLA4"
 
 
 # =============================================================================
@@ -427,52 +446,52 @@ def test_extract_final_design_count_none_input():
     assert _extract_final_design_count(None) is None
 
 
-def test_extract_final_design_count_not_dict():
+def test_extract_final_design_count_not_workflowformdata():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count("not a dict") is None  # type: ignore[arg-type]
+    assert _extract_final_design_count("not a WorkflowFormData") is None  # type: ignore[arg-type]
 
 
 def test_extract_final_design_count_missing_key():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"other_key": 5}) is None
+    assert _extract_final_design_count(_form_data()) is None
 
 
 def test_extract_final_design_count_invalid_string():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": "not_a_number"}) is None
+    assert _extract_final_design_count(_form_data(number_of_final_designs="not_a_number")) is None
 
 
 def test_extract_final_design_count_negative():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": -5}) is None
+    assert _extract_final_design_count(_form_data(number_of_final_designs=-5)) is None
 
 
 def test_extract_final_design_count_zero():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": 0}) is None
+    assert _extract_final_design_count(_form_data(number_of_final_designs=0)) is None
 
 
 def test_extract_final_design_count_valid():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": 10}) == 10
+    assert _extract_final_design_count(_form_data(number_of_final_designs=10)) == 10
 
 
 def test_extract_final_design_count_one():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": 1}) == 1
+    assert _extract_final_design_count(_form_data(number_of_final_designs=1)) == 1
 
 
 def test_extract_final_design_count_string_number():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count({"number_of_final_designs": "25"}) == 25
+    assert _extract_final_design_count(_form_data(number_of_final_designs="25")) == 25
 
 
 # =============================================================================
@@ -486,7 +505,7 @@ def test_launch_missing_repo_url(client: TestClient, app, test_engine):
         db.add(
             Workflow(
                 id=uuid4(),
-                name="norepo",
+                name="single-prediction",
                 description="No repo workflow",
                 repo_url=None,
                 default_revision="dev",
@@ -495,9 +514,9 @@ def test_launch_missing_repo_url(client: TestClient, app, test_engine):
         db.commit()
 
     payload = {
-        "launch": {"tool": "norepo", "runName": "test-run"},
+        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
         "datasetId": "dataset_123",
-        "formData": {"tool": "anyalgo"},
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
@@ -510,7 +529,7 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
         db.add(
             Workflow(
                 id=uuid4(),
-                name="norev",
+                name="single-prediction",
                 description="No revision workflow",
                 repo_url="https://github.com/test/norev",
                 default_revision=None,
@@ -519,9 +538,9 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
         db.commit()
 
     payload = {
-        "launch": {"tool": "norev", "runName": "test-run"},
+        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
         "datasetId": "dataset_123",
-        "formData": {"tool": "anyalgo"},
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
@@ -534,15 +553,15 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
 
 
 def _add_proteinfold_workflow(test_engine):
-    """Helper to add a proteinfold workflow to the test DB."""
+    """Helper to add a single-prediction workflow to the test DB."""
     with Session(test_engine) as db:
-        existing = db.scalar(select(Workflow).where(Workflow.name == "proteinfold"))
+        existing = db.scalar(select(Workflow).where(Workflow.name == "single-prediction"))
         if not existing:
             db.add(
                 Workflow(
                     id=uuid4(),
-                    name="proteinfold",
-                    description="Proteinfold workflow",
+                    name="single-prediction",
+                    description="Single prediction workflow",
                     repo_url="https://github.com/nf-core/proteinfold",
                     default_revision="dev",
                 )
@@ -561,9 +580,9 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
     )
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-1"},
+        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-1"},
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -582,9 +601,13 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
     mock_launch.side_effect = ProteinfoldConfigurationError("Missing SEQERA_API_URL")
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-cfg-err"},
+        "launch": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "runName": "pf-run-cfg-err",
+        },
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -599,9 +622,13 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
     mock_launch.side_effect = ProteinfoldExecutorError("Seqera API 503")
 
     payload = {
-        "launch": {"tool": "proteinfold", "runName": "pf-run-exec-err"},
+        "launch": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "runName": "pf-run-exec-err",
+        },
         "datasetId": "dataset_pf",
-        "formData": {"mode": "alphafold2"},
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -615,9 +642,9 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
 
 
 _LAUNCH_PAYLOAD = {
-    "launch": {"tool": "BindCraft", "runName": "role-test-run"},
+    "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "role-test-run"},
     "datasetId": "dataset_role",
-    "formData": {"tool": "bindcraft"},
+    "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
 }
 
 
