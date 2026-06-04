@@ -4,13 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-_AWK = (
-    "awk -v o=\"$D\" '/^>/{if(f)close(f);"
-    "match($0,/^>([^ \\t]+)/,a);f=o\"/\"a[1]\".fasta\"}"
-    "{print>f}' /tmp/w.fa"
-)
-
-
 def get_wisps_default_params(
     out_dir: str,
     samplesheet_url: str,
@@ -40,22 +33,33 @@ def get_wisps_executor_script(
     under split_output_dir before the workflow begins.
     """
     s3_path = fasta_s3_uri.replace("s3://", "", 1)
-    lines = [
-        "module load singularity",
-        "module load nextflow",
-        f"export AWS_ACCESS_KEY_ID={aws_access_key}",
-        f"export AWS_SECRET_ACCESS_KEY={aws_secret_key}",
-        f"export AWS_REGION={aws_region}",
-        "export RCLONE_S3_PROVIDER=AWS",
-        "export RCLONE_S3_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID",
-        "export RCLONE_S3_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY",
-        "export RCLONE_S3_REGION=$AWS_REGION",
-        f'rclone copyto ":s3:{s3_path}" /tmp/w.fa',
-        f'D="{split_output_dir}"',
-        "mkdir -p \"$D\"",
-        _AWK,
-    ]
-    return "\n".join(lines) + "\n"
+    return f"""\
+#!/usr/bin/env bash
+set -euo pipefail
+
+module load singularity
+module load nextflow
+export AWS_ACCESS_KEY_ID={aws_access_key}
+export AWS_SECRET_ACCESS_KEY={aws_secret_key}
+export AWS_REGION={aws_region}
+export RCLONE_S3_PROVIDER=AWS
+export RCLONE_S3_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+export RCLONE_S3_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+export RCLONE_S3_REGION=$AWS_REGION
+
+rclone copyto ":s3:{s3_path}" /tmp/w.fa
+
+D="{split_output_dir}"
+mkdir -p "$D"
+awk -v o="$D" '
+  /^>/ {{
+    if (f) close(f)
+    match($0, /^>([^ \\t]+)/, a)
+    f = o "/" a[1] ".fasta"
+  }}
+  {{ print > f }}
+' /tmp/w.fa
+"""
 
 
 def get_wisps_config_profiles() -> list[str]:

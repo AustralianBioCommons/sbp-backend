@@ -140,7 +140,7 @@ async def launch_workflow(
     db_session: Session = Depends(get_db),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
-    requested_tool = payload.launch.tool.strip().lower()
+    requested_tool = (payload.launch.workflow or payload.launch.tool).strip().lower()
 
     dataset_id = payload.datasetId.strip()
     if not dataset_id:
@@ -250,7 +250,7 @@ async def launch_workflow(
     if workflow_name == "interaction-screening":
         wisps_fasta_s3_uri = str(form_data.get("fastaS3Uri") or "").strip() or None
         wisps_split_output_dir = str(form_data.get("splitOutputDir") or "").strip() or None
-        wisps_tool = str(form_data.get("mode") or "").strip() or None
+        wisps_tool = selected_tool
         if not wisps_fasta_s3_uri:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -46,7 +46,8 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
 class WorkflowLaunchForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tool: str = Field(..., description="Requested tool name")
+    workflow: str | None = Field(default=None, description="Workflow name (e.g. 'interaction-screening')")
+    tool: str = Field(..., description="Algorithm tool name (e.g. 'boltz')")
     configProfiles: list[str] = Field(
         default_factory=list, description="Profiles that customize the workflow"
     )
