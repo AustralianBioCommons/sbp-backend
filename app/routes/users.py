@@ -44,6 +44,8 @@ class UserCreditListResponse(BaseModel):
 
     users: list[UserCreditListItem]
     total: int
+    page: int
+    perPage: int
     limit: int
     offset: int
 
@@ -99,11 +101,12 @@ def get_my_credit(
     dependencies=[Depends(require_admin_access)],
 )
 def list_user_credits(
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> UserCreditListResponse:
     """Return a paginated list of user credit balances for administrators."""
+    offset = (page - 1) * per_page
     total = db.execute(select(func.count()).select_from(AppUser)).scalar_one()
     users = db.execute(
         select(
@@ -116,7 +119,7 @@ def list_user_credits(
         )
         .order_by(AppUser.email)
         .offset(offset)
-        .limit(limit)
+        .limit(per_page)
     )
 
     return UserCreditListResponse(
@@ -132,7 +135,9 @@ def list_user_credits(
             for user in users
         ],
         total=total,
-        limit=limit,
+        page=page,
+        perPage=per_page,
+        limit=per_page,
         offset=offset,
     )
 

@@ -71,6 +71,8 @@ def test_list_user_credits_for_admin(app, test_engine):
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 2
+    assert data["page"] == 1
+    assert data["perPage"] == 50
     assert data["limit"] == 50
     assert data["offset"] == 0
     assert data["users"] == [
@@ -90,6 +92,46 @@ def test_list_user_credits_for_admin(app, test_engine):
             "creditUpdatedAt": None,
             "creditUpdatedBy": None,
         },
+    ]
+
+
+def test_list_user_credits_translates_page_to_offset(app, test_engine):
+    """Backend accepts page/per_page and translates them to limit/offset."""
+    with Session(test_engine) as db:
+        db.add(
+            AppUser(
+                id=uuid4(),
+                auth0_user_id="auth0|second-page-user",
+                name="Second Page User",
+                email="z-second-page@example.com",
+                credit=10,
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    try:
+        with TestClient(app) as admin_client:
+            response = admin_client.get("/api/users/credits?page=2&per_page=1")
+    finally:
+        app.dependency_overrides.pop(require_admin_access, None)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert data["page"] == 2
+    assert data["perPage"] == 1
+    assert data["limit"] == 1
+    assert data["offset"] == 1
+    assert data["users"] == [
+        {
+            "auth0UserId": "auth0|second-page-user",
+            "name": "Second Page User",
+            "email": "z-second-page@example.com",
+            "credit": 10,
+            "creditUpdatedAt": None,
+            "creditUpdatedBy": None,
+        }
     ]
 
 
