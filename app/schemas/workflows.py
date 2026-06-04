@@ -9,9 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 WorkflowName = Literal["single-prediction", "de-novo-design", "interaction-screening"]
-WorkflowTool = Literal[
-    "alphafold2", "bindcraft", "boltz", "boltzgen", "colabfold", "rfdiffusion"
-]
+WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "boltzgen", "colabfold", "rfdiffusion"]
 
 
 class PipelineStatus(str, Enum):
@@ -73,6 +71,7 @@ class WorkflowFormData(BaseModel):
     Model for form data submitted by the frontend - this will
     be different for each model, and may include additional fields.
     """
+
     # Allow extra fields to be included in the form data
     model_config = ConfigDict(extra="allow")
 
@@ -83,7 +82,6 @@ class WorkflowFormData(BaseModel):
     )
     runName: str | None = Field(default=None, description="Human-readable workflow run name")
     paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
-
 
 
 class WorkflowLaunchPayload(BaseModel):

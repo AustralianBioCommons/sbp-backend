@@ -39,6 +39,7 @@ from app.services.proteinfold_executor import (
 def _form_data(**extra) -> WorkflowFormData:
     return WorkflowFormData(workflow="single-prediction", tool="colabfold", **extra)
 
+
 # =============================================================================
 # Tests for _params_to_yaml_text()
 # =============================================================================
@@ -209,7 +210,12 @@ async def test_post_to_seqera_missing_workflow_id():
 
 
 def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
-    defaults = {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run", "paramsText": None}
+    defaults = {
+        "workflow": "single-prediction",
+        "tool": "colabfold",
+        "runName": "test-run",
+        "paramsText": None,
+    }
     defaults.update(kwargs)
     return WorkflowLaunchForm(**defaults)
 

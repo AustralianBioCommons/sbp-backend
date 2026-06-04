@@ -342,6 +342,7 @@ def test_list_runs_placeholder(client: TestClient):
 
 def _form_data(**extra):
     from app.schemas.workflows import WorkflowFormData
+
     return WorkflowFormData(workflow="de-novo-design", tool="bindcraft", **extra)
 
 
@@ -595,7 +596,11 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
     mock_launch.side_effect = ProteinfoldConfigurationError("Missing SEQERA_API_URL")
 
     payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-cfg-err"},
+        "launch": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "runName": "pf-run-cfg-err",
+        },
         "datasetId": "dataset_pf",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
@@ -612,7 +617,11 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
     mock_launch.side_effect = ProteinfoldExecutorError("Seqera API 503")
 
     payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-exec-err"},
+        "launch": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "runName": "pf-run-exec-err",
+        },
         "datasetId": "dataset_pf",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
