@@ -1,0 +1,96 @@
+"""Credit-cost configuration for workflow executions.
+
+Single source of truth for the credit multipliers and cost formulas described in
+the SBP credit-calculation spec. The actual per-run cost is computed in the
+frontend; the backend simply exposes these rules so the frontend (and any other
+consumer) can derive a cost from a workflow's tool and input size.
+
+These initial multipliers may be slightly adjusted for production — keep this
+module as the one place to edit them.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class CreditBasis(str, Enum):
+    """How the variable quantity in a credit formula is derived.
+
+    ``credits = tool_multiplier * quantity`` where ``quantity`` depends on the
+    basis below.
+    """
+
+    # Number of final designs produced (de novo design).
+    FINAL_DESIGN_COUNT = "final_design_count"
+    # Always 1 — a single prediction.
+    CONSTANT = "constant"
+    # Number of entries in the FASTA input (bulk prediction).
+    FASTA_ENTRY_COUNT = "fasta_entry_count"
+    # Product of the entry counts of the two FASTA inputs (interaction screening).
+    FASTA_PAIR_PRODUCT = "fasta_pair_product"
+
+
+class WorkflowCreditConfig:
+    """Credit-cost rules for a single workflow category."""
+
+    def __init__(
+        self,
+        category: str,
+        display_name: str,
+        basis: CreditBasis,
+        formula: str,
+        tool_multipliers: dict[str, int],
+    ) -> None:
+        self.category = category
+        self.display_name = display_name
+        self.basis = basis
+        self.formula = formula
+        self.tool_multipliers = tool_multipliers
+
+
+# Source of truth — mirrors the SBP credit-calculation spec.
+_WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
+    WorkflowCreditConfig(
+        category="de-novo-design",
+        display_name="De novo Design",
+        basis=CreditBasis.FINAL_DESIGN_COUNT,
+        formula="tool_multiplier * num_final_designs",
+        tool_multipliers={"bindcraft": 20, "rfdiffusion": 10},
+    ),
+    WorkflowCreditConfig(
+        category="single-prediction",
+        display_name="Single Prediction",
+        basis=CreditBasis.CONSTANT,
+        formula="tool_multiplier * 1",
+        tool_multipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
+    ),
+    WorkflowCreditConfig(
+        category="bulk-prediction",
+        display_name="Bulk Prediction",
+        basis=CreditBasis.FASTA_ENTRY_COUNT,
+        formula="tool_multiplier * num_fasta_entries",
+        tool_multipliers={"boltz": 1, "colabfold": 1},
+    ),
+    WorkflowCreditConfig(
+        category="interaction-screening",
+        display_name="Interaction Screening",
+        basis=CreditBasis.FASTA_PAIR_PRODUCT,
+        formula="tool_multiplier * (num_fasta_entries_input_1 * num_fasta_entries_input_2)",
+        tool_multipliers={"boltz": 1, "colabfold": 1},
+    ),
+)
+
+_CONFIGS_BY_CATEGORY: dict[str, WorkflowCreditConfig] = {
+    config.category: config for config in _WORKFLOW_CREDIT_CONFIGS
+}
+
+
+def list_workflow_credit_configs() -> tuple[WorkflowCreditConfig, ...]:
+    """Return the credit-cost rules for every workflow category."""
+    return _WORKFLOW_CREDIT_CONFIGS
+
+
+def get_workflow_credit_config(category: str) -> WorkflowCreditConfig | None:
+    """Return the credit-cost rules for a single workflow category, if known."""
+    return _CONFIGS_BY_CATEGORY.get(category.strip().lower())

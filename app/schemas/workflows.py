@@ -115,6 +115,32 @@ class CancelWorkflowResponse(BaseModel):
     status: str
 
 
+class WorkflowCreditConfig(BaseModel):
+    """Credit-cost rules for a single workflow category.
+
+    The frontend computes a run's cost as
+    ``tool_multiplier * quantity``, where the tool multiplier is looked up in
+    ``toolMultipliers`` and ``quantity`` is derived per ``basis``.
+    """
+
+    category: str = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
+    displayName: str = Field(..., description="Human-readable category name")
+    basis: str = Field(
+        ...,
+        description="How the variable quantity in the formula is derived (see CreditBasis)",
+    )
+    formula: str = Field(..., description="Human-readable cost formula")
+    toolMultipliers: dict[str, int] = Field(
+        ..., description="Per-tool credit multiplier, keyed by tool id"
+    )
+
+
+class WorkflowCreditsResponse(BaseModel):
+    """Credit-cost rules for every workflow category."""
+
+    workflows: list[WorkflowCreditConfig] = Field(default_factory=list)
+
+
 class RunInfo(BaseModel):
     id: str
     run: str
