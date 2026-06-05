@@ -12,10 +12,11 @@ module as the one place to edit them.
 from __future__ import annotations
 
 from enum import Enum
+from typing import cast
 
 from pydantic import BaseModel, Field
 
-from ..schemas.workflows import WorkflowTool
+from ..schemas.workflows import WorkflowName, WorkflowTool
 
 
 class CreditBasis(str, Enum):
@@ -43,7 +44,7 @@ class WorkflowCreditConfig(BaseModel):
     derived per ``basis``.
     """
 
-    category: str = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
+    category: WorkflowName = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
     displayName: str = Field(..., description="Human-readable category name")
     basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
     toolMultipliers: dict[WorkflowTool, int] = Field(
@@ -86,7 +87,7 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
     ),
 )
 
-_CONFIGS_BY_CATEGORY: dict[str, WorkflowCreditConfig] = {
+_CONFIGS_BY_CATEGORY: dict[WorkflowName, WorkflowCreditConfig] = {
     config.category: config for config in _WORKFLOW_CREDIT_CONFIGS
 }
 
@@ -98,4 +99,4 @@ def list_workflow_credit_configs() -> tuple[WorkflowCreditConfig, ...]:
 
 def get_workflow_credit_config(category: str) -> WorkflowCreditConfig | None:
     """Return the credit-cost rules for a single workflow category, if known."""
-    return _CONFIGS_BY_CATEGORY.get(category.strip().lower())
+    return _CONFIGS_BY_CATEGORY.get(cast(WorkflowName, category.strip().lower()))
