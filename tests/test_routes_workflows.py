@@ -375,10 +375,10 @@ def test_extract_form_id_prefers_sample_id():
     from app.routes.workflows import _extract_sample_id
 
     assert (
-            _extract_sample_id(
+        _extract_sample_id(
             _form_data(sample_id="sample-001", samplesheetId="sample-sheet-001", id="id-001")
         )
-            == "sample-001"
+        == "sample-001"
     )
 
 
