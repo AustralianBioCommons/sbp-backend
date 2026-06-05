@@ -136,7 +136,7 @@ async def sync_current_user(
 
 @router.get("/credits", response_model=WorkflowCreditsResponse)
 async def get_workflow_credits() -> WorkflowCreditsResponse:
-    """Return the credit-cost rules (multipliers and formulas) for each workflow.
+    """Return the per-tool credit multipliers for each workflow.
 
     The frontend uses these to compute the credit cost of a run as
     ``tool_multiplier * quantity`` — see the SBP credit-calculation spec.
@@ -147,7 +147,6 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
                 category=config.category,
                 displayName=config.display_name,
                 basis=config.basis.value,
-                formula=config.formula,
                 toolMultipliers=config.tool_multipliers,
             )
             for config in list_workflow_credit_configs()

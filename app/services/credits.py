@@ -1,9 +1,9 @@
 """Credit-cost configuration for workflow executions.
 
-Single source of truth for the credit multipliers and cost formulas described in
-the SBP credit-calculation spec. The actual per-run cost is computed in the
-frontend; the backend simply exposes these rules so the frontend (and any other
-consumer) can derive a cost from a workflow's tool and input size.
+Single source of truth for the credit multipliers described in the SBP
+credit-calculation spec. The actual per-run cost is computed in the frontend;
+the backend simply exposes the per-tool multipliers (and a ``basis`` hint for
+which input quantity drives the cost) so the frontend can derive a cost.
 
 These initial multipliers may be slightly adjusted for production — keep this
 module as the one place to edit them.
@@ -32,20 +32,23 @@ class CreditBasis(str, Enum):
 
 
 class WorkflowCreditConfig:
-    """Credit-cost rules for a single workflow category."""
+    """Credit-cost rules for a single workflow category.
+
+    The arithmetic (``tool_multiplier * quantity``) lives in the frontend; this
+    only exposes the per-tool multipliers and the ``basis`` hint describing which
+    input quantity drives the cost.
+    """
 
     def __init__(
         self,
         category: str,
         display_name: str,
         basis: CreditBasis,
-        formula: str,
         tool_multipliers: dict[str, int],
     ) -> None:
         self.category = category
         self.display_name = display_name
         self.basis = basis
-        self.formula = formula
         self.tool_multipliers = tool_multipliers
 
 
@@ -55,28 +58,24 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="de-novo-design",
         display_name="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        formula="tool_multiplier * num_final_designs",
         tool_multipliers={"bindcraft": 20, "rfdiffusion": 10},
     ),
     WorkflowCreditConfig(
         category="single-prediction",
         display_name="Single Prediction",
         basis=CreditBasis.CONSTANT,
-        formula="tool_multiplier * 1",
         tool_multipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
     ),
     WorkflowCreditConfig(
         category="bulk-prediction",
         display_name="Bulk Prediction",
         basis=CreditBasis.FASTA_ENTRY_COUNT,
-        formula="tool_multiplier * num_fasta_entries",
         tool_multipliers={"boltz": 1, "colabfold": 1},
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
         display_name="Interaction Screening",
         basis=CreditBasis.FASTA_PAIR_PRODUCT,
-        formula="tool_multiplier * (num_fasta_entries_input_1 * num_fasta_entries_input_2)",
         tool_multipliers={"boltz": 1, "colabfold": 1},
     ),
 )
