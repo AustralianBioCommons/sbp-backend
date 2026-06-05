@@ -86,6 +86,7 @@ class WorkflowFormData(BaseModel):
     )
     runName: str | None = Field(default=None, description="Human-readable workflow run name")
     paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
+    sample_id: str | None = Field(default=None, description="Sample ID for the workflow run")
 
 
 class WorkflowLaunchPayload(BaseModel):

@@ -87,11 +87,17 @@ def _require_launch_var(name: str, value: str | None) -> str:
     return value
 
 
-def _extract_form_id(form_data: WorkflowFormData | None) -> str | None:
+def _extract_sample_id(form_data: WorkflowFormData | None) -> str | None:
+    """
+    sample_id should now be a standard field in the form data - allow
+    fallback to old fields if not present.
+    """
     if not isinstance(form_data, WorkflowFormData):
         return None
-    for key in ("id", "sample_id"):
-        value = form_data.extra_fields.get(key)
+    for key in ("sample_id", "id", "samplesheetId"):
+        value = getattr(form_data, key, None)
+        if value is None:
+            value = form_data.extra_fields.get(key)
         if value is None:
             continue
         text = str(value).strip()
@@ -152,9 +158,9 @@ async def launch_workflow(
             detail="datasetId is required and must not be empty.",
         )
 
-    form_id = _extract_form_id(payload.formData)
-    if form_id is None:
-        form_id = build_sample_id(requested_workflow)
+    sample_id = _extract_sample_id(payload.formData)
+    if sample_id is None:
+        sample_id = build_sample_id(requested_workflow)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
 
@@ -221,7 +227,7 @@ async def launch_workflow(
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=str(run_id),
         binder_name=binder_name,
-        sample_id=form_id,
+        sample_id=sample_id,
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,
