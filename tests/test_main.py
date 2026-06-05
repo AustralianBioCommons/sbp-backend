@@ -58,6 +58,7 @@ def test_workflow_router_included(app: FastAPI):
 
     assert "/api/workflows/launch" in route_paths
     assert "/api/jobs" in route_paths
+    assert "/api/users/me/credit" in route_paths
 
 
 def test_admin_debug_router_included_when_enabled():
