@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     from .db.admin import mount_db_admin
-    from .routes.admins import router as users_admin_router
+    from .routes.admins import router as admin_router
     from .routes.fasta_upload import router as fasta_router
     from .routes.pdb_upload import router as pdb_router
     from .routes.s3_files import router as s3_router
@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(pdb_router, prefix="/api/workflows/pdb")
     app.include_router(fasta_router, prefix="/api/workflows/fasta")
     app.include_router(users_router, prefix="/api/users")
-    app.include_router(users_admin_router, prefix="/api/users")
+    app.include_router(admin_router, prefix="/api/users")
     app.include_router(s3_router)
     mount_db_admin(app)
 
