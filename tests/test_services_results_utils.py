@@ -125,10 +125,38 @@ def test_s3_uri_to_key_handles_empty_non_s3_and_invalid_s3_values():
 
 
 def test_get_sample_id_for_result_uses_fallback_order_and_strips():
+    run_with_sample_id = SimpleNamespace(
+        submitted_form_data={"sample_id": " form-sample-1 ", "samplesheetId": " sheet-1 "},
+        sample_id="sample-1",
+        binder_name="binder-1",
+        form_id="form-1",
+    )
+    run_with_form_sample_id = SimpleNamespace(
+        submitted_form_data={"sample_id": " form-sample-1 ", "id": "id-1"},
+        sample_id=None,
+        binder_name="binder-1",
+        form_id="form-1",
+    )
+    run_with_form_id = SimpleNamespace(
+        submitted_form_data={"id": " id-1 ", "samplesheetId": "sheet-1"},
+        sample_id=None,
+        binder_name="binder-1",
+        form_id="form-1",
+    )
+    run_with_samplesheet_id = SimpleNamespace(
+        submitted_form_data={"samplesheetId": " sheet-1 "},
+        sample_id=None,
+        binder_name="binder-1",
+        form_id="form-1",
+    )
     run_with_binder = SimpleNamespace(sample_id=None, binder_name=" binder-1 ", form_id="form-1")
     run_with_form = SimpleNamespace(sample_id=None, binder_name=None, form_id=" form-2 ")
     run_empty = SimpleNamespace(sample_id=None, binder_name=None, form_id=None)
 
+    assert get_sample_id_for_result(run_with_sample_id) == "sample-1"
+    assert get_sample_id_for_result(run_with_form_sample_id) == "form-sample-1"
+    assert get_sample_id_for_result(run_with_form_id) == "id-1"
+    assert get_sample_id_for_result(run_with_samplesheet_id) == "sheet-1"
     assert get_sample_id_for_result(run_with_binder) == "binder-1"
     assert get_sample_id_for_result(run_with_form) == "form-2"
     assert get_sample_id_for_result(run_empty) is None

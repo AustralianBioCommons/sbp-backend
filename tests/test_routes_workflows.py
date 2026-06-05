@@ -347,46 +347,63 @@ def _form_data(**extra):
 
 
 def test_extract_form_id_none_input():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(None) is None
+    assert _extract_sample_id(None) is None
 
 
 def test_extract_form_id_not_workflowformdata():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id("not a WorkflowFormData") is None  # type: ignore[arg-type]
-    assert _extract_form_id(42) is None  # type: ignore[arg-type]
+    assert _extract_sample_id("not a WorkflowFormData") is None  # type: ignore[arg-type]
+    assert _extract_sample_id(42) is None  # type: ignore[arg-type]
 
 
 def test_extract_form_id_missing_keys():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data()) is None
+    assert _extract_sample_id(_form_data()) is None
 
 
 def test_extract_form_id_empty_string_value():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="  ", sample_id="")) is None
+    assert _extract_sample_id(_form_data(samplesheetId=" ", id="  ", sample_id="")) is None
+
+
+def test_extract_form_id_prefers_sample_id():
+    from app.routes.workflows import _extract_sample_id
+
+    assert (
+            _extract_sample_id(
+            _form_data(sample_id="sample-001", samplesheetId="sample-sheet-001", id="id-001")
+        )
+            == "sample-001"
+    )
 
 
 def test_extract_form_id_uses_id_key():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="sample_001")) == "sample_001"
+    assert _extract_sample_id(_form_data(id="sample_001")) == "sample_001"
 
 
 def test_extract_form_id_falls_back_to_sample_id():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(sample_id="s_002")) == "s_002"
+    assert _extract_sample_id(_form_data(sample_id="s_002")) == "s_002"
+
+
+def test_extract_form_id_falls_back_to_samplesheet_id():
+    from app.routes.workflows import _extract_sample_id
+
+    assert _extract_sample_id(_form_data(samplesheetId="sheet-002")) == "sheet-002"
 
 
 def test_extract_form_id_strips_whitespace():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="  s1  ")) == "s1"
+    assert _extract_sample_id(_form_data(id="  s1  ")) == "s1"
 
 
 # =============================================================================
