@@ -73,8 +73,6 @@ def test_list_user_credits_for_admin(app, test_engine):
     assert data["total"] == 2
     assert data["page"] == 1
     assert data["perPage"] == 50
-    assert data["limit"] == 50
-    assert data["offset"] == 0
     assert data["users"] == [
         {
             "auth0UserId": "auth0|credit-test-user",
@@ -96,7 +94,7 @@ def test_list_user_credits_for_admin(app, test_engine):
 
 
 def test_list_user_credits_translates_page_to_offset(app, test_engine):
-    """Backend accepts page/per_page and translates them to limit/offset."""
+    """Backend accepts page/per_page and translates them before querying."""
     with Session(test_engine) as db:
         db.add(
             AppUser(
@@ -121,8 +119,6 @@ def test_list_user_credits_translates_page_to_offset(app, test_engine):
     assert data["total"] == 2
     assert data["page"] == 2
     assert data["perPage"] == 1
-    assert data["limit"] == 1
-    assert data["offset"] == 1
     assert data["users"] == [
         {
             "auth0UserId": "auth0|second-page-user",

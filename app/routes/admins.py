@@ -41,8 +41,6 @@ class UserCreditListResponse(BaseModel):
     total: int
     page: int
     perPage: int
-    limit: int
-    offset: int
 
 
 class UserCreditUpdateRequest(BaseModel):
@@ -118,8 +116,6 @@ def list_user_credits(
         total=total,
         page=page,
         perPage=per_page,
-        limit=per_page,
-        offset=offset,
     )
 
 
