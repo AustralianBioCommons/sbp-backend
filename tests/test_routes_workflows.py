@@ -706,3 +706,49 @@ def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch):
         from app.main import create_app
 
         create_app()
+
+
+# =============================================================================
+# Tests for GET /api/workflows/credits
+# =============================================================================
+
+
+def test_get_workflow_credits_returns_all_categories(client: TestClient):
+    """The credits endpoint returns the cost rules for every workflow category."""
+    response = client.get("/api/workflows/credits")
+
+    assert response.status_code == 200
+    workflows = response.json()["workflows"]
+    by_category = {wf["category"]: wf for wf in workflows}
+
+    assert set(by_category) == {
+        "de-novo-design",
+        "single-prediction",
+        "bulk-prediction",
+        "interaction-screening",
+    }
+
+
+def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
+    """Tool multipliers and cost basis match the SBP credit-calculation spec."""
+    from app.services.credits import CreditBasis
+
+    response = client.get("/api/workflows/credits")
+    assert response.status_code == 200
+    by_category = {wf["category"]: wf for wf in response.json()["workflows"]}
+
+    de_novo = by_category["de-novo-design"]
+    assert de_novo["basis"] == CreditBasis.FINAL_DESIGN_COUNT.value
+    assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10}
+
+    single = by_category["single-prediction"]
+    assert single["basis"] == CreditBasis.CONSTANT.value
+    assert single["toolMultipliers"] == {"boltz": 1, "colabfold": 5, "alphafold2": 5}
+
+    bulk = by_category["bulk-prediction"]
+    assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
+    assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
+
+    screening = by_category["interaction-screening"]
+    assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
+    assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
