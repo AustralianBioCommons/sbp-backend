@@ -11,24 +11,7 @@ module as the one place to edit them.
 
 from __future__ import annotations
 
-from enum import Enum
-
-
-class CreditBasis(str, Enum):
-    """How the variable quantity in a credit formula is derived.
-
-    ``credits = tool_multiplier * quantity`` where ``quantity`` depends on the
-    basis below.
-    """
-
-    # Number of final designs produced (de novo design).
-    FINAL_DESIGN_COUNT = "final_design_count"
-    # Always 1 — a single prediction.
-    CONSTANT = "constant"
-    # Number of entries in the FASTA input (bulk prediction).
-    FASTA_ENTRY_COUNT = "fasta_entry_count"
-    # Product of the entry counts of the two FASTA inputs (interaction screening).
-    FASTA_PAIR_PRODUCT = "fasta_pair_product"
+from ..schemas.workflows import CreditBasis
 
 
 class WorkflowCreditConfig:

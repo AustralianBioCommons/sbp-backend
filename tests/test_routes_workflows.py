@@ -713,23 +713,25 @@ def test_get_workflow_credits_returns_all_categories(client: TestClient):
 
 
 def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
-    """Tool multipliers and formula basis match the SBP credit-calculation spec."""
+    """Tool multipliers and cost basis match the SBP credit-calculation spec."""
+    from app.schemas.workflows import CreditBasis
+
     response = client.get("/api/workflows/credits")
     assert response.status_code == 200
     by_category = {wf["category"]: wf for wf in response.json()["workflows"]}
 
     de_novo = by_category["de-novo-design"]
-    assert de_novo["basis"] == "final_design_count"
+    assert de_novo["basis"] == CreditBasis.FINAL_DESIGN_COUNT.value
     assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10}
 
     single = by_category["single-prediction"]
-    assert single["basis"] == "constant"
+    assert single["basis"] == CreditBasis.CONSTANT.value
     assert single["toolMultipliers"] == {"boltz": 1, "colabfold": 5, "alphafold2": 5}
 
     bulk = by_category["bulk-prediction"]
-    assert bulk["basis"] == "fasta_entry_count"
+    assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
     assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
 
     screening = by_category["interaction-screening"]
-    assert screening["basis"] == "fasta_pair_product"
+    assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
     assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}

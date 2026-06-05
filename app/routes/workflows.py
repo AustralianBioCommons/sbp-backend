@@ -146,7 +146,7 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
             WorkflowCreditConfig(
                 category=config.category,
                 displayName=config.display_name,
-                basis=config.basis.value,
+                basis=config.basis,
                 toolMultipliers=config.tool_multipliers,
             )
             for config in list_workflow_credit_configs()
