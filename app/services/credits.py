@@ -52,7 +52,8 @@ class WorkflowCreditConfig:
         self.tool_multipliers = tool_multipliers
 
 
-# Source of truth — mirrors the SBP credit-calculation spec.
+# Source of truth — mirrors the SBP credit-calculation spec
+# available at https://biocloud.atlassian.net/wiki/spaces/SBP/pages/748584961/SBP+credit+calculation
 _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
     WorkflowCreditConfig(
         category="de-novo-design",
