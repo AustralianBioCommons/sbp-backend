@@ -714,7 +714,7 @@ def test_get_workflow_credits_returns_all_categories(client: TestClient):
 
 def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
     """Tool multipliers and cost basis match the SBP credit-calculation spec."""
-    from app.schemas.workflows import CreditBasis
+    from app.services.credits import CreditBasis
 
     response = client.get("/api/workflows/credits")
     assert response.status_code == 200

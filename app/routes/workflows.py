@@ -20,8 +20,6 @@ from ..schemas.workflows import (
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
-    WorkflowCreditConfig,
-    WorkflowCreditsResponse,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
@@ -33,7 +31,7 @@ from ..services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
 )
-from ..services.credits import list_workflow_credit_configs
+from ..services.credits import WorkflowCreditsResponse, list_workflow_credit_configs
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
@@ -141,17 +139,7 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
     The frontend uses these to compute the credit cost of a run as
     ``tool_multiplier * quantity`` — see the SBP credit-calculation spec.
     """
-    return WorkflowCreditsResponse(
-        workflows=[
-            WorkflowCreditConfig(
-                category=config.category,
-                displayName=config.display_name,
-                basis=config.basis,
-                toolMultipliers=config.tool_multipliers,
-            )
-            for config in list_workflow_credit_configs()
-        ]
-    )
+    return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
 
 
 @router.post(

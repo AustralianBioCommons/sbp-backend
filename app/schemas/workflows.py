@@ -115,45 +115,6 @@ class CancelWorkflowResponse(BaseModel):
     status: str
 
 
-class CreditBasis(str, Enum):
-    """Which input quantity drives a workflow's credit cost.
-
-    The frontend computes ``credits = tool_multiplier * quantity``, where
-    ``quantity`` is derived per the basis below.
-    """
-
-    # Number of final designs produced (de novo design).
-    FINAL_DESIGN_COUNT = "final_design_count"
-    # Always 1 — a single prediction.
-    CONSTANT = "constant"
-    # Number of entries in the FASTA input (bulk prediction).
-    FASTA_ENTRY_COUNT = "fasta_entry_count"
-    # Product of the entry counts of the two FASTA inputs (interaction screening).
-    FASTA_PAIR_PRODUCT = "fasta_pair_product"
-
-
-class WorkflowCreditConfig(BaseModel):
-    """Credit-cost rules for a single workflow category.
-
-    The frontend computes a run's cost as ``tool_multiplier * quantity``, where
-    the tool multiplier is looked up in ``toolMultipliers`` and ``quantity`` is
-    derived per ``basis``.
-    """
-
-    category: str = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
-    displayName: str = Field(..., description="Human-readable category name")
-    basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
-    toolMultipliers: dict[str, int] = Field(
-        ..., description="Per-tool credit multiplier, keyed by tool id"
-    )
-
-
-class WorkflowCreditsResponse(BaseModel):
-    """Credit-cost rules for every workflow category."""
-
-    workflows: list[WorkflowCreditConfig] = Field(default_factory=list)
-
-
 class RunInfo(BaseModel):
     id: str
     run: str

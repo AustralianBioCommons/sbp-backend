@@ -11,28 +11,48 @@ module as the one place to edit them.
 
 from __future__ import annotations
 
-from ..schemas.workflows import CreditBasis
+from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
-class WorkflowCreditConfig:
-    """Credit-cost rules for a single workflow category.
+class CreditBasis(str, Enum):
+    """Which input quantity drives a workflow's credit cost.
 
-    The arithmetic (``tool_multiplier * quantity``) lives in the frontend; this
-    only exposes the per-tool multipliers and the ``basis`` hint describing which
-    input quantity drives the cost.
+    The frontend computes ``credits = tool_multiplier * quantity``, where
+    ``quantity`` is derived per the basis below.
     """
 
-    def __init__(
-        self,
-        category: str,
-        display_name: str,
-        basis: CreditBasis,
-        tool_multipliers: dict[str, int],
-    ) -> None:
-        self.category = category
-        self.display_name = display_name
-        self.basis = basis
-        self.tool_multipliers = tool_multipliers
+    # Number of final designs produced (de novo design).
+    FINAL_DESIGN_COUNT = "final_design_count"
+    # Always 1 — a single prediction.
+    CONSTANT = "constant"
+    # Number of entries in the FASTA input (bulk prediction).
+    FASTA_ENTRY_COUNT = "fasta_entry_count"
+    # Product of the entry counts of the two FASTA inputs (interaction screening).
+    FASTA_PAIR_PRODUCT = "fasta_pair_product"
+
+
+class WorkflowCreditConfig(BaseModel):
+    """Credit-cost rules for a single workflow category.
+
+    The frontend computes a run's cost as ``tool_multiplier * quantity``, where
+    the tool multiplier is looked up in ``toolMultipliers`` and ``quantity`` is
+    derived per ``basis``.
+    """
+
+    category: str = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
+    displayName: str = Field(..., description="Human-readable category name")
+    basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
+    toolMultipliers: dict[str, int] = Field(
+        ..., description="Per-tool credit multiplier, keyed by tool id"
+    )
+
+
+class WorkflowCreditsResponse(BaseModel):
+    """Credit-cost rules for every workflow category."""
+
+    workflows: list[WorkflowCreditConfig] = Field(default_factory=list)
 
 
 # Source of truth — mirrors the SBP credit-calculation spec
@@ -40,27 +60,27 @@ class WorkflowCreditConfig:
 _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
     WorkflowCreditConfig(
         category="de-novo-design",
-        display_name="De novo Design",
+        displayName="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        tool_multipliers={"bindcraft": 20, "rfdiffusion": 10},
+        toolMultipliers={"bindcraft": 20, "rfdiffusion": 10},
     ),
     WorkflowCreditConfig(
         category="single-prediction",
-        display_name="Single Prediction",
+        displayName="Single Prediction",
         basis=CreditBasis.CONSTANT,
-        tool_multipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
+        toolMultipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
     ),
     WorkflowCreditConfig(
         category="bulk-prediction",
-        display_name="Bulk Prediction",
+        displayName="Bulk Prediction",
         basis=CreditBasis.FASTA_ENTRY_COUNT,
-        tool_multipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 1},
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
-        display_name="Interaction Screening",
+        displayName="Interaction Screening",
         basis=CreditBasis.FASTA_PAIR_PRODUCT,
-        tool_multipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 1},
     ),
 )
 
