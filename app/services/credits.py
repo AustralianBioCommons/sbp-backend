@@ -15,6 +15,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from ..schemas.workflows import WorkflowTool
+
 
 class CreditBasis(str, Enum):
     """Which input quantity drives a workflow's credit cost.
@@ -44,7 +46,7 @@ class WorkflowCreditConfig(BaseModel):
     category: str = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
     displayName: str = Field(..., description="Human-readable category name")
     basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
-    toolMultipliers: dict[str, int] = Field(
+    toolMultipliers: dict[WorkflowTool, int] = Field(
         ..., description="Per-tool credit multiplier, keyed by tool id"
     )
 
