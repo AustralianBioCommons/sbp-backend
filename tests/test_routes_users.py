@@ -170,7 +170,10 @@ def test_update_user_credit_requires_admin(client: TestClient):
 
 def test_update_user_credit_for_admin(app, test_engine):
     """Admin users can set an absolute user credit balance."""
-    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.dependency_overrides[require_admin_access] = lambda: {
+        "sub": "auth0|admin",
+        "email": "admin@example.com",
+    }
     try:
         with TestClient(app) as admin_client:
             response = admin_client.put(_credit_url(TEST_AUTH0_USER_ID), json={"credit": 100})
@@ -185,7 +188,7 @@ def test_update_user_credit_for_admin(app, test_engine):
         "email": "test@example.com",
         "credit": 100,
         "creditUpdatedAt": data["creditUpdatedAt"],
-        "creditUpdatedBy": "auth0|admin",
+        "creditUpdatedBy": "admin@example.com",
     }
     assert data["creditUpdatedAt"] is not None
     with Session(test_engine) as db:
@@ -196,7 +199,7 @@ def test_update_user_credit_for_admin(app, test_engine):
         ).one()
     assert saved.credit == 100
     assert saved.credit_updated_at is not None
-    assert saved.credit_updated_by == "auth0|admin"
+    assert saved.credit_updated_by == "admin@example.com"
 
 
 def test_update_user_credit_rejects_negative_credit(app):

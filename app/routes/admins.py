@@ -70,7 +70,7 @@ def _user_credit_item(
 
 
 def _admin_actor(claims: dict[str, object]) -> str | None:
-    for key in ("sub", "email", "name", "nickname"):
+    for key in ("email", "sub", "name", "nickname"):
         value = claims.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
