@@ -1026,6 +1026,8 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     assert response.status_code == 201
     assert response.json()["runId"] == "wisps_wf_002"
+
+
 # Tests for GET /api/workflows/credits
 # =============================================================================
 
