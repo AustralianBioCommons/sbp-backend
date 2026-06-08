@@ -203,6 +203,12 @@ class DatasetUploadResponse(BaseModel):
     details: dict[str, Any] | None = None
 
 
+class InteractionScreeningDatasetUploadResponse(DatasetUploadResponse):
+    """Dataset upload response for interaction-screening — splitOutputDir is always present."""
+
+    splitOutputDir: str
+
+
 class SequenceItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

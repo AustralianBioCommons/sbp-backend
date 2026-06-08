@@ -18,6 +18,7 @@ from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
     InteractionScreeningDatasetUploadRequest,
+    InteractionScreeningDatasetUploadResponse,
     InteractionScreeningFormData,
     LaunchDetails,
     LaunchLogs,
@@ -483,11 +484,11 @@ async def upload_dataset(
 
 @router.post(
     "/datasets/interaction-screening/upload",
-    response_model=DatasetUploadResponse,
+    response_model=InteractionScreeningDatasetUploadResponse,
 )
 async def upload_interaction_screening_dataset_endpoint(
     payload: InteractionScreeningDatasetUploadRequest,
-) -> DatasetUploadResponse:
+) -> InteractionScreeningDatasetUploadResponse:
     """Create a Seqera dataset and upload an interaction screening samplesheet."""
     try:
         dataset = await create_seqera_dataset(name=payload.runId)
@@ -519,7 +520,7 @@ async def upload_interaction_screening_dataset_endpoint(
             detail=f"Dataset upload failed: {exc}",
         ) from exc
 
-    return DatasetUploadResponse(
+    return InteractionScreeningDatasetUploadResponse(
         message="Dataset created and uploaded successfully",
         datasetId=upload_result.dataset_id,
         success=upload_result.success,
