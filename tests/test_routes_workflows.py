@@ -352,46 +352,63 @@ def _form_data(**extra):
 
 
 def test_extract_form_id_none_input():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(None) is None
+    assert _extract_sample_id(None) is None
 
 
 def test_extract_form_id_not_workflowformdata():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id("not a WorkflowFormData") is None  # type: ignore[arg-type]
-    assert _extract_form_id(42) is None  # type: ignore[arg-type]
+    assert _extract_sample_id("not a WorkflowFormData") is None  # type: ignore[arg-type]
+    assert _extract_sample_id(42) is None  # type: ignore[arg-type]
 
 
 def test_extract_form_id_missing_keys():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data()) is None
+    assert _extract_sample_id(_form_data()) is None
 
 
 def test_extract_form_id_empty_string_value():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="  ", sample_id="")) is None
+    assert _extract_sample_id(_form_data(samplesheetId=" ", id="  ", sample_id="")) is None
+
+
+def test_extract_form_id_prefers_sample_id():
+    from app.routes.workflows import _extract_sample_id
+
+    assert (
+        _extract_sample_id(
+            _form_data(sample_id="sample-001", samplesheetId="sample-sheet-001", id="id-001")
+        )
+        == "sample-001"
+    )
 
 
 def test_extract_form_id_uses_id_key():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="sample_001")) == "sample_001"
+    assert _extract_sample_id(_form_data(id="sample_001")) == "sample_001"
 
 
 def test_extract_form_id_falls_back_to_sample_id():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(sample_id="s_002")) == "s_002"
+    assert _extract_sample_id(_form_data(sample_id="s_002")) == "s_002"
+
+
+def test_extract_form_id_falls_back_to_samplesheet_id():
+    from app.routes.workflows import _extract_sample_id
+
+    assert _extract_sample_id(_form_data(samplesheetId="sheet-002")) == "sheet-002"
 
 
 def test_extract_form_id_strips_whitespace():
-    from app.routes.workflows import _extract_form_id
+    from app.routes.workflows import _extract_sample_id
 
-    assert _extract_form_id(_form_data(id="  s1  ")) == "s1"
+    assert _extract_sample_id(_form_data(id="  s1  ")) == "s1"
 
 
 # =============================================================================
@@ -1009,3 +1026,46 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     assert response.status_code == 201
     assert response.json()["runId"] == "wisps_wf_002"
+# Tests for GET /api/workflows/credits
+# =============================================================================
+
+
+def test_get_workflow_credits_returns_all_categories(client: TestClient):
+    """The credits endpoint returns the cost rules for every workflow category."""
+    response = client.get("/api/workflows/credits")
+
+    assert response.status_code == 200
+    workflows = response.json()["workflows"]
+    by_category = {wf["category"]: wf for wf in workflows}
+
+    assert set(by_category) == {
+        "de-novo-design",
+        "single-prediction",
+        "bulk-prediction",
+        "interaction-screening",
+    }
+
+
+def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
+    """Tool multipliers and cost basis match the SBP credit-calculation spec."""
+    from app.services.credits import CreditBasis
+
+    response = client.get("/api/workflows/credits")
+    assert response.status_code == 200
+    by_category = {wf["category"]: wf for wf in response.json()["workflows"]}
+
+    de_novo = by_category["de-novo-design"]
+    assert de_novo["basis"] == CreditBasis.FINAL_DESIGN_COUNT.value
+    assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10}
+
+    single = by_category["single-prediction"]
+    assert single["basis"] == CreditBasis.CONSTANT.value
+    assert single["toolMultipliers"] == {"boltz": 1, "colabfold": 5, "alphafold2": 5}
+
+    bulk = by_category["bulk-prediction"]
+    assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
+    assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
+
+    screening = by_category["interaction-screening"]
+    assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
+    assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}

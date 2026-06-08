@@ -6,10 +6,10 @@ diagram from the SQLAlchemy models. The visualization is always up-to-date with
 the actual database schema defined in the models.
 
 Usage:
-    python generate_schema_diagram.py
+    uv run --extra dev python generate_schema_diagram.py
 
 Output:
-    docs/schema_diagram.png - Entity-relationship diagram showing all tables,
+    docs/schema_diagram.svg - Entity-relationship diagram showing all tables,
                               columns, relationships, and constraints
 """
 
@@ -19,7 +19,17 @@ import sys
 # Add the project root to the path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy_data_model_visualizer import generate_data_model_diagram
+try:
+    from sqlalchemy_data_model_visualizer import generate_data_model_diagram
+except ModuleNotFoundError as exc:
+    if exc.name != "sqlalchemy_data_model_visualizer":
+        raise
+    print(
+        "Missing dev dependency 'sqlalchemy_data_model_visualizer'. "
+        "Run this script with: uv run --extra dev python generate_schema_diagram.py",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
 
 # Import all models to ensure they're registered with Base
 from app.db.models.core import (
@@ -52,14 +62,14 @@ def main():
     # Generate the diagram
     generate_data_model_diagram(models, output_file=output_file)
 
-    print(f"\n✓ Schema diagram generated: {output_file}.png")
+    print(f"\n✓ Schema diagram generated: {output_file}.svg")
     print("\nThe diagram shows:")
     print("  • All tables with their columns and data types")
     print("  • Primary keys (PK) and foreign keys (FK)")
     print("  • Relationships between tables")
     print("  • Unique constraints")
     print("\nTo regenerate this diagram after model changes:")
-    print("  python generate_schema_diagram.py")
+    print("  uv run --extra dev python generate_schema_diagram.py")
 
 
 if __name__ == "__main__":

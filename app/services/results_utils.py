@@ -203,17 +203,29 @@ def get_sample_id_for_result(run: WorkflowRun) -> str | None:
 
     The lookup order is:
     1. `run.sample_id`
-    2. `run.binder_name`
-    3. `run.form_id`
+    2. `run.submitted_form_data["sample_id"]`
+    3. `run.submitted_form_data["id"]`
+    4. `run.submitted_form_data["samplesheetId"]`
+    5. `run.binder_name`
+    6. `run.form_id`
 
     The first non-empty value is stripped and returned as a string. Returns `None`
     when all candidate fields are missing or blank.
     """
-    sample_id = (
-        getattr(run, "sample_id", None)
-        or getattr(run, "binder_name", None)
-        or getattr(run, "form_id", None)
-    )
+    sample_id = getattr(run, "sample_id", None)
+    value = str(sample_id).strip() if sample_id is not None else ""
+    if value:
+        return value
+
+    form_data = getattr(run, "submitted_form_data", None)
+    if isinstance(form_data, dict):
+        for key in ("sample_id", "id", "samplesheetId"):
+            raw_form_id = form_data.get(key)
+            form_id = str(raw_form_id).strip() if raw_form_id is not None else ""
+            if form_id:
+                return form_id
+
+    sample_id = getattr(run, "binder_name", None) or getattr(run, "form_id", None)
     value = str(sample_id).strip() if sample_id is not None else ""
     return value or None
 

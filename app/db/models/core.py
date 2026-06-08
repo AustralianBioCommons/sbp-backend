@@ -27,6 +27,11 @@ class AppUser(Base):
     auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    credit: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    credit_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    credit_updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     workflow_runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="owner")
 

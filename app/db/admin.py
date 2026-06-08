@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import HasMany
+from starlette_admin import HasMany, JSONField
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
@@ -62,6 +62,9 @@ class AppUserAdmin(ModelView):
         "auth0_user_id",
         "name",
         "email",
+        "credit",
+        "credit_updated_at",
+        "credit_updated_by",
     ]
 
     async def repr(self, obj: Any, request: Request) -> str:
@@ -87,9 +90,11 @@ class WorkflowRunAdmin(ModelView):
         "seqera_run_id",
         "run_name",
         "binder_name",
+        JSONField("submitted_form_data"),
         "work_dir",
         "submission_timestamp",
     ]
+    exclude_fields_from_list = "submitted_form_data"
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.run_name}"

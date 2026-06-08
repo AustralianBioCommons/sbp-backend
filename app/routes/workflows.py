@@ -33,6 +33,7 @@ from ..services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
 )
+from ..services.credits import WorkflowCreditsResponse, list_workflow_credit_configs
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
@@ -95,11 +96,17 @@ def _require_launch_var(name: str, value: str | None) -> str:
     return value
 
 
-def _extract_form_id(form_data: WorkflowFormData | None) -> str | None:
+def _extract_sample_id(form_data: WorkflowFormData | None) -> str | None:
+    """
+    sample_id should now be a standard field in the form data - allow
+    fallback to old fields if not present.
+    """
     if not isinstance(form_data, WorkflowFormData):
         return None
-    for key in ("id", "sample_id"):
-        value = form_data.extra_fields.get(key)
+    for key in ("sample_id", "id", "samplesheetId"):
+        value = getattr(form_data, key, None)
+        if value is None:
+            value = form_data.extra_fields.get(key)
         if value is None:
             continue
         text = str(value).strip()
@@ -139,6 +146,16 @@ async def sync_current_user(
     return {"message": "User synced", "userId": str(current_user_id)}
 
 
+@router.get("/credits", response_model=WorkflowCreditsResponse)
+async def get_workflow_credits() -> WorkflowCreditsResponse:
+    """Return the per-tool credit multipliers for each workflow.
+
+    The frontend uses these to compute the credit cost of a run as
+    ``tool_multiplier * quantity`` — see the SBP credit-calculation spec.
+    """
+    return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
+
+
 @router.post(
     "/launch",
     response_model=WorkflowLaunchResponse,
@@ -160,9 +177,9 @@ async def launch_workflow(
             detail="datasetId is required and must not be empty.",
         )
 
-    form_id = _extract_form_id(payload.formData)
-    if form_id is None:
-        form_id = build_sample_id(requested_workflow)
+    sample_id = _extract_sample_id(payload.formData)
+    if sample_id is None:
+        sample_id = build_sample_id(requested_workflow)
     binder_name = _extract_binder_name(payload.formData)
     final_design_count = _extract_final_design_count(payload.formData)
 
@@ -229,7 +246,7 @@ async def launch_workflow(
         seqera_dataset_id=payload.datasetId,
         seqera_run_id=str(run_id),
         binder_name=binder_name,
-        sample_id=form_id,
+        sample_id=sample_id,
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
         work_dir=run_work_dir,

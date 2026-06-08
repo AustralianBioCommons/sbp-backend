@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-WorkflowName = Literal["single-prediction", "de-novo-design", "interaction-screening"]
+WorkflowName = Literal[
+    "single-prediction", "de-novo-design", "bulk-prediction", "interaction-screening"
+]
 WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "boltzgen", "colabfold", "rfdiffusion"]
 
 
@@ -86,6 +88,7 @@ class WorkflowFormData(BaseModel):
     )
     runName: str | None = Field(default=None, description="Human-readable workflow run name")
     paramsText: str | None = Field(default=None, description="YAML-style parameter overrides")
+    sample_id: str | None = Field(default=None, description="Sample ID for the workflow run")
 
 
 class InteractionScreeningFormData(WorkflowFormData):
