@@ -60,9 +60,10 @@ def get_wisps_config_profiles() -> list[str]:
 
 def get_wisps_config_text(
     config_file_path: str,
-    job_id: str = "",
-    username: str = "",
-    timestamp: str = "",
+    *,
+    job_id: str,
+    username: str,
+    timestamp: str,
     full_name: str = "",
     institute: str = "",
     ip_address: str = "",
