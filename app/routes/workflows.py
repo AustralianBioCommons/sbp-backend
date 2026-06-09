@@ -30,6 +30,7 @@ from ..schemas.workflows import (
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
+    BindflowLaunchResult,
     _get_required_env,
     launch_bindflow_workflow,
 )
@@ -42,6 +43,7 @@ from ..services.datasets import (
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
     ProteinfoldExecutorError,
+    ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
 from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
@@ -285,7 +287,7 @@ async def launch_workflow(
             ) from exc
 
     try:
-        result: WispsLaunchResult
+        result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
@@ -522,6 +524,6 @@ async def upload_interaction_screening_dataset_endpoint(
         message="Dataset created and uploaded successfully",
         datasetId=upload_result.dataset_id,
         success=upload_result.success,
-        splitOutputDir=upload_result.split_output_dir,
+        splitOutputDir=upload_result.split_output_dir or "",
         details=upload_result.raw_response,
     )
