@@ -7,13 +7,13 @@ import pytest
 import respx
 
 from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchForm
+from app.services.seqera import params_to_yaml_text
 from app.services.wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
     get_wisps_default_params,
     get_wisps_executor_script,
 )
-from app.services.seqera import params_to_yaml_text
 from app.services.wisps_executor import (
     WispsConfigurationError,
     WispsExecutorError,

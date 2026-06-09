@@ -33,7 +33,6 @@ _TOOL_PARAM_KEYS = frozenset(
 )
 
 
-
 def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     extra = form_data.extra_fields
     return {key: extra[key] for key in _TOOL_PARAM_KEYS if key in extra and extra[key] is not None}
