@@ -849,7 +849,7 @@ def wisps_no_config_client(test_engine):
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClient):
+def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClient, test_engine):
     """Test successful interaction-screening workflow launch."""
     mock_wisps.return_value = WispsLaunchResult(
         workflow_id="wisps_wf_001",
@@ -880,6 +880,22 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
     call_kwargs = mock_wisps.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
     assert call_kwargs["form_data"].splitOutputDir == "/data/split"
+
+    with Session(test_engine) as db:
+        created_run = db.execute(
+            select(
+                WorkflowRun.seqera_dataset_id,
+                WorkflowRun.run_name,
+                WorkflowRun.submitted_form_data,
+                WorkflowRun.submission_timestamp,
+            ).where(WorkflowRun.seqera_run_id == "wisps_wf_001")
+        ).first()
+        assert created_run is not None
+        assert created_run.seqera_dataset_id == "dataset_wisps"
+        assert created_run.run_name == "wisps-run"
+        assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
+        assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
+        assert created_run.submission_timestamp is not None
 
 
 def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
@@ -925,7 +941,7 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: TestClient):
+def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: TestClient, test_engine):
     """WispsConfigurationError should return 500."""
     mock_wisps.side_effect = WispsConfigurationError("missing token")
 
@@ -948,10 +964,17 @@ def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: Tes
 
     assert response.status_code == 500
     assert "missing token" in response.json()["detail"]
+    with Session(test_engine) as db:
+        count = db.scalar(
+            select(func.count())
+            .select_from(WorkflowRun)
+            .where(WorkflowRun.run_name == "wisps-run-cfg-err")
+        )
+        assert count == 1
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: TestClient):
+def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: TestClient, test_engine):
     """WispsExecutorError should return 502."""
     mock_wisps.side_effect = WispsExecutorError("seqera 502")
 
@@ -974,6 +997,13 @@ def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: T
 
     assert response.status_code == 502
     assert "seqera 502" in response.json()["detail"]
+    with Session(test_engine) as db:
+        count = db.scalar(
+            select(func.count())
+            .select_from(WorkflowRun)
+            .where(WorkflowRun.run_name == "wisps-run-exec-err")
+        )
+        assert count == 1
 
 
 def test_launch_interaction_screening_missing_config_path(wisps_no_config_client: TestClient):
@@ -1000,7 +1030,7 @@ def test_launch_interaction_screening_missing_config_path(wisps_no_config_client
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClient):
+def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClient, test_engine):
     """The new frontend format using launch.workflow is accepted alongside launch.tool."""
     mock_wisps.return_value = WispsLaunchResult(
         workflow_id="wisps_wf_002",
@@ -1026,6 +1056,16 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     assert response.status_code == 201
     assert response.json()["runId"] == "wisps_wf_002"
+
+    with Session(test_engine) as db:
+        created_run = db.execute(
+            select(WorkflowRun.seqera_dataset_id, WorkflowRun.run_name).where(
+                WorkflowRun.seqera_run_id == "wisps_wf_002"
+            )
+        ).first()
+        assert created_run is not None
+        assert created_run.seqera_dataset_id == "dataset_wisps"
+        assert created_run.run_name == "wisps-run-workflow-field"
 
 
 # Tests for GET /api/workflows/credits

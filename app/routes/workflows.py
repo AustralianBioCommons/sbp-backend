@@ -287,7 +287,7 @@ async def launch_workflow(
             ) from exc
 
     try:
-        result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
+        result: WispsLaunchResult
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
