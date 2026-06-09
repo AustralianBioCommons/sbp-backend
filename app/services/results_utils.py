@@ -32,6 +32,11 @@ class OutputClassifier(Protocol):
         ...
 
 
+class GetScoreFile(Protocol):
+    """"Return the path to the score file for a workflow run."""
+    def __call__(self, keys: list[str], sample_id: str | None) -> str | None:
+        ....
+
 @dataclass(frozen=True)
 class ClassifiedOutput:
     category: OutputCategory
@@ -50,6 +55,7 @@ class WorkflowResultsSpec:
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
     classify: OutputClassifier
+    get_score_file: GetScoreFile
     supports_snapshots: bool = False
 
 
@@ -318,6 +324,15 @@ def classify_bindcraft_output_key(
     return None
 
 
+def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    sample_id_pattern = re.escape(sample_id) if sample_id else "single-prediction"
+    score_pattern = rf"/{sample_id_pattern}/.+_ptm\.(tsv|csv)"
+    for key in keys:
+        if re.search(score_pattern, key):
+            return key
+    return None
+
+
 def classify_proteinfold_output_key(
     key: str,
     *,
@@ -480,6 +495,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             tool="boltz",
             required_categories={"report", "pdb", "stats_csv", "alignment"},
             get_prefixes=build_boltz_proteinfold_output_listing_prefixes,
+            get_score_file=get_proteinfold_score_file,
             classify=classify_boltz_proteinfold_output,
         ),
         "alphafold2": WorkflowResultsSpec(
@@ -487,6 +503,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             tool="alphafold2",
             required_categories={"report", "pdb", "stats_csv"},
             get_prefixes=build_alphafold2_proteinfold_output_listing_prefixes,
+            get_score_file=get_proteinfold_score_file,
             classify=classify_alphafold2_proteinfold_output,
         ),
         "colabfold": WorkflowResultsSpec(
