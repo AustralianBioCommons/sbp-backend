@@ -56,7 +56,7 @@ def test_get_wisps_default_params_with_tool():
     assert params["tools"] == "boltz"
 
 
-def test_get_wisps_executor_script_contains_s3_path():
+def test_get_wisps_executor_script_header_contains_s3_path():
     script = get_wisps_executor_script(
         fasta_s3_uri="s3://bucket/path.fa",
         split_output_dir="/tmp/seqs",
@@ -64,7 +64,7 @@ def test_get_wisps_executor_script_contains_s3_path():
     assert "bucket/path.fa" in script
 
 
-def test_get_wisps_executor_script_contains_split_output_dir():
+def test_get_wisps_executor_script_header_contains_split_output_dir():
     script = get_wisps_executor_script(
         fasta_s3_uri="s3://bucket/path.fa",
         split_output_dir="/tmp/seqs",
@@ -72,35 +72,67 @@ def test_get_wisps_executor_script_contains_split_output_dir():
     assert "/tmp/seqs" in script
 
 
-def test_get_wisps_executor_script_contains_aws_credentials():
+def test_get_wisps_executor_script_header_contains_aws_credentials():
     script = get_wisps_executor_script(
         fasta_s3_uri="s3://bucket/path.fa",
         split_output_dir="/tmp/seqs",
         aws_access_key="KEY",
         aws_secret_key="SECRET",
     )
-    # The script contains the s3 path and split_output_dir; credentials may be used
-    # in rclone config. Accept that the function runs without error and returns a string.
-    assert isinstance(script, str)
-    assert len(script) > 0
+    assert "KEY" in script
+    assert "SECRET" in script
 
 
-def test_get_wisps_executor_script_default_region():
+def test_get_wisps_executor_script_header_default_region():
     script = get_wisps_executor_script(
         fasta_s3_uri="s3://bucket/path.fa",
         split_output_dir="/tmp/seqs",
     )
-    # Default region is ap-southeast-2; function signature confirms default
-    assert isinstance(script, str)
+    assert "ap-southeast-2" in script
 
 
-def test_get_wisps_executor_script_custom_region():
+def test_get_wisps_executor_script_header_custom_region():
     script = get_wisps_executor_script(
         fasta_s3_uri="s3://bucket/path.fa",
         split_output_dir="/tmp/seqs",
         aws_region="us-east-1",
     )
-    assert isinstance(script, str)
+    assert "us-east-1" in script
+
+
+def test_get_wisps_executor_script_fetches_from_url():
+    """When prerun_script_path is set, the body is fetched and appended after the header."""
+    fetched_body = "module load singularity\nmodule load nextflow\nexport AWS_ACCESS_KEY_ID\n"
+    with patch(
+        "app.services.wisps_config.fetch_workflow_config", return_value=fetched_body
+    ) as mock_fetch:
+        script = get_wisps_executor_script(
+            fasta_s3_uri="s3://bucket/path.fa",
+            split_output_dir="/tmp/seqs",
+            aws_access_key="KEY",
+            aws_secret_key="SECRET",
+            aws_region="ap-southeast-2",
+            prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
+        )
+    mock_fetch.assert_called_once_with(
+        "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
+    )
+    assert fetched_body in script
+    assert "KEY" in script
+    assert "bucket/path.fa" in script
+    assert "/tmp/seqs" in script
+
+
+def test_get_wisps_executor_script_no_path_returns_header_only():
+    """When prerun_script_path is None, only the variable-assignment header is returned."""
+    with patch("app.services.wisps_config.fetch_workflow_config") as mock_fetch:
+        script = get_wisps_executor_script(
+            fasta_s3_uri="s3://bucket/path.fa",
+            split_output_dir="/tmp/seqs",
+        )
+    mock_fetch.assert_not_called()
+    assert "S3_PATH=bucket/path.fa" in script
+    assert 'D="/tmp/seqs"' in script
 
 
 def test_get_wisps_config_profiles_returns_list():
@@ -293,6 +325,57 @@ async def test_launch_wisps_workflow_success(monkeypatch):
         )
 
     assert result.workflow_id == "wf_xyz"
+
+
+@pytest.mark.anyio
+async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
+    """prerun_script_path is forwarded to get_wisps_executor_script."""
+    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
+    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token123")
+    monkeypatch.setenv("WORK_SPACE", "ws1")
+    monkeypatch.setenv("COMPUTE_ID", "ce1")
+    monkeypatch.setenv("WORK_DIR", "s3://work")
+    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+
+    mock_result = WispsLaunchResult(workflow_id="wf_prerun", status="submitted")
+    prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
+
+    with patch(
+        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+    ), patch(
+        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
+    ), patch(
+        "app.services.wisps_executor.get_wisps_default_params",
+        return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
+    ), patch(
+        "app.services.wisps_executor.get_wisps_executor_script", return_value="prerun_body"
+    ) as mock_script:
+        form = WorkflowLaunchForm(
+            workflow="interaction-screening", tool="boltz", runName="prerun-run"
+        )
+        form_data = InteractionScreeningFormData(
+            workflow="interaction-screening",
+            tool="boltz",
+            fastaS3Uri="s3://bucket/seqs.fa",
+            splitOutputDir="/tmp/split",
+        )
+        result = await launch_wisps_workflow(
+            form=form,
+            dataset_id="ds1",
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            user_email="user@test.com",
+            full_name="Test User",
+            institute="USYD",
+            ip_address="1.2.3.4",
+            output_id="output-003",
+            prerun_script_path=prerun_url,
+        )
+
+    assert result.workflow_id == "wf_prerun"
+    call_kwargs = mock_script.call_args.kwargs
+    assert call_kwargs["prerun_script_path"] == prerun_url
 
 
 @pytest.mark.anyio

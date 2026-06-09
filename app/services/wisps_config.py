@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_AWK = (
-    'awk -v o="$D" \'/^>/{if(f)close(f);'
-    'match($0,/^>([^ \\t]+)/,a);f=o"/"a[1]".fasta"}'
-    "{print>f}' /tmp/w.fa"
-)
+from .workflow_config_fetcher import fetch_workflow_config
 
 
 def get_wisps_default_params(
@@ -33,29 +29,29 @@ def get_wisps_executor_script(
     aws_access_key: str = "",
     aws_secret_key: str = "",
     aws_region: str = "ap-southeast-2",
+    prerun_script_path: str | None = None,
 ) -> str:
     """Pre-run script for WISPS workflow on Gadi.
 
-    Downloads the combined FASTA from S3 then splits it into per-sequence files
-    under split_output_dir before the workflow begins.
+    Builds a variable-assignment header with dynamic values and appends the
+    script body fetched from prerun_script_path.
     """
     s3_path = fasta_s3_uri.replace("s3://", "", 1)
-    lines = [
-        "module load singularity",
-        "module load nextflow",
-        f"export AWS_ACCESS_KEY_ID={aws_access_key}",
-        f"export AWS_SECRET_ACCESS_KEY={aws_secret_key}",
-        f"export AWS_REGION={aws_region}",
-        "export RCLONE_S3_PROVIDER=AWS",
-        "export RCLONE_S3_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID",
-        "export RCLONE_S3_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY",
-        "export RCLONE_S3_REGION=$AWS_REGION",
-        f'rclone copyto ":s3:{s3_path}" /tmp/w.fa',
-        f'D="{split_output_dir}"',
-        'mkdir -p "$D"',
-        _AWK,
-    ]
-    return "\n".join(lines) + "\n"
+    header = (
+        "\n".join(
+            [
+                f"AWS_ACCESS_KEY_ID={aws_access_key}",
+                f"AWS_SECRET_ACCESS_KEY={aws_secret_key}",
+                f"AWS_REGION={aws_region}",
+                f"S3_PATH={s3_path}",
+                f'D="{split_output_dir}"',
+            ]
+        )
+        + "\n"
+    )
+
+    body = fetch_workflow_config(prerun_script_path) if prerun_script_path else ""
+    return header + body
 
 
 def get_wisps_config_profiles() -> list[str]:

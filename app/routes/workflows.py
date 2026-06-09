@@ -336,6 +336,7 @@ async def launch_workflow(
                 config_path=workflow.config_path or "",
                 form_data=wisps_form_data,
                 output_id=str(run_id),
+                prerun_script_path=workflow.prerun_script_path,
                 user_email=user_email,
                 full_name=full_name,
                 institute=institute,
