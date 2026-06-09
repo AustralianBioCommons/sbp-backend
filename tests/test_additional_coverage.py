@@ -191,6 +191,7 @@ async def test_upload_interaction_screening_success(mock_create, mock_upload):
         success=True,
         dataset_id="ds-screen-1",
         message="Uploaded",
+        split_output_dir="/g/data/yz52/sbp-service/input/interaction_screening/run-screen-1",
     )
 
     response = await upload_interaction_screening_dataset_endpoint(_make_screening_request())
