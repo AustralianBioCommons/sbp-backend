@@ -1,0 +1,69 @@
+name: Check Alembic Migrations
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "alembic/**"
+      - "alembic.ini"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/check-migrations.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  alembic-heads:
+    name: Check merged Alembic heads
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+
+      - name: Merge pull request head
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin "pull/${{ github.event.pull_request.number }}/head"
+          git merge --no-edit --no-ff FETCH_HEAD
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Check Alembic has a single head after merge
+        run: |
+          uv run python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          script = ScriptDirectory.from_config(Config("alembic.ini"))
+          heads = script.get_heads()
+
+          if len(heads) != 1:
+              print(f"Expected exactly one Alembic head after merge, found {len(heads)}:")
+              for head in heads:
+                  print(f"  {head}")
+              print(
+                  "Create an Alembic merge migration or rebase this branch onto the "
+                  "target branch and regenerate the migration."
+              )
+              raise SystemExit(1)
+
+          print(f"Alembic head: {heads[0]}")
+          PY
