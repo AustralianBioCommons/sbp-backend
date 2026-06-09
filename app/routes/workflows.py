@@ -30,7 +30,6 @@ from ..schemas.workflows import (
 from ..services.bindflow_executor import (
     BindflowConfigurationError,
     BindflowExecutorError,
-    BindflowLaunchResult,
     _get_required_env,
     launch_bindflow_workflow,
 )
@@ -43,7 +42,6 @@ from ..services.datasets import (
 from ..services.proteinfold_executor import (
     ProteinfoldConfigurationError,
     ProteinfoldExecutorError,
-    ProteinfoldLaunchResult,
     launch_proteinfold_workflow,
 )
 from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
