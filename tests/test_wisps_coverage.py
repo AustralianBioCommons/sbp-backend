@@ -13,12 +13,12 @@ from app.services.wisps_config import (
     get_wisps_default_params,
     get_wisps_executor_script,
 )
+from app.services.seqera import params_to_yaml_text
 from app.services.wisps_executor import (
     WispsConfigurationError,
     WispsExecutorError,
     WispsLaunchResult,
     _get_required_env,
-    _params_to_yaml_text,
     _post_to_seqera,
     _samplesheet_url,
     launch_wisps_workflow,
@@ -194,12 +194,12 @@ def test_get_wisps_config_text_contains_base_config():
 # =============================================================================
 
 
-def test_params_to_yaml_text_empty():
-    assert _params_to_yaml_text({}) == ""
+def testparams_to_yaml_text_empty():
+    assert params_to_yaml_text({}) == ""
 
 
-def test_params_to_yaml_text_scalars():
-    result = _params_to_yaml_text(
+def testparams_to_yaml_text_scalars():
+    result = params_to_yaml_text(
         {"outdir": "s3://bucket", "input": "https://sheet", "mode": "g1-g2"}
     )
     assert "outdir: s3://bucket" in result

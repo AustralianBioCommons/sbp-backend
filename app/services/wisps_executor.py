@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-import yaml
 
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from .seqera import params_to_yaml_text
 from .wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
@@ -20,12 +20,6 @@ from .wisps_config import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _params_to_yaml_text(params: dict[str, Any]) -> str:
-    if not params:
-        return ""
-    return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
 class WispsConfigurationError(RuntimeError):
@@ -126,7 +120,7 @@ async def launch_wisps_workflow(
         raise WispsConfigurationError("Missing run name for workflow launch")
 
     sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
-    params_text = _params_to_yaml_text(
+    params_text = params_to_yaml_text(
         get_wisps_default_params(out_dir=out_dir, samplesheet_url=sheet_url, tool=tool)
     )
 

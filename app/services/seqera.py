@@ -7,10 +7,18 @@ import os
 from typing import Any
 
 import httpx
+import yaml
 
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
+
+
+def params_to_yaml_text(params: dict[str, Any]) -> str:
+    """Serialize a params dict to a YAML string for Seqera paramsText."""
+    if not params:
+        return ""
+    return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
 def _get_required_env(key: str) -> str:

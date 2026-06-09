@@ -29,11 +29,11 @@ from app.services.proteinfold_executor import (
     ProteinfoldExecutorError,
     ProteinfoldLaunchResult,
     _build_params_text,
-    _params_to_yaml_text,
     _post_to_seqera,
     _tool_params,
     launch_proteinfold_workflow,
 )
+from app.services.seqera import params_to_yaml_text
 
 
 def _form_data(**extra) -> WorkflowFormData:
@@ -41,26 +41,26 @@ def _form_data(**extra) -> WorkflowFormData:
 
 
 # =============================================================================
-# Tests for _params_to_yaml_text()
+# Tests for params_to_yaml_text()
 # =============================================================================
 
 
-def test_params_to_yaml_text_scalars():
-    result = _params_to_yaml_text({"outdir": "s3://bucket", "use_gpu": True, "batches": 1})
+def testparams_to_yaml_text_scalars():
+    result = params_to_yaml_text({"outdir": "s3://bucket", "use_gpu": True, "batches": 1})
     assert "outdir: s3://bucket" in result
     assert "use_gpu: true" in result
     assert "batches: 1" in result
 
 
-def test_params_to_yaml_text_nested_dict():
-    result = _params_to_yaml_text({"tags": {"key1": "val1", "key2": "val2"}})
+def testparams_to_yaml_text_nested_dict():
+    result = params_to_yaml_text({"tags": {"key1": "val1", "key2": "val2"}})
     assert "tags:" in result
     assert "key1: val1" in result
     assert "key2: val2" in result
 
 
-def test_params_to_yaml_text_empty():
-    assert _params_to_yaml_text({}) == ""
+def testparams_to_yaml_text_empty():
+    assert params_to_yaml_text({}) == ""
 
 
 # =============================================================================

@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-import yaml
 
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .bindflow_config import (
@@ -18,6 +17,7 @@ from .bindflow_config import (
     get_bindflow_default_params,
     get_bindflow_executor_script,
 )
+from .seqera import params_to_yaml_text
 from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ async def launch_bindflow_workflow(
             default_params[key] = value
 
     # Serialize to YAML
-    params_text = str(yaml.dump(default_params, default_flow_style=False, sort_keys=False)).rstrip()
+    params_text = params_to_yaml_text(default_params)
 
     # Add custom paramsText from frontend if provided
     if form.paramsText and form.paramsText.strip():

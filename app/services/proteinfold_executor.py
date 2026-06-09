@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-import yaml
 
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .proteinfold_config import (
@@ -18,6 +17,7 @@ from .proteinfold_config import (
     get_proteinfold_default_params,
     get_proteinfold_executor_script,
 )
+from .seqera import params_to_yaml_text
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,6 @@ _TOOL_PARAM_KEYS = frozenset(
     }
 )
 
-
-def _params_to_yaml_text(params: dict[str, Any]) -> str:
-    """Convert params dict to YAML string using PyYAML."""
-    if not params:
-        return ""
-    return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
 def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
@@ -90,7 +84,7 @@ def _build_params_text(
         params.update(_tool_params(form_data))
     if extra_params:
         params.update(extra_params)
-    params_text = _params_to_yaml_text(params)
+    params_text = params_to_yaml_text(params)
     if custom_params and custom_params.strip():
         params_text = f"{params_text}\n{custom_params.rstrip()}"
     return params_text
