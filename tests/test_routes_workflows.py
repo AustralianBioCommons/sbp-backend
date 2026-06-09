@@ -941,7 +941,9 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: TestClient, test_engine):
+def test_launch_interaction_screening_config_error(
+    mock_wisps, wisps_client: TestClient, test_engine
+):
     """WispsConfigurationError should return 500."""
     mock_wisps.side_effect = WispsConfigurationError("missing token")
 
@@ -974,7 +976,9 @@ def test_launch_interaction_screening_config_error(mock_wisps, wisps_client: Tes
 
 
 @patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_executor_error(mock_wisps, wisps_client: TestClient, test_engine):
+def test_launch_interaction_screening_executor_error(
+    mock_wisps, wisps_client: TestClient, test_engine
+):
     """WispsExecutorError should return 502."""
     mock_wisps.side_effect = WispsExecutorError("seqera 502")
 
