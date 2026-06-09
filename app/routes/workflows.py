@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,8 @@ from ..schemas.workflows import (
     DatasetUploadRequest,
     DatasetUploadResponse,
     InteractionScreeningDatasetUploadRequest,
+    InteractionScreeningDatasetUploadResponse,
+    InteractionScreeningFormData,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
@@ -44,6 +47,12 @@ from ..services.proteinfold_executor import (
     launch_proteinfold_workflow,
 )
 from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from ..services.wisps_executor import (
+    WispsConfigurationError,
+    WispsExecutorError,
+    WispsLaunchResult,
+    launch_wisps_workflow,
+)
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -252,9 +261,33 @@ async def launch_workflow(
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
     db_session.commit()
 
+    workflow_name = workflow.name.lower()
+
+    # Validate interaction-screening-specific fields before entering the try block
+    # so that HTTPException is not swallowed by the generic except Exception handler.
+    wisps_form_data: InteractionScreeningFormData | None = None
+    if workflow_name == "interaction-screening":
+        if not workflow.config_path:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Workflow 'interaction-screening' is missing config_path in workflows table.",
+            )
+        try:
+            wisps_form_data = InteractionScreeningFormData.model_validate(
+                payload.formData.model_dump()
+            )
+        except ValidationError as exc:
+            missing = next(
+                (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
+                "formData",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"'{missing}' is required in formData for interaction-screening.",
+            ) from exc
+
     try:
-        result: BindflowLaunchResult | ProteinfoldLaunchResult
-        workflow_name = workflow.name.lower()
+        result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
@@ -292,6 +325,23 @@ async def launch_workflow(
                 institute=institute,
                 ip_address=ip_address,
             )
+        elif workflow_name == "interaction-screening":
+            assert wisps_form_data is not None
+            wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            result = await launch_wisps_workflow(
+                wisps_launch_form,
+                dataset_id,
+                pipeline=workflow.repo_url,
+                revision=workflow.default_revision,
+                config_path=workflow.config_path or "",
+                form_data=wisps_form_data,
+                output_id=str(run_id),
+                prerun_script_path=workflow.prerun_script_path,
+                user_email=user_email,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
+            )
         else:
             db_session.rollback()
             raise HTTPException(
@@ -300,12 +350,19 @@ async def launch_workflow(
             )
         workflow_run.seqera_run_id = result.workflow_id
         db_session.commit()
-    except (BindflowConfigurationError, ProteinfoldConfigurationError) as exc:
+    except HTTPException:
+        db_session.rollback()
+        raise
+    except (
+        BindflowConfigurationError,
+        ProteinfoldConfigurationError,
+        WispsConfigurationError,
+    ) as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except (BindflowExecutorError, ProteinfoldExecutorError) as exc:
+    except (BindflowExecutorError, ProteinfoldExecutorError, WispsExecutorError) as exc:
         db_session.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:
@@ -428,11 +485,11 @@ async def upload_dataset(
 
 @router.post(
     "/datasets/interaction-screening/upload",
-    response_model=DatasetUploadResponse,
+    response_model=InteractionScreeningDatasetUploadResponse,
 )
 async def upload_interaction_screening_dataset_endpoint(
     payload: InteractionScreeningDatasetUploadRequest,
-) -> DatasetUploadResponse:
+) -> InteractionScreeningDatasetUploadResponse:
     """Create a Seqera dataset and upload an interaction screening samplesheet."""
     try:
         dataset = await create_seqera_dataset(name=payload.runId)
@@ -464,9 +521,10 @@ async def upload_interaction_screening_dataset_endpoint(
             detail=f"Dataset upload failed: {exc}",
         ) from exc
 
-    return DatasetUploadResponse(
+    return InteractionScreeningDatasetUploadResponse(
         message="Dataset created and uploaded successfully",
         datasetId=upload_result.dataset_id,
         success=upload_result.success,
+        splitOutputDir=upload_result.split_output_dir or "",
         details=upload_result.raw_response,
     )

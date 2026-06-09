@@ -91,6 +91,17 @@ class WorkflowFormData(BaseModel):
     sample_id: str | None = Field(default=None, description="Sample ID for the workflow run")
 
 
+class InteractionScreeningFormData(WorkflowFormData):
+    """Form data for the interaction-screening (WISPS) workflow."""
+
+    fastaS3Uri: str = Field(
+        ..., description="S3 URI of the combined FASTA file to split and screen"
+    )
+    splitOutputDir: str = Field(
+        ..., description="Cluster filesystem path for per-sequence FASTA files"
+    )
+
+
 class WorkflowLaunchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -188,7 +199,14 @@ class DatasetUploadResponse(BaseModel):
     message: str
     datasetId: str
     success: bool
+    splitOutputDir: str | None = None
     details: dict[str, Any] | None = None
+
+
+class InteractionScreeningDatasetUploadResponse(DatasetUploadResponse):
+    """Dataset upload response for interaction-screening — splitOutputDir is always present."""
+
+    splitOutputDir: str
 
 
 class SequenceItem(BaseModel):
