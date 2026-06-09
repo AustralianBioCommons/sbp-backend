@@ -217,6 +217,7 @@ async def launch_workflow(
             detail="Could not retrieve user details required for workflow launch.",
         )
     user_email = user.email
+    # removes everything that isn't a letter, digit, or space
     full_name = re.sub(r"[^a-zA-Z0-9 ]", "", user.name or "").replace(" ", "_")
     institute = user_email.split("@")[-1] if "@" in user_email else None
     ip_address: str | None = launch_ip or None
