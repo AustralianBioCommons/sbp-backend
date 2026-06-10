@@ -17,6 +17,7 @@ from app.services.s3 import (
     get_s3_client,
     list_s3_files,
     read_csv_from_s3,
+    read_s3_file,
     upload_file_to_s3,
 )
 
@@ -225,6 +226,43 @@ async def test_list_s3_files_client_error(mock_env_vars, mock_s3_client):
 
     with pytest.raises(S3ServiceError, match="Failed to list S3 files"):
         await list_s3_files(prefix="test/")
+
+
+@pytest.mark.asyncio
+async def test_read_s3_file_success(mock_env_vars, mock_s3_client):
+    """Test reading a text object from S3."""
+    content = "rank\tscore\n0\t0.91\n"
+    mock_response = {"Body": MagicMock()}
+    mock_response["Body"].read.return_value = content.encode("utf-8")
+    mock_s3_client.get_object.return_value = mock_response
+
+    result = await read_s3_file("results/test/file.tsv")
+
+    assert result == content
+    mock_s3_client.get_object.assert_called_once_with(
+        Bucket="test-bucket",
+        Key="results/test/file.tsv",
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_s3_file_missing_bucket():
+    """Test reading a text object without bucket configuration."""
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(S3ConfigurationError, match="AWS_S3_BUCKET"):
+            await read_s3_file("results/test/file.tsv")
+
+
+@pytest.mark.asyncio
+async def test_read_s3_file_client_error(mock_env_vars, mock_s3_client):
+    """Test reading a text object wraps S3 client errors."""
+    mock_s3_client.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Not found"}},
+        "get_object",
+    )
+
+    with pytest.raises(S3ServiceError, match="Failed to read CSV from S3"):
+        await read_s3_file("results/test/missing.tsv")
 
 
 @pytest.mark.asyncio
