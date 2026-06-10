@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from services.job_utils import ensure_completed_run_score
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
@@ -23,6 +22,7 @@ from ...schemas.workflows import (
 )
 from ...services.job_utils import (
     coerce_workflow_payload,
+    ensure_completed_run_score,
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
