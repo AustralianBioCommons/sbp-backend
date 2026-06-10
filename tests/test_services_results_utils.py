@@ -20,7 +20,9 @@ from app.services.results_utils import (
     classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
+    extract_bindcraft_max_score,
     format_log_entries,
+    get_bindcraft_score_file,
     get_sample_id_for_result,
     get_tool_name,
     resolve_pdb_presigned_urls,
@@ -210,6 +212,40 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+def test_get_bindcraft_score_file_uses_final_design_stats():
+    keys = [
+        "run/ranker/model.pdb",
+        "run/ranker/s1_final_design_stats.csv",
+        "run/generate/report.html",
+    ]
+
+    assert get_bindcraft_score_file(keys, "s1") == "run/ranker/s1_final_design_stats.csv"
+
+
+def test_get_bindcraft_score_file_returns_none_without_stats():
+    keys = [
+        "run/ranker/model.pdb",
+        "run/generate/report.html",
+    ]
+
+    assert get_bindcraft_score_file(keys, "s1") is None
+
+
+@pytest.mark.asyncio
+async def test_extract_bindcraft_max_score_reads_average_i_ptm():
+    csv_text = "design_id,Average_i_pTM\nA,0.12\nB,0.91\nC,\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as read_file:
+        score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
+
+    assert score == 0.91
+    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv")
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
