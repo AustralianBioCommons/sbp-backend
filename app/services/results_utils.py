@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from io import StringIO
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
 
@@ -20,6 +22,7 @@ from .s3 import (
     S3ServiceError,
     generate_presigned_url,
     list_s3_files,
+    read_s3_file,
 )
 
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
@@ -33,9 +36,9 @@ class OutputClassifier(Protocol):
 
 
 class GetScoreFile(Protocol):
-    """"Return the path to the score file for a workflow run."""
+    """Return the path to the score file for a workflow run."""
     def __call__(self, keys: list[str], sample_id: str | None) -> str | None:
-        ....
+        ...
 
 @dataclass(frozen=True)
 class ClassifiedOutput:
@@ -56,7 +59,17 @@ class WorkflowResultsSpec:
     get_prefixes: Callable[[WorkflowRun], list[str]]
     classify: OutputClassifier
     get_score_file: GetScoreFile
+    extract_max_score: Callable[[str], Awaitable[float | None]]
     supports_snapshots: bool = False
+
+    async def get_max_score(self, db: Session, run: WorkflowRun):
+        keys = _get_run_output_keys(db, run)
+        sample_id = get_sample_id_for_result(run)
+        score_file = self.get_score_file(keys, sample_id)
+        if score_file is None:
+            return None
+        return await self.extract_max_score(score_file)
+
 
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
@@ -324,6 +337,30 @@ def classify_bindcraft_output_key(
     return None
 
 
+def get_bindcraft_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    for key in keys:
+        normalized = key.strip()
+        if not normalized:
+            continue
+        basename = normalized.rsplit("/", 1)[-1]
+        if basename.endswith("_final_design_stats.csv"):
+            return normalized
+    return None
+
+
+async def extract_bindcraft_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    values: list[float] = []
+
+    for row in csv_reader:
+        value = row.get("Average_i_pTM")
+        if value and value.strip():
+            values.append(float(value))
+
+    return max(values) if values else None
+
+
 def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single-prediction"
     score_pattern = rf"/{sample_id_pattern}/.+_ptm\.(tsv|csv)"
@@ -331,6 +368,14 @@ def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | 
         if re.search(score_pattern, key):
             return key
     return None
+
+
+async def extract_proteinfold_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    tsv = csv.reader(StringIO(content), delimiter="\t")
+    # Max score should be the row with the lowest index
+    max_row = min((row for row in tsv), key=lambda row: int(row[0]))
+    return float(max_row[1])
 
 
 def classify_proteinfold_output_key(
@@ -485,6 +530,8 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             tool="bindcraft",
             required_categories={"report", "stats_csv", "pdb"},
             get_prefixes=build_bindcraft_output_listing_prefixes,
+            get_score_file=get_bindcraft_score_file,
+            extract_max_score=extract_bindcraft_max_score,
             classify=classify_bindcraft_output_key,
             supports_snapshots=True,
         ),
@@ -496,6 +543,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             required_categories={"report", "pdb", "stats_csv", "alignment"},
             get_prefixes=build_boltz_proteinfold_output_listing_prefixes,
             get_score_file=get_proteinfold_score_file,
+            extract_max_score=extract_proteinfold_max_score,
             classify=classify_boltz_proteinfold_output,
         ),
         "alphafold2": WorkflowResultsSpec(
@@ -504,6 +552,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             required_categories={"report", "pdb", "stats_csv"},
             get_prefixes=build_alphafold2_proteinfold_output_listing_prefixes,
             get_score_file=get_proteinfold_score_file,
+            extract_max_score=extract_proteinfold_max_score,
             classify=classify_alphafold2_proteinfold_output,
         ),
         "colabfold": WorkflowResultsSpec(
@@ -511,6 +560,8 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             tool="colabfold",
             required_categories={"report", "pdb", "stats_csv", "alignment"},
             get_prefixes=build_colabfold_proteinfold_output_listing_prefixes,
+            get_score_file=get_proteinfold_score_file,
+            extract_max_score=extract_proteinfold_max_score,
             classify=classify_colabfold_proteinfold_output,
         ),
     },
