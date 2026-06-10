@@ -8,10 +8,10 @@ import string
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from unidecode import unidecode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from unidecode import unidecode
 
 from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
