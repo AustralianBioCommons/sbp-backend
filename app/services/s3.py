@@ -302,7 +302,7 @@ async def read_s3_file(file_key: str) -> str:
 
         # Download file content
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        content = response["Body"].read().decode("utf-8")
+        content: str = response["Body"].read().decode("utf-8")
         return content
     except (BotoCoreError, ClientError) as exc:
         error_msg = f"Failed to read CSV from S3: {str(exc)}"
