@@ -22,6 +22,7 @@ dependencies = [
     "cachetools~=5.3",
     "python-jose[cryptography]~=3.3",
     "starlette-admin~=0.16",
+    "unidecode~=1.3",
 ]
 
 [tool.setuptools]

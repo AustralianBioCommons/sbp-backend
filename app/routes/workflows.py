@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from unidecode import unidecode
 
 from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from ..schemas.workflows import (
@@ -226,7 +227,9 @@ async def launch_workflow(
             detail="Could not retrieve user details required for workflow launch.",
         )
     user_email = user.email
-    full_name = (user.name or "").replace(" ", "_")
+    # removes everything that isn't a letter, digit, or space
+    name = unidecode(user.name or "")
+    full_name = re.sub(r"[^a-zA-Z0-9 ]", "", name).replace(" ", "_")
     institute = user_email.split("@")[-1] if "@" in user_email else None
     ip_address: str | None = launch_ip or None
 
