@@ -245,13 +245,13 @@ async def test_ensure_completed_run_score_branches():
 
     # existing score path
     db_existing = _DB(scalar=SimpleNamespace(max_score=0.9))
-    fake_existing_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=1.23))
     with (
-        patch("app.services.job_utils.get_output_spec", return_value=fake_existing_spec),
-        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+        patch("app.services.job_utils.get_output_spec") as get_output_spec,
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock) as sync_outputs,
     ):
         assert await job_utils.ensure_completed_run_score(db_existing, run, "Completed") == 0.9
-    fake_existing_spec.get_max_score.assert_not_awaited()
+    get_output_spec.assert_not_called()
+    sync_outputs.assert_not_awaited()
 
     # calculate + add path
     db_new = _DB(scalar=None)
