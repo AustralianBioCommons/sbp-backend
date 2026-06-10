@@ -247,7 +247,9 @@ async def test_ensure_completed_run_score_branches():
     db_existing = _DB(scalar=SimpleNamespace(max_score=0.9))
     with (
         patch("app.services.job_utils.get_output_spec") as get_output_spec,
-        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock) as sync_outputs,
+        patch(
+            "app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock
+        ) as sync_outputs,
     ):
         assert await job_utils.ensure_completed_run_score(db_existing, run, "Completed") == 0.9
     get_output_spec.assert_not_called()

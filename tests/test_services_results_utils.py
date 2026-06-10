@@ -10,8 +10,8 @@ import pytest
 
 from app.db.models.core import AppUser, RunOutput, S3Object, WorkflowRun
 from app.services.results_utils import (
-    ClassifiedOutput,
     WORKFLOW_OUTPUT_SPECS,
+    ClassifiedOutput,
     WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,

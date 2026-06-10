@@ -37,8 +37,10 @@ class OutputClassifier(Protocol):
 
 class GetScoreFile(Protocol):
     """Return the path to the score file for a workflow run."""
+
     def __call__(self, keys: list[str], sample_id: str | None) -> str | None:
         ...
+
 
 @dataclass(frozen=True)
 class ClassifiedOutput:
@@ -69,7 +71,6 @@ class WorkflowResultsSpec:
         if score_file is None:
             return None
         return await self.extract_max_score(score_file)
-
 
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
