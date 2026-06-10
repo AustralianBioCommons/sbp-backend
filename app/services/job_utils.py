@@ -143,12 +143,12 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
     if ui_status != "Completed":
         return None
 
-    spec = get_output_spec(run)
-    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
-
     existing = db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).scalar_one_or_none()
     if existing and existing.max_score is not None:
         return _round_score(existing.max_score)
+
+    spec = get_output_spec(run)
+    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
 
     max_score = await spec.get_max_score(db, run)
     if max_score is None:
