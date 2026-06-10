@@ -13,7 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
-from .results_utils import get_sample_id_for_result, s3_uri_to_key, sync_bindcraft_outputs
+from .results_utils import (
+    get_sample_id_for_result,
+    s3_uri_to_key,
+    sync_bindcraft_outputs,
+    sync_workflow_outputs,
+    get_output_spec,
+)
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -195,6 +201,30 @@ def _build_bindcraft_score_file_candidates(db: Session, run: WorkflowRun) -> lis
     return candidates
 
 
+async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+    if ui_status != "Completed":
+        return None
+
+    spec = get_output_spec(run)
+    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+
+    existing = db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).scalar_one_or_none()
+    if existing and existing.max_score is not None:
+        return _round_score(existing.max_score)
+
+    max_score = await spec.get_max_score(db, run)
+    if max_score is None:
+        return None
+
+    bounded_score = max(0.0, min(1.0, float(max_score)))
+    if existing:
+        existing.max_score = bounded_score
+    else:
+        db.add(RunMetric(run_id=run.id, max_score=bounded_score))
+    db.commit()
+    return _round_score(bounded_score)
+
+
 async def ensure_completed_bindcraft_score(
     db: Session, run: WorkflowRun, ui_status: str
 ) -> float | None:
@@ -237,5 +267,3 @@ async def ensure_completed_bindcraft_score(
     return _round_score(bounded_score)
 
 
-# Backward-compatible alias. Prefer `ensure_completed_bindcraft_score`.
-ensure_completed_run_score = ensure_completed_bindcraft_score
