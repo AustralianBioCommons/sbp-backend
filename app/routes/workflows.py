@@ -266,26 +266,16 @@ async def launch_workflow(
 
     workflow_name = workflow.name.lower()
 
-    # Validate config_path-dependent workflows before entering the try block
+    # All workflows require config_path. Validate before the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.
-    if workflow_name in ("single-prediction", "proteinfold"):
-        if not workflow.config_path:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    f"Workflow '{workflow.name}' is missing config_path in workflows table."
-                ),
-            )
+    if not workflow.config_path:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
+        )
 
     wisps_form_data: InteractionScreeningFormData | None = None
     if workflow_name == "interaction-screening":
-        if not workflow.config_path:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    "Workflow 'interaction-screening' is missing config_path in workflows table."
-                ),
-            )
         try:
             wisps_form_data = InteractionScreeningFormData.model_validate(
                 payload.formData.model_dump()
@@ -312,7 +302,7 @@ async def launch_workflow(
                 proteinfold_launch_form,
                 dataset_id,
                 pipeline=workflow.repo_url,
-                config_path=workflow.config_path or "",
+                config_path=workflow.config_path,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 mode=tool_algo,
@@ -331,6 +321,7 @@ async def launch_workflow(
                 bindcraft_launch_form,
                 dataset_id,
                 pipeline=workflow.repo_url,
+                config_path=workflow.config_path,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 mode=tool_mode,
@@ -348,7 +339,7 @@ async def launch_workflow(
                 dataset_id,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
-                config_path=workflow.config_path or "",
+                config_path=workflow.config_path,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 prerun_script_path=workflow.prerun_script_path,
