@@ -20,12 +20,12 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import HasMany, JSONField
+from starlette_admin import HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
-from starlette_admin.fields import HasOne, StringField
+from starlette_admin.fields import DateTimeField, HasOne, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..routes.dependencies import get_db
@@ -43,6 +43,13 @@ from .models.core import (
 DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
+
+# Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
+# converts them to the viewer's browser-detected timezone, falling back to
+# Sydney/Melbourne (AEST/AEDT) when the browser timezone is unavailable. The
+# active timezone is shown in the navbar via the timezone switcher.
+DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
+LOCAL_TZ_FIELD_HELP = "Shown in your local timezone (see selector in the navbar)"
 
 
 def _encode_admin_pk(value: object) -> str:
@@ -63,7 +70,11 @@ class AppUserAdmin(ModelView):
         "name",
         "email",
         "credit",
-        "credit_updated_at",
+        DateTimeField(
+            "credit_updated_at",
+            label="Credit Updated At",
+            help_text=LOCAL_TZ_FIELD_HELP,
+        ),
         "credit_updated_by",
     ]
 
@@ -100,7 +111,11 @@ class WorkflowRunAdmin(ModelView):
         "binder_name",
         JSONField("submitted_form_data"),
         "work_dir",
-        "submission_timestamp",
+        DateTimeField(
+            "submission_timestamp",
+            label="Submission Timestamp",
+            help_text=LOCAL_TZ_FIELD_HELP,
+        ),
     ]
     exclude_fields_from_list = "submitted_form_data"
 
@@ -645,10 +660,24 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     if _has_column(RunMetric, "final_design_count"):
         RunMetricAdmin.fields.append("final_design_count")
 
+    display_timezone = (
+        os.getenv("DB_ADMIN_DISPLAY_TIMEZONE", "").strip()
+        or DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE
+    )
     admin = Admin(
         engine=engine,
         title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
         auth_provider=Auth0AdminAuthProvider(),
+        # Timestamps are stored as UTC. Convert them for display to the viewer's
+        # browser timezone (auto-detected via use_user_locale_timezone), falling
+        # back to Sydney/Melbourne when the browser timezone is unavailable. The
+        # switcher surfaces the active timezone in the navbar as a visible note.
+        timezone_config=TimezoneConfig(
+            default_timezone=display_timezone,
+            database_timezone="UTC",
+            use_user_locale_timezone=True,
+            timezone_switcher=[display_timezone, "UTC"],
+        ),
     )
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))

@@ -81,10 +81,16 @@ def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):
         mount_db_admin(app)
 
 
+def _admin_field_names(view) -> list[str]:
+    """Field entries may be plain strings or field instances (e.g. DateTimeField)."""
+    return [getattr(field, "name", field) for field in view.fields]
+
+
 def test_app_user_admin_includes_credit_column() -> None:
-    assert "credit" in AppUserAdmin.fields
-    assert "credit_updated_at" in AppUserAdmin.fields
-    assert "credit_updated_by" in AppUserAdmin.fields
+    field_names = _admin_field_names(AppUserAdmin)
+    assert "credit" in field_names
+    assert "credit_updated_at" in field_names
+    assert "credit_updated_by" in field_names
 
 
 async def test_admin_s3_object_relation_serializes_url_safe_detail_url() -> None:
