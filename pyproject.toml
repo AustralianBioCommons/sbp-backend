@@ -29,6 +29,7 @@ packages = ["app"]
 
 [project.optional-dependencies]
 dev = [
+    "boto3-stubs>=1.43.26",
     "pytest~=8.3",
     "pytest-asyncio~=0.23",
     "pytest-cov~=4.1",
