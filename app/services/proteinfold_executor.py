@@ -126,6 +126,7 @@ async def launch_proteinfold_workflow(
     dataset_id: str,
     *,
     pipeline: str,
+    config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
     mode: str = "alphafold2",
@@ -172,7 +173,13 @@ async def launch_proteinfold_workflow(
             "paramsText": params_text,
             "configProfiles": get_proteinfold_config_profiles(),
             "configText": get_proteinfold_config_text(
-                job_id, user_email, timestamp, full_name, institute, ip_address
+                config_path,
+                job_id=job_id,
+                user_name=user_email,
+                timestamp=timestamp,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             ),
             "preRunScript": get_proteinfold_executor_script(
                 os.getenv("AWS_ACCESS_KEY_ID", ""),

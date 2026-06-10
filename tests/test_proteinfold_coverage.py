@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, mock_open, patch
 
 import httpx
 import pytest
@@ -243,12 +243,16 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
         "app.services.proteinfold_executor._post_to_seqera",
         new_callable=AsyncMock,
         return_value=expected_result,
-    ) as mock_post:
+    ) as mock_post, patch(
+        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        return_value="config_text",
+    ):
         form = _make_launch_form()
         result = await launch_proteinfold_workflow(
             form,
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
             revision="dev",
             output_id="run-output-id",
             mode="alphafold2",
@@ -276,6 +280,7 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
             form,
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
             output_id="run-output-id",
             user_email="test@example.com",
             full_name="Test_User",
@@ -292,6 +297,7 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
             form,
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
             output_id=None,
             user_email="test@example.com",
             full_name="Test_User",
@@ -308,6 +314,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
             form,
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
             output_id="   ",
             user_email="test@example.com",
             full_name="Test_User",
@@ -324,12 +331,16 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
         "app.services.proteinfold_executor._post_to_seqera",
         new_callable=AsyncMock,
         return_value=expected_result,
+    ), patch(
+        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        return_value="config_text",
     ):
         form = _make_launch_form()
         result = await launch_proteinfold_workflow(
             form,
             "dataset_abc",
             pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
             revision="main",
             output_id="run-output-id",
             mode="colabfold",
@@ -479,9 +490,7 @@ def test_get_proteinfold_default_params_required_keys():
     assert params["input"] == "https://sheet.url"
     assert "mode" in params
     assert "use_gpu" in params
-    assert "alphafold2_db" in params
-    assert "colabfold_db" in params
-    assert "boltz_db" in params
+    assert "project" in params
 
 
 def test_get_proteinfold_default_params_mode_substitution():
@@ -522,50 +531,40 @@ def test_get_proteinfold_config_profiles_contains_singularity():
     assert "singularity" in profiles
 
 
-def test_get_proteinfold_config_text_groovy_structure():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "params {" in text
-    assert "singularity {" in text
-    assert "executor {" in text
-    assert "process {" in text
+def test_get_proteinfold_config_text_appends_process_block():
+    with patch("builtins.open", mock_open(read_data="base_config")):
+        result = get_proteinfold_config_text(
+            "/fake/proteinfold.config",
+            job_id="my-job",
+            user_name="user@ex.com",
+            timestamp="20240101_120000",
+            full_name="Test_User",
+            institute="USYD",
+            ip_address="1.2.3.4",
+        )
+    assert "process {" in result
+    assert "clusterOptions" in result
 
 
-def test_get_proteinfold_config_text_singularity_enabled():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "enabled = true" in text
-    assert "autoMounts = true" in text
+def test_get_proteinfold_config_text_contains_job_fields():
+    with patch("builtins.open", mock_open(read_data="base_config")):
+        result = get_proteinfold_config_text(
+            "/fake/proteinfold.config",
+            job_id="my-job",
+            user_name="user@ex.com",
+            timestamp="20240101_120000",
+        )
+    assert "my-job" in result
+    assert "user@ex.com" in result
+    assert "20240101_120000" in result
 
 
-def test_get_proteinfold_config_text_contains_pbspro():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "pbspro" in text
-
-
-def test_get_proteinfold_config_text_contains_trace():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "trace {" in text
-
-
-def test_get_proteinfold_config_text_interpolates_job_fields():
-    text = get_proteinfold_config_text("my-job", "alice", "20260507_120000")
-    assert "my-job" in text
-    assert "alice" in text
-    assert "20260507_120000" in text
-
-
-def test_get_proteinfold_config_text_contains_withname_block():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "MMSEQS_COLABFOLDSEARCH" in text
-    assert "256.GB" in text
-
-
-def test_get_proteinfold_config_text_contains_withlabel_block():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    assert "process_gpu" in text
-    assert "gpuvolta" in text
-
-
-def test_get_proteinfold_config_text_is_valid_groovy():
-    text = get_proteinfold_config_text("job-1", "user-1", "20260507_150000")
-    tree = parse_groovy_content(text)
-    assert tree is not None
+def test_get_proteinfold_config_text_contains_base_config():
+    with patch("builtins.open", mock_open(read_data="base_config")):
+        result = get_proteinfold_config_text(
+            "/fake/proteinfold.config",
+            job_id="my-job",
+            user_name="user@ex.com",
+            timestamp="20240101_120000",
+        )
+    assert "base_config" in result
