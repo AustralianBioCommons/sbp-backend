@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, mock_open, patch
 import httpx
 import pytest
 import respx
-from groovy_parser.parser import parse_groovy_content
 
 from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from app.services.proteinfold_config import (

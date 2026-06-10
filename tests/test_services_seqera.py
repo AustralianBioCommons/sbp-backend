@@ -29,9 +29,7 @@ def _empty_form_data() -> WorkflowFormData:
 @pytest.fixture(autouse=True)
 def mock_bindflow_config_text():
     """Prevent get_bindflow_config_text from trying to open a real file."""
-    with patch(
-        "app.services.bindflow_executor.get_bindflow_config_text", return_value=""
-    ):
+    with patch("app.services.bindflow_executor.get_bindflow_config_text", return_value=""):
         yield
 
 
