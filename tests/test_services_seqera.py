@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -18,9 +19,20 @@ from app.services.bindflow_executor import (
     launch_bindflow_workflow,
 )
 
+_CONFIG_PATH = "/some/bindflow.config"
+
 
 def _empty_form_data() -> WorkflowFormData:
     return WorkflowFormData(workflow="de-novo-design", tool="bindcraft")
+
+
+@pytest.fixture(autouse=True)
+def mock_bindflow_config_text():
+    """Prevent get_bindflow_config_text from trying to open a real file."""
+    with patch(
+        "app.services.bindflow_executor.get_bindflow_config_text", return_value=""
+    ):
+        yield
 
 
 def test_get_existing_env_variable():
@@ -54,6 +66,7 @@ async def test_launch_success_minimal():
         form,
         dataset_id="dataset_min_001",
         pipeline="https://github.com/test/repo",
+        config_path=_CONFIG_PATH,
         mode="bindcraft",
         form_data=_empty_form_data(),
         user_email="test@example.com",
@@ -93,6 +106,7 @@ async def test_launch_success_with_all_params():
         form,
         dataset_id="dataset_789",
         pipeline="https://github.com/test/repo",
+        config_path=_CONFIG_PATH,
         revision="main",
         mode="bindcraft",
         form_data=_empty_form_data(),
@@ -127,6 +141,7 @@ async def test_launch_includes_default_params():
         form,
         dataset_id="dataset_defaults_001",
         pipeline="https://github.com/test/repo",
+        config_path=_CONFIG_PATH,
         mode="bindcraft",
         form_data=_empty_form_data(),
         user_email="test@example.com",
@@ -140,9 +155,9 @@ async def test_launch_includes_default_params():
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
-    assert "use_dgxa100: false" in params_text
     assert "project: yz52" in params_text
     assert "outdir:" in params_text
+    assert "input:" in params_text
 
 
 @pytest.mark.asyncio
@@ -161,6 +176,7 @@ async def test_launch_with_dataset_adds_input_url():
         form,
         dataset_id="ds_abc",
         pipeline="https://github.com/test/repo",
+        config_path=_CONFIG_PATH,
         mode="bindcraft",
         form_data=_empty_form_data(),
         user_email="test@example.com",
@@ -196,6 +212,7 @@ async def test_launch_api_error_response():
             form,
             dataset_id="dataset_error_001",
             pipeline="https://github.com/test/repo",
+            config_path=_CONFIG_PATH,
             mode="bindcraft",
             form_data=_empty_form_data(),
             user_email="test@example.com",
@@ -223,6 +240,7 @@ async def test_launch_missing_workflow_id_in_response():
             form,
             dataset_id="dataset_error_002",
             pipeline="https://github.com/test/repo",
+            config_path=_CONFIG_PATH,
             mode="bindcraft",
             form_data=_empty_form_data(),
             user_email="test@example.com",
@@ -250,6 +268,7 @@ def test_launch_missing_env_vars():
                     form,
                     dataset_id="dataset_env_001",
                     pipeline="https://github.com/test/repo",
+                    config_path=_CONFIG_PATH,
                     mode="bindcraft",
                     form_data=_empty_form_data(),
                     user_email="test@example.com",
@@ -280,6 +299,7 @@ async def test_launch_with_custom_params_text():
         form,
         dataset_id="dataset_params_001",
         pipeline="https://github.com/test/repo",
+        config_path=_CONFIG_PATH,
         mode="bindcraft",
         form_data=_empty_form_data(),
         user_email="test@example.com",
@@ -293,6 +313,5 @@ async def test_launch_with_custom_params_text():
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
-    assert "use_dgxa100: false" in params_text
     assert "my_custom_param: 42" in params_text
     assert "another_param: test" in params_text
