@@ -65,9 +65,6 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="de-novo-design",
         displayName="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        # NOTE: boltzgen is not in the SBP credit-calculation spec (which prices
-        # only BindCraft and RFdiffusion for De Novo Design); it is included at
-        # the product team's request so the UI can show a cost for the tool.
         toolMultipliers={"bindcraft": 20, "rfdiffusion": 10, "boltzgen": 1},
     ),
     WorkflowCreditConfig(
