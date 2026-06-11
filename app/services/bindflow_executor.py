@@ -29,6 +29,8 @@ BindflowExecutorError = SeqeraExecutorError
 
 @dataclass
 class BindflowLaunchResult:
+    """Result of a bindflow workflow launch."""
+
     workflow_id: str
     status: str
     message: str | None = None
@@ -41,11 +43,12 @@ def _get_required_env(key: str) -> str:
     return value
 
 
-async def launch_bindflow_workflow(
+async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
     dataset_id: str,
     *,
     pipeline: str,
+    config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
     mode: str,
@@ -79,17 +82,14 @@ async def launch_bindflow_workflow(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    # Build default external parameters from config
-    default_params = get_bindflow_default_params(out_dir)
-
-    # Merge job metadata and dataset URL into params dict
     dataset_url = (
         f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
     )
+    default_params = get_bindflow_default_params(out_dir, dataset_url)
+
     default_params["job_id"] = run_name
     default_params["user_name"] = user_email
     default_params["timestamp"] = timestamp
-    default_params["input"] = dataset_url
     default_params["mode"] = mode
 
     # Merge any tool-specific params forwarded from the frontend form
@@ -115,7 +115,13 @@ async def launch_bindflow_workflow(
             "paramsText": params_text,
             "configProfiles": get_bindflow_config_profiles(),
             "configText": get_bindflow_config_text(
-                run_name, user_email, timestamp, full_name, institute, ip_address
+                config_path,
+                job_id=run_name,
+                username=user_email,
+                timestamp=timestamp,
+                full_name=full_name,
+                institute=institute,
+                ip_address=ip_address,
             ),
             "preRunScript": get_bindflow_executor_script(
                 aws_access_key, aws_secret_key, aws_region

@@ -62,6 +62,7 @@ def role_check_client(test_engine):
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
+            config_path="/some/bindflow.config",
         )
     )
     setup_session.commit()
@@ -581,6 +582,7 @@ def _add_proteinfold_workflow(test_engine):
                     description="Single prediction workflow",
                     repo_url="https://github.com/nf-core/proteinfold",
                     default_revision="dev",
+                    config_path="/some/proteinfold.config",
                 )
             )
             db.commit()
@@ -754,6 +756,7 @@ def wisps_client(test_engine):
                 description="Test BindCraft workflow",
                 repo_url="https://github.com/test/repo",
                 default_revision="dev",
+                config_path="/some/bindflow.config",
             )
         )
 
