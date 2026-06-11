@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import HasMany, JSONField
+from starlette_admin import HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
@@ -43,6 +43,11 @@ from .models.core import (
 DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
+
+# Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
+# always displays them in Sydney/Melbourne time (AEST/AEDT), regardless of the
+# viewer's location.
+DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
 
 
 def _encode_admin_pk(value: object) -> str:
@@ -649,6 +654,18 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         engine=engine,
         title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
         auth_provider=Auth0AdminAuthProvider(),
+        # Timestamps are stored as UTC; always display them in Sydney/Melbourne
+        # time. Browser-timezone auto-detection (use_user_locale_timezone) and the
+        # timezone cookie override are both disabled so the displayed timezone is
+        # fixed regardless of where the viewer is. timezone_switcher is left unset:
+        # the navbar switcher widget requires the optional `babel` dependency and
+        # would 500 the admin pages without it.
+        timezone_config=TimezoneConfig(
+            default_timezone=DB_ADMIN_DISPLAY_TIMEZONE,
+            database_timezone="UTC",
+            use_user_locale_timezone=False,
+            timezone_cookie_name=None,
+        ),
     )
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))
