@@ -84,7 +84,11 @@ class WorkflowAdmin(ModelView):
 
     async def before_save(self, request: Request, obj: Any, is_created: bool) -> None:
         nullable_fields = (
-            "description", "repo_url", "default_revision", "config_path", "prerun_script_path"
+            "description",
+            "repo_url",
+            "default_revision",
+            "config_path",
+            "prerun_script_path",
         )
         for field in nullable_fields:
             value = getattr(obj, field, None)
