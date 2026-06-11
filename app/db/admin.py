@@ -25,7 +25,7 @@ from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
-from starlette_admin.fields import DateTimeField, HasOne, StringField
+from starlette_admin.fields import HasOne, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..routes.dependencies import get_db
@@ -46,10 +46,10 @@ DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 
 # Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
 # converts them to the viewer's browser-detected timezone, falling back to
-# Sydney/Melbourne (AEST/AEDT) when the browser timezone is unavailable. The
-# active timezone is shown in the navbar via the timezone switcher.
+# Sydney/Melbourne (AEST/AEDT) when the browser timezone is unavailable.
+# (The navbar timezone switcher is intentionally not enabled: it requires the
+# optional `babel` dependency, which is not installed.)
 DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
-LOCAL_TZ_FIELD_HELP = "Shown in your local timezone (see selector in the navbar)"
 
 
 def _encode_admin_pk(value: object) -> str:
@@ -70,11 +70,7 @@ class AppUserAdmin(ModelView):
         "name",
         "email",
         "credit",
-        DateTimeField(
-            "credit_updated_at",
-            label="Credit Updated At",
-            help_text=LOCAL_TZ_FIELD_HELP,
-        ),
+        "credit_updated_at",
         "credit_updated_by",
     ]
 
@@ -111,11 +107,7 @@ class WorkflowRunAdmin(ModelView):
         "binder_name",
         JSONField("submitted_form_data"),
         "work_dir",
-        DateTimeField(
-            "submission_timestamp",
-            label="Submission Timestamp",
-            help_text=LOCAL_TZ_FIELD_HELP,
-        ),
+        "submission_timestamp",
     ]
     exclude_fields_from_list = "submitted_form_data"
 
@@ -670,13 +662,13 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         auth_provider=Auth0AdminAuthProvider(),
         # Timestamps are stored as UTC. Convert them for display to the viewer's
         # browser timezone (auto-detected via use_user_locale_timezone), falling
-        # back to Sydney/Melbourne when the browser timezone is unavailable. The
-        # switcher surfaces the active timezone in the navbar as a visible note.
+        # back to Sydney/Melbourne when the browser timezone is unavailable.
+        # timezone_switcher is left unset: the navbar switcher widget requires the
+        # optional `babel` dependency and would 500 the admin pages without it.
         timezone_config=TimezoneConfig(
             default_timezone=display_timezone,
             database_timezone="UTC",
             use_user_locale_timezone=True,
-            timezone_switcher=[display_timezone, "UTC"],
         ),
     )
     admin.add_view(AppUserAdmin(AppUser))
