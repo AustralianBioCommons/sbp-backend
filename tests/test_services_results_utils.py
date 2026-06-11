@@ -255,9 +255,9 @@ async def test_extract_bindcraft_max_score_reads_average_i_ptm():
 @pytest.mark.parametrize(
     ("tool", "key"),
     [
-        ("boltz", "run-1/boltz/T1024/T1024_0_ptm.tsv"),
-        ("alphafold2", "run-1/alphafold2/split_msa_prediction/T1024/T1024_0_ptm.tsv"),
-        ("colabfold", "run-1/colabfold/T1024/T1024_0_ptm.tsv"),
+        ("boltz", "run-1/boltz/T1024/T1024_ptm.tsv"),
+        ("alphafold2", "run-1/alphafold2/split_msa_prediction/T1024/T1024_ptm.tsv"),
+        ("colabfold", "run-1/colabfold/T1024/T1024_ptm.tsv"),
     ],
 )
 def test_get_proteinfold_score_file_matches_single_prediction_tool_paths(tool, key):
@@ -279,10 +279,10 @@ async def test_extract_proteinfold_max_score_reads_ranked_tsv():
         new_callable=AsyncMock,
         return_value=tsv_text,
     ) as read_file:
-        score = await extract_proteinfold_max_score("run-1/boltz/T1024/T1024_0_ptm.tsv")
+        score = await extract_proteinfold_max_score("run-1/boltz/T1024/T1024_ptm.tsv")
 
     assert score == 0.91
-    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_0_ptm.tsv")
+    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
 
 
 def test_all_workflow_output_specs_have_score_hooks():
@@ -341,8 +341,8 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
         uri="s3://bucket/run-1/boltz/T1024/T1024_0_pae.tsv",
     )
     score_object = S3Object(
-        object_key="run-1/boltz/T1024/T1024_0_ptm.tsv",
-        uri="s3://bucket/run-1/boltz/T1024/T1024_0_ptm.tsv",
+        object_key="run-1/boltz/T1024/T1024_ptm.tsv",
+        uri="s3://bucket/run-1/boltz/T1024/T1024_ptm.tsv",
     )
     test_db.add_all([user, run, ignored, score_object])
     test_db.flush()
@@ -366,7 +366,7 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
     )
 
     assert await spec.get_max_score(test_db, run) == 0.91
-    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_0_ptm.tsv")
+    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
