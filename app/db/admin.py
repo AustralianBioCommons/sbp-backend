@@ -45,9 +45,9 @@ DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 
 # Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
-# converts them to the viewer's browser-detected timezone, falling back to
-# Sydney/Melbourne (AEST/AEDT) when the browser timezone is unavailable.
-DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
+# always displays them in Sydney/Melbourne time (AEST/AEDT), regardless of the
+# viewer's location.
+DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
 
 
 def _encode_admin_pk(value: object) -> str:
@@ -650,22 +650,21 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     if _has_column(RunMetric, "final_design_count"):
         RunMetricAdmin.fields.append("final_design_count")
 
-    display_timezone = (
-        os.getenv("DB_ADMIN_DISPLAY_TIMEZONE", "").strip() or DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE
-    )
     admin = Admin(
         engine=engine,
         title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
         auth_provider=Auth0AdminAuthProvider(),
-        # Timestamps are stored as UTC. Convert them for display to the viewer's
-        # browser timezone (auto-detected via use_user_locale_timezone), falling
-        # back to Sydney/Melbourne when the browser timezone is unavailable.
-        # timezone_switcher is left unset: the navbar switcher widget requires the
-        # optional `babel` dependency and would 500 the admin pages without it.
+        # Timestamps are stored as UTC; always display them in Sydney/Melbourne
+        # time. Browser-timezone auto-detection (use_user_locale_timezone) and the
+        # timezone cookie override are both disabled so the displayed timezone is
+        # fixed regardless of where the viewer is. timezone_switcher is left unset:
+        # the navbar switcher widget requires the optional `babel` dependency and
+        # would 500 the admin pages without it.
         timezone_config=TimezoneConfig(
-            default_timezone=display_timezone,
+            default_timezone=DB_ADMIN_DISPLAY_TIMEZONE,
             database_timezone="UTC",
-            use_user_locale_timezone=True,
+            use_user_locale_timezone=False,
+            timezone_cookie_name=None,
         ),
     )
     admin.add_view(AppUserAdmin(AppUser))
