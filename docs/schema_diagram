@@ -47,6 +47,12 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">default_revision</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">config_path</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">prerun_script_path</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR></TABLE>> URL="http://Workflow_details.html"]
 	Workflow -> WorkflowRun [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
 	WorkflowRun [label=<
