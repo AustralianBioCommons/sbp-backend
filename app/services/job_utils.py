@@ -147,7 +147,12 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
     if existing and existing.max_score is not None:
         return _round_score(existing.max_score)
 
-    spec = get_output_spec(run)
+    try:
+        spec = get_output_spec(run)
+    except (ValueError):
+        logger.warning(f"Could not get output spec for run {run.id}. Workflow: {run.workflow.name}. Tool: {run.tool}.")
+        return None
+
     await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
 
     max_score = await spec.get_max_score(db, run)
