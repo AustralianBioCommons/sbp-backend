@@ -232,54 +232,55 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_bindcraft_score_branches():
-    run = SimpleNamespace(id="rid", seqera_run_id="wf-1")
+async def test_ensure_completed_run_score_branches():
+    run = SimpleNamespace(
+        id="rid",
+        seqera_run_id="wf-1",
+        workflow=SimpleNamespace(name="de-novo-design"),
+        tool="bindcraft",
+    )
 
     # non-completed status
-    assert await job_utils.ensure_completed_bindcraft_score(_DB(), run, "Failed") is None
+    assert await job_utils.ensure_completed_run_score(_DB(), run, "Failed") is None
 
     # existing score path
     db_existing = _DB(scalar=SimpleNamespace(max_score=0.9))
-    assert await job_utils.ensure_completed_bindcraft_score(db_existing, run, "Completed") == 0.9
+    with (
+        patch("app.services.job_utils.get_output_spec") as get_output_spec,
+        patch(
+            "app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock
+        ) as sync_outputs,
+    ):
+        assert await job_utils.ensure_completed_run_score(db_existing, run, "Completed") == 0.9
+    get_output_spec.assert_not_called()
+    sync_outputs.assert_not_awaited()
 
     # calculate + add path
     db_new = _DB(scalar=None)
+    fake_new_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=1.23))
     with (
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-        patch(
-            "app.services.job_utils.calculate_csv_column_max",
-            new_callable=AsyncMock,
-            return_value=1.23,
-        ),
+        patch("app.services.job_utils.get_output_spec", return_value=fake_new_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
     ):
-        score = await job_utils.ensure_completed_bindcraft_score(db_new, run, "Completed")
+        score = await job_utils.ensure_completed_run_score(db_new, run, "Completed")
     assert score == 1.0
     assert db_new.added is not None
     assert db_new.committed is True
+    fake_new_spec.get_max_score.assert_awaited_once_with(db_new, run)
 
     # calculate failure path
     db_fail = _DB(scalar=None)
+    fake_fail_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=None))
     with (
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-        patch(
-            "app.services.job_utils.calculate_csv_column_max",
-            new_callable=AsyncMock,
-            side_effect=ValueError("bad"),
-        ),
+        patch("app.services.job_utils.get_output_spec", return_value=fake_fail_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
     ):
-        assert await job_utils.ensure_completed_bindcraft_score(db_fail, run, "Completed") is None
+        assert await job_utils.ensure_completed_run_score(db_fail, run, "Completed") is None
+    fake_fail_spec.get_max_score.assert_awaited_once_with(db_fail, run)
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_db):
+async def test_ensure_completed_run_score_persists_spec_score(test_db):
     user = AppUser(
         auth0_user_id="auth0|score-user",
         name="Score User",
@@ -302,29 +303,22 @@ async def test_ensure_completed_bindcraft_score_uses_run_outputs_file_key(test_d
     test_db.add(run_output)
     test_db.commit()
 
+    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.88))
     with (
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-        patch(
-            "app.services.job_utils.calculate_csv_column_max",
-            new_callable=AsyncMock,
-            return_value=0.88,
-        ) as mocked_max,
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
     ):
-        score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
+        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
 
     assert score == 0.88
-    mocked_max.assert_awaited_once_with(
-        file_key="run-2026-01-29T01-25-32-i0cbrn/ranker/s1_final_design_stats.csv",
-        column_name="Average_i_pTM",
-    )
+    fake_spec.get_max_score.assert_awaited_once_with(test_db, run)
+    metric = test_db.get(RunMetric, run.id)
+    assert metric is not None
+    assert float(metric.max_score) == 0.88
 
 
 @pytest.mark.asyncio
-async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_stats(test_db):
+async def test_ensure_completed_run_score_returns_none_when_spec_has_no_score(test_db):
     sample_id = "Anne_test"
     user = AppUser(
         auth0_user_id="auth0|sample-user",
@@ -340,25 +334,16 @@ async def test_ensure_completed_bindcraft_score_uses_sample_name_final_design_st
     test_db.add_all([user, run])
     test_db.commit()
 
+    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=None))
     with (
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-        patch(
-            "app.services.job_utils.calculate_csv_column_max",
-            new_callable=AsyncMock,
-            return_value=0.91,
-        ) as mocked_max,
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
     ):
-        score = await job_utils.ensure_completed_bindcraft_score(test_db, run, "Completed")
+        score = await job_utils.ensure_completed_run_score(test_db, run, "Completed")
 
-    assert score == 0.91
-    mocked_max.assert_awaited_once_with(
-        file_key=f"{sample_id}/ranker/{sample_id}_final_design_stats.csv",
-        column_name="Average_i_pTM",
-    )
+    assert score is None
+    fake_spec.get_max_score.assert_awaited_once_with(test_db, run)
+    assert test_db.get(RunMetric, run.id) is None
 
 
 @pytest.mark.asyncio

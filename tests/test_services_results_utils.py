@@ -8,9 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.models.core import WorkflowRun
+from app.db.models.core import AppUser, RunOutput, S3Object, WorkflowRun
 from app.services.results_utils import (
+    WORKFLOW_OUTPUT_SPECS,
     ClassifiedOutput,
+    WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,
     build_bindcraft_output_listing_prefixes,
@@ -20,7 +22,11 @@ from app.services.results_utils import (
     classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
+    extract_bindcraft_max_score,
+    extract_proteinfold_max_score,
     format_log_entries,
+    get_bindcraft_score_file,
+    get_proteinfold_score_file,
     get_sample_id_for_result,
     get_tool_name,
     resolve_pdb_presigned_urls,
@@ -210,6 +216,157 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+def test_get_bindcraft_score_file_uses_final_design_stats():
+    keys = [
+        "run/ranker/model.pdb",
+        "run/ranker/s1_final_design_stats.csv",
+        "run/generate/report.html",
+    ]
+
+    assert get_bindcraft_score_file(keys, "s1") == "run/ranker/s1_final_design_stats.csv"
+
+
+def test_get_bindcraft_score_file_returns_none_without_stats():
+    keys = [
+        "run/ranker/model.pdb",
+        "run/generate/report.html",
+    ]
+
+    assert get_bindcraft_score_file(keys, "s1") is None
+
+
+@pytest.mark.asyncio
+async def test_extract_bindcraft_max_score_reads_average_i_ptm():
+    csv_text = "design_id,Average_i_pTM\nA,0.12\nB,0.91\nC,\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as read_file:
+        score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
+
+    assert score == 0.91
+    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv")
+
+
+@pytest.mark.parametrize(
+    ("tool", "key"),
+    [
+        ("boltz", "run-1/boltz/T1024/T1024_0_ptm.tsv"),
+        ("alphafold2", "run-1/alphafold2/split_msa_prediction/T1024/T1024_0_ptm.tsv"),
+        ("colabfold", "run-1/colabfold/T1024/T1024_0_ptm.tsv"),
+    ],
+)
+def test_get_proteinfold_score_file_matches_single_prediction_tool_paths(tool, key):
+    keys = [
+        f"run-1/{tool}/T1024/T1024_0_pae.tsv",
+        key,
+        f"run-1/{tool}/T1024/other.tsv",
+    ]
+
+    assert get_proteinfold_score_file(keys, "T1024") == key
+
+
+@pytest.mark.asyncio
+async def test_extract_proteinfold_max_score_reads_ranked_tsv():
+    tsv_text = "1\t0.42\n0\t0.91\n2\t0.11\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=tsv_text,
+    ) as read_file:
+        score = await extract_proteinfold_max_score("run-1/boltz/T1024/T1024_0_ptm.tsv")
+
+    assert score == 0.91
+    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_0_ptm.tsv")
+
+
+def test_all_workflow_output_specs_have_score_hooks():
+    for workflow_specs in WORKFLOW_OUTPUT_SPECS.values():
+        for spec in workflow_specs.values():
+            assert spec.get_score_file is not None
+            assert spec.extract_max_score is not None
+
+
+@pytest.mark.asyncio
+async def test_workflow_results_spec_get_max_score_returns_none_without_score_file(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|score-none-user",
+        name="Score None User",
+        email="score-none@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="score-none-run",
+        sample_id="T1024",
+        work_dir="workdir-score-none",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    extractor = AsyncMock(return_value=0.91)
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classify=lambda _key, _sample_id: None,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=extractor,
+    )
+
+    assert await spec.get_max_score(test_db, run) is None
+    extractor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|score-selected-user",
+        name="Score Selected User",
+        email="score-selected@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="score-selected-run",
+        sample_id="T1024",
+        work_dir="workdir-score-selected",
+    )
+    ignored = S3Object(
+        object_key="run-1/boltz/T1024/T1024_0_pae.tsv",
+        uri="s3://bucket/run-1/boltz/T1024/T1024_0_pae.tsv",
+    )
+    score_object = S3Object(
+        object_key="run-1/boltz/T1024/T1024_0_ptm.tsv",
+        uri="s3://bucket/run-1/boltz/T1024/T1024_0_ptm.tsv",
+    )
+    test_db.add_all([user, run, ignored, score_object])
+    test_db.flush()
+    test_db.add_all(
+        [
+            RunOutput(run_id=run.id, s3_object_id=ignored.object_key),
+            RunOutput(run_id=run.id, s3_object_id=score_object.object_key),
+        ]
+    )
+    test_db.commit()
+
+    extractor = AsyncMock(return_value=0.91)
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classify=lambda _key, _sample_id: None,
+        get_score_file=get_proteinfold_score_file,
+        extract_max_score=extractor,
+    )
+
+    assert await spec.get_max_score(test_db, run) == 0.91
+    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_0_ptm.tsv")
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():

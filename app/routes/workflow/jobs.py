@@ -22,7 +22,7 @@ from ...schemas.workflows import (
 )
 from ...services.job_utils import (
     coerce_workflow_payload,
-    ensure_completed_bindcraft_score,
+    ensure_completed_run_score,
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
@@ -134,7 +134,7 @@ async def list_jobs(
 
             score = score_by_run_id.get(run_id)
             if score is None and owned_run:
-                score = await ensure_completed_bindcraft_score(db, owned_run, ui_status)
+                score = await ensure_completed_run_score(db, owned_run, ui_status)
 
             jobs.append(
                 JobListItem(
@@ -196,7 +196,7 @@ async def get_job_details(
     ui_status = map_pipeline_status_to_ui(pipeline_status)
     submitted_at = parse_submit_datetime(payload) or datetime.now(timezone.utc)
 
-    score = await ensure_completed_bindcraft_score(db, owned_run, ui_status)
+    score = await ensure_completed_run_score(db, owned_run, ui_status)
     if ui_status != "Completed":
         score = None
 

@@ -255,16 +255,8 @@ async def read_csv_from_s3(
         S3ConfigurationError: If S3 is not properly configured
         S3ServiceError: If read fails
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
-
     try:
-        s3_client = get_s3_client()
-
-        # Download file content
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        content = response["Body"].read().decode("utf-8")
+        content = await read_s3_file(file_key)
 
         # Parse CSV
         csv_reader = csv.DictReader(io.StringIO(content))
@@ -280,24 +272,40 @@ async def read_csv_from_s3(
                 rows.append(dict(row))
 
         logger.info(
-            "Read %d rows from s3://%s/%s (columns: %s)",
+            "Read %d rows from %s (columns: %s)",
             len(rows),
-            bucket_name,
             file_key,
             columns or "all",
         )
         return rows
 
-    except (BotoCoreError, ClientError) as exc:
-        error_msg = f"Failed to read CSV from S3: {str(exc)}"
-        logger.error(error_msg)
-        raise S3ServiceError(error_msg) from exc
     except csv.Error as exc:
         error_msg = f"Failed to parse CSV file: {str(exc)}"
         logger.error(error_msg)
         raise S3ServiceError(error_msg) from exc
     except Exception as exc:
         error_msg = f"Unexpected error reading CSV from S3: {str(exc)}"
+        logger.error(error_msg)
+        raise S3ServiceError(error_msg) from exc
+
+
+async def read_s3_file(file_key: str) -> str:
+    """
+    Read a text file from S3 and return its content.
+    """
+    bucket_name = os.getenv("AWS_S3_BUCKET")
+    if not bucket_name:
+        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+
+    try:
+        s3_client = get_s3_client()
+
+        # Download file content
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        content: str = response["Body"].read().decode("utf-8")
+        return content
+    except (BotoCoreError, ClientError) as exc:
+        error_msg = f"Failed to read CSV from S3: {str(exc)}"
         logger.error(error_msg)
         raise S3ServiceError(error_msg) from exc
 
@@ -321,16 +329,8 @@ async def calculate_csv_column_max(
         S3ServiceError: If read fails or column not found
         ValueError: If column contains non-numeric values
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
-
     try:
-        s3_client = get_s3_client()
-
-        # Download file content
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        content = response["Body"].read().decode("utf-8")
+        content = await read_s3_file(file_key)
 
         # Parse CSV
         csv_reader = csv.DictReader(io.StringIO(content))
@@ -355,19 +355,14 @@ async def calculate_csv_column_max(
         max_value = max(values)
 
         logger.info(
-            "Calculated max of column '%s' from s3://%s/%s: %.4f (n=%d)",
+            "Calculated max of column '%s' from %s: %.4f (n=%d)",
             column_name,
-            bucket_name,
             file_key,
             max_value,
             len(values),
         )
         return max_value
 
-    except (BotoCoreError, ClientError) as exc:
-        error_msg = f"Failed to read CSV from S3: {str(exc)}"
-        logger.error(error_msg)
-        raise S3ServiceError(error_msg) from exc
     except csv.Error as exc:
         error_msg = f"Failed to parse CSV file: {str(exc)}"
         logger.error(error_msg)
