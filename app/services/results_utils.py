@@ -73,9 +73,7 @@ class WorkflowResultsSpec:
         try:
             return await self.extract_max_score(score_file)
         except Exception as e:
-            logger.warning(
-                "Failed to extract max score from %r: %s", score_file, e, exc_info=True
-            )
+            logger.warning("Failed to extract max score from %r: %s", score_file, e, exc_info=True)
             return None
 
 
