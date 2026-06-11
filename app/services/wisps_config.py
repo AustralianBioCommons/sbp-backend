@@ -73,15 +73,7 @@ def get_wisps_config_text(
     Appending a process block with the
     values embedded directly overrides the file's clusterOptions.
     """
-    if config_file_path.startswith(("http://", "https://")):
-        import httpx
-
-        response = httpx.get(config_file_path, timeout=30, follow_redirects=True)
-        response.raise_for_status()
-        base = response.text
-    else:
-        with open(config_file_path) as f:
-            base = f.read()
+    base = fetch_workflow_config(config_file_path)
 
     cluster_opts = (
         f"-P yz52 -v JOB_ID={job_id},USER_NAME={username},"

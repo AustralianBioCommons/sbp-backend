@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+from .workflow_config_fetcher import fetch_workflow_config
 
 
 def get_bindflow_default_params(out_dir: str, samplesheet_url: str) -> dict[str, Any]:
@@ -46,13 +46,7 @@ def get_bindflow_config_text(
     ip_address: str = "",
 ) -> str:
     """Read bindflow base config and append a process override block with runtime values."""
-    if config_file_path.startswith(("http://", "https://")):
-        response = httpx.get(config_file_path, timeout=30, follow_redirects=True)
-        response.raise_for_status()
-        base = response.text
-    else:
-        with open(config_file_path, encoding="utf-8") as config_file:
-            base = config_file.read()
+    base = fetch_workflow_config(config_file_path)
 
     cluster_opts = (
         f"-v JOB_ID={job_id},USER_NAME={username},"

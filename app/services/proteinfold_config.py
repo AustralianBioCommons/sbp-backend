@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+from .workflow_config_fetcher import fetch_workflow_config
 
 
 def get_proteinfold_default_params(
@@ -43,13 +43,7 @@ def get_proteinfold_config_text(
     ip_address: str = "",
 ) -> str:
     """Read proteinfold base config and append a process override block with runtime values."""
-    if config_file_path.startswith(("http://", "https://")):
-        response = httpx.get(config_file_path, timeout=30, follow_redirects=True)
-        response.raise_for_status()
-        base = response.text
-    else:
-        with open(config_file_path, encoding="utf-8") as fh:
-            base = fh.read()
+    base = fetch_workflow_config(config_file_path)
 
     cluster_opts = (
         f"-P yz52 -v JOB_ID={job_id},USER_NAME={user_name},"
