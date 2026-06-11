@@ -70,7 +70,13 @@ class WorkflowResultsSpec:
         score_file = self.get_score_file(keys, sample_id)
         if score_file is None:
             return None
-        return await self.extract_max_score(score_file)
+        try:
+            return await self.extract_max_score(score_file)
+        except Exception as e:
+            logger.warning(
+                "Failed to extract max score from %r: %s", score_file, e, exc_info=True
+            )
+            return None
 
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
