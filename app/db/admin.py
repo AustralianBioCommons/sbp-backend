@@ -653,8 +653,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         RunMetricAdmin.fields.append("final_design_count")
 
     display_timezone = (
-        os.getenv("DB_ADMIN_DISPLAY_TIMEZONE", "").strip()
-        or DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE
+        os.getenv("DB_ADMIN_DISPLAY_TIMEZONE", "").strip() or DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE
     )
     admin = Admin(
         engine=engine,
