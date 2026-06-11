@@ -47,8 +47,6 @@ DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 # Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
 # converts them to the viewer's browser-detected timezone, falling back to
 # Sydney/Melbourne (AEST/AEDT) when the browser timezone is unavailable.
-# (The navbar timezone switcher is intentionally not enabled: it requires the
-# optional `babel` dependency, which is not installed.)
 DEFAULT_DB_ADMIN_DISPLAY_TIMEZONE = "Australia/Sydney"
 
 
