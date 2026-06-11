@@ -368,7 +368,7 @@ async def extract_bindcraft_max_score(score_file: str) -> float | None:
 
 def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single-prediction"
-    score_pattern = rf"/{sample_id_pattern}/.+{sample_id_pattern}_ptm\.(tsv|csv)"
+    score_pattern = rf"/{sample_id_pattern}/.*{sample_id_pattern}_ptm\.(tsv|csv)"
     for key in keys:
         if re.search(score_pattern, key):
             return key
