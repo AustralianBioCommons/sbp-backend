@@ -314,7 +314,7 @@ async def launch_workflow(
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor.
-            # selected_tool carries the chosen algorithm ("bindcraft", "boltzgen", "rfdiffusion").
+            # selected_tool carries the chosen algorithm ("bindcraft", "rfdiffusion").
             tool_mode = selected_tool
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(

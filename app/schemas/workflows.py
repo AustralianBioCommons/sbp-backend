@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 WorkflowName = Literal[
     "single-prediction", "de-novo-design", "bulk-prediction", "interaction-screening"
 ]
-WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "boltzgen", "colabfold", "rfdiffusion"]
+WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "colabfold", "rfdiffusion"]
 
 
 class PipelineStatus(str, Enum):

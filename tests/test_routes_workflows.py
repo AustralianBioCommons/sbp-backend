@@ -1105,7 +1105,7 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 
     de_novo = by_category["de-novo-design"]
     assert de_novo["basis"] == CreditBasis.FINAL_DESIGN_COUNT.value
-    assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10, "boltzgen": 1}
+    assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10}
 
     single = by_category["single-prediction"]
     assert single["basis"] == CreditBasis.CONSTANT.value
