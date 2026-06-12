@@ -65,7 +65,7 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="de-novo-design",
         displayName="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        toolMultipliers={"bindcraft": 20, "rfdiffusion": 10, "boltzgen": 1},
+        toolMultipliers={"bindcraft": 20, "rfdiffusion": 10},
     ),
     WorkflowCreditConfig(
         category="single-prediction",
