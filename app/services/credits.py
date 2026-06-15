@@ -1,10 +1,11 @@
 """Credit-cost configuration and calculation for workflow executions.
 
 Single source of truth for the credit multipliers described in the SBP
-credit-calculation spec, and the authoritative cost calculation used both for
-the estimate endpoint (display) and for deduction at launch. A run's cost is
-``tool_multiplier × quantity``, where the quantity is derived per the workflow's
-``basis``.
+credit-calculation spec. The frontend fetches these multipliers (via the
+``/credits`` endpoint) and computes a run's display cost locally; this module
+provides the authoritative cost calculation used for deduction at launch. A
+run's cost is ``tool_multiplier × quantity``, where the quantity is derived per
+the workflow's ``basis``.
 
 These initial multipliers may be slightly adjusted for production — keep this
 module as the one place to edit them.
@@ -107,13 +108,6 @@ def list_workflow_credit_configs() -> tuple[WorkflowCreditConfig, ...]:
 def get_workflow_credit_config(category: str) -> WorkflowCreditConfig | None:
     """Return the credit-cost rules for a single workflow category, if known."""
     return _CONFIGS_BY_CATEGORY.get(cast(WorkflowName, category.strip().lower()))
-
-
-def count_fasta_entries(content: str | None) -> int:
-    """Count the number of records in a (multi-)FASTA string (lines starting '>')."""
-    if not content:
-        return 0
-    return sum(1 for line in content.splitlines() if line.lstrip().startswith(">"))
 
 
 def get_tool_multiplier(category: str, tool: str) -> int | None:

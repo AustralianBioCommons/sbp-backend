@@ -11,7 +11,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 from unidecode import unidecode
@@ -40,7 +40,6 @@ from ..services.bindflow_executor import (
 from ..services.credits import (
     WorkflowCreditsResponse,
     compute_cost,
-    count_fasta_entries,
     is_credits_enabled,
     list_workflow_credit_configs,
 )
@@ -160,53 +159,13 @@ async def sync_current_user(
 
 @router.get("/credits", response_model=WorkflowCreditsResponse)
 async def get_workflow_credits() -> WorkflowCreditsResponse:
-    """Return the per-tool credit multipliers for each workflow."""
+    """Return the per-tool credit multipliers for each workflow.
+
+    The frontend computes a run's display cost locally from these multipliers;
+    the backend remains the single source of truth for the authoritative
+    deduction at launch (see ``launch_workflow``).
+    """
     return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
-
-
-class CreditEstimateRequest(BaseModel):
-    """Inputs for estimating a run's credit cost (display only)."""
-
-    workflow: str = Field(..., description="Workflow category slug")
-    tool: str = Field(..., description="Selected tool id")
-    finalDesignCount: int | None = Field(
-        default=None, description="De novo: number of final designs"
-    )
-    fasta: str | None = Field(default=None, description="Bulk: FASTA input")
-    queryFasta: str | None = Field(default=None, description="Interaction: query FASTA")
-    targetFasta: str | None = Field(default=None, description="Interaction: target FASTA")
-
-
-class CreditEstimateResponse(BaseModel):
-    """Estimated credit cost for a run; null when it can't be determined."""
-
-    cost: int | None = Field(default=None, description="tool_multiplier × quantity")
-
-
-def _estimate_quantity(category: str, payload: CreditEstimateRequest) -> int | None:
-    """Derive the cost quantity from raw inputs for the estimate endpoint."""
-    if category == "single-prediction":
-        return 1
-    if category == "de-novo-design":
-        n = payload.finalDesignCount
-        return n if (n is not None and n >= 1) else None
-    if category == "bulk-prediction":
-        return count_fasta_entries(payload.fasta) or None
-    if category == "interaction-screening":
-        product = count_fasta_entries(payload.queryFasta) * count_fasta_entries(payload.targetFasta)
-        return product or None
-    return None
-
-
-@router.post("/credits/estimate", response_model=CreditEstimateResponse)
-async def estimate_credit_cost(payload: CreditEstimateRequest) -> CreditEstimateResponse:
-    """Estimate a run's credit cost for display. Authoritative deduction happens
-    server-side at launch; this endpoint is a non-binding preview."""
-    category = payload.workflow.strip().lower()
-    quantity = _estimate_quantity(category, payload)
-    if quantity is None:
-        return CreditEstimateResponse(cost=None)
-    return CreditEstimateResponse(cost=compute_cost(category, payload.tool, quantity))
 
 
 def _launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:

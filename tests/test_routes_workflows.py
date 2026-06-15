@@ -1120,67 +1120,9 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
     assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
 
 
-# ── Credit estimate endpoint ─────────────────────────────────────────────────
+# ── Server-side credit deduction at launch ───────────────────────────────────
 
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
-
-
-def test_estimate_credit_cost_de_novo(client: TestClient):
-    """De novo estimate = tool multiplier × number of final designs."""
-    response = client.post(
-        "/api/workflows/credits/estimate",
-        json={"workflow": "de-novo-design", "tool": "bindcraft", "finalDesignCount": 3},
-    )
-    assert response.status_code == 200
-    assert response.json() == {"cost": 60}  # 20 × 3
-
-
-def test_estimate_credit_cost_single(client: TestClient):
-    """Single prediction estimate = tool multiplier × 1."""
-    response = client.post(
-        "/api/workflows/credits/estimate",
-        json={"workflow": "single-prediction", "tool": "colabfold"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {"cost": 5}  # 5 × 1
-
-
-def test_estimate_credit_cost_bulk(client: TestClient):
-    """Bulk estimate = tool multiplier × FASTA entry count."""
-    response = client.post(
-        "/api/workflows/credits/estimate",
-        json={"workflow": "bulk-prediction", "tool": "boltz", "fasta": ">a\nACDE\n>b\nACDE"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {"cost": 2}  # 1 × 2
-
-
-def test_estimate_credit_cost_interaction(client: TestClient):
-    """Interaction estimate = tool multiplier × (query × target) entry counts."""
-    response = client.post(
-        "/api/workflows/credits/estimate",
-        json={
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "queryFasta": ">q1\nAC\n>q2\nAC",
-            "targetFasta": ">t1\nAC",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json() == {"cost": 2}  # 1 × (2 × 1)
-
-
-def test_estimate_credit_cost_null_when_quantity_unknown(client: TestClient):
-    """Estimate is null when the quantity can't be determined (e.g. no designs)."""
-    response = client.post(
-        "/api/workflows/credits/estimate",
-        json={"workflow": "de-novo-design", "tool": "bindcraft"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {"cost": None}
-
-
-# ── Server-side credit deduction at launch ───────────────────────────────────
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
