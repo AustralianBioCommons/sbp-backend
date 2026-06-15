@@ -7,11 +7,12 @@ import random
 import re
 import string
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import func, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 from unidecode import unidecode
 
@@ -443,17 +444,20 @@ async def launch_workflow(
         # guarded (credit >= cost) so the balance can't go negative; committed
         # together with the run finalisation.
         if run_credit_cost is not None:
-            deducted = db_session.execute(
-                update(AppUser)
-                .where(
-                    AppUser.id == current_user_id,
-                    AppUser.credit >= run_credit_cost,
-                )
-                .values(
-                    credit=AppUser.credit - run_credit_cost,
-                    credit_updated_at=datetime.now(timezone.utc),
-                    credit_updated_by=user_email,
-                )
+            deducted = cast(
+                CursorResult,
+                db_session.execute(
+                    update(AppUser)
+                    .where(
+                        AppUser.id == current_user_id,
+                        AppUser.credit >= run_credit_cost,
+                    )
+                    .values(
+                        credit=AppUser.credit - run_credit_cost,
+                        credit_updated_at=datetime.now(timezone.utc),
+                        credit_updated_by=user_email,
+                    )
+                ),
             )
             if deducted.rowcount == 0:
                 logger.warning(
