@@ -37,57 +37,6 @@ def test_get_my_credit(client: TestClient, test_engine):
     }
 
 
-def test_update_my_credit_decreases_own_balance(client: TestClient, test_engine):
-    """Current user can decrease their own balance (self-service, no admin)."""
-    with Session(test_engine) as db:
-        db.execute(
-            update(AppUser).where(AppUser.auth0_user_id == TEST_AUTH0_USER_ID).values(credit=25)
-        )
-        db.commit()
-
-    response = client.put("/api/users/me/credit", json={"credit": 15})
-
-    assert response.status_code == 200
-    assert response.json() == {"userId": str(TEST_USER_ID), "credit": 15}
-
-    with Session(test_engine) as db:
-        saved = db.execute(
-            select(AppUser.credit, AppUser.credit_updated_at, AppUser.credit_updated_by).where(
-                AppUser.auth0_user_id == TEST_AUTH0_USER_ID
-            )
-        ).one()
-    assert saved.credit == 15
-    assert saved.credit_updated_at is not None
-    assert saved.credit_updated_by == "test@example.com"
-
-
-def test_update_my_credit_rejects_increase(client: TestClient, test_engine):
-    """A user cannot grant themselves credits via the self-service endpoint."""
-    with Session(test_engine) as db:
-        db.execute(
-            update(AppUser).where(AppUser.auth0_user_id == TEST_AUTH0_USER_ID).values(credit=10)
-        )
-        db.commit()
-
-    response = client.put("/api/users/me/credit", json={"credit": 1000})
-
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Credits can only be decreased"
-
-    with Session(test_engine) as db:
-        credit = db.scalar(
-            select(AppUser.credit).where(AppUser.auth0_user_id == TEST_AUTH0_USER_ID)
-        )
-    assert credit == 10
-
-
-def test_update_my_credit_rejects_negative(client: TestClient):
-    """The self-service balance cannot be set below zero."""
-    response = client.put("/api/users/me/credit", json={"credit": -1})
-
-    assert response.status_code == 422
-
-
 def test_list_user_credits_requires_admin(client: TestClient):
     """Listing all user credits is admin-only."""
     response = client.get("/api/users/credits")

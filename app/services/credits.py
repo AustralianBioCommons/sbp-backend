@@ -1,9 +1,10 @@
-"""Credit-cost configuration for workflow executions.
+"""Credit-cost configuration and calculation for workflow executions.
 
 Single source of truth for the credit multipliers described in the SBP
-credit-calculation spec. The actual per-run cost is computed in the frontend;
-the backend simply exposes the per-tool multipliers (and a ``basis`` hint for
-which input quantity drives the cost) so the frontend can derive a cost.
+credit-calculation spec, and the authoritative cost calculation used both for
+the estimate endpoint (display) and for deduction at launch. A run's cost is
+``tool_multiplier × quantity``, where the quantity is derived per the workflow's
+``basis``.
 
 These initial multipliers may be slightly adjusted for production — keep this
 module as the one place to edit them.
@@ -11,12 +12,18 @@ module as the one place to edit them.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import cast
 
 from pydantic import BaseModel, Field
 
 from ..schemas.workflows import WorkflowName, WorkflowTool
+
+
+def is_credits_enabled() -> bool:
+    """Whether credit checking/deduction is active (env ``ENABLE_CREDITS``)."""
+    return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
 
 
 class CreditBasis(str, Enum):
@@ -100,3 +107,30 @@ def list_workflow_credit_configs() -> tuple[WorkflowCreditConfig, ...]:
 def get_workflow_credit_config(category: str) -> WorkflowCreditConfig | None:
     """Return the credit-cost rules for a single workflow category, if known."""
     return _CONFIGS_BY_CATEGORY.get(cast(WorkflowName, category.strip().lower()))
+
+
+def count_fasta_entries(content: str | None) -> int:
+    """Count the number of records in a (multi-)FASTA string (lines starting '>')."""
+    if not content:
+        return 0
+    return sum(1 for line in content.splitlines() if line.lstrip().startswith(">"))
+
+
+def get_tool_multiplier(category: str, tool: str) -> int | None:
+    """Return the per-tool credit multiplier for a workflow category, if known."""
+    config = get_workflow_credit_config(category)
+    if config is None:
+        return None
+    return config.toolMultipliers.get(cast(WorkflowTool, tool.strip().lower()))
+
+
+def compute_cost(category: str, tool: str, quantity: int) -> int | None:
+    """Compute a run's credit cost as ``tool_multiplier × quantity``.
+
+    Returns None when the category/tool has no configured multiplier (caller
+    decides how to treat an uncosted run). ``quantity`` is clamped to ``>= 0``.
+    """
+    multiplier = get_tool_multiplier(category, tool)
+    if multiplier is None:
+        return None
+    return multiplier * max(0, quantity)
