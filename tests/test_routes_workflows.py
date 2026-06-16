@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
@@ -1118,3 +1118,91 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
     screening = by_category["interaction-screening"]
     assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
     assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
+
+
+# ── Server-side credit deduction at launch ───────────────────────────────────
+
+TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
+
+
+@patch("app.routes.workflows.launch_bindflow_workflow")
+def test_launch_deducts_credits_when_enabled(mock_launch, client, test_engine, monkeypatch):
+    """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
+    monkeypatch.setenv("ENABLE_CREDITS", "true")
+    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_credit", status="submitted")
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
+        db.commit()
+
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "credit-run"},
+        "datasetId": "dataset_123",
+        "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "id": "s1",
+            "number_of_final_designs": 3,
+        },
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 40  # 100 − (20 × 3)
+
+
+@patch("app.routes.workflows.launch_bindflow_workflow")
+def test_launch_rejected_when_insufficient_credits(mock_launch, client, test_engine, monkeypatch):
+    """With credits enabled, an unaffordable launch is rejected (402) and not launched."""
+    monkeypatch.setenv("ENABLE_CREDITS", "true")
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=10))
+        db.commit()
+
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "credit-run"},
+        "datasetId": "dataset_123",
+        "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "id": "s1",
+            "number_of_final_designs": 3,
+        },
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 402
+    mock_launch.assert_not_called()
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 10  # unchanged
+
+
+@patch("app.routes.workflows.launch_bindflow_workflow")
+def test_launch_does_not_deduct_when_credits_disabled(
+    mock_launch, client, test_engine, monkeypatch
+):
+    """With credits disabled (default), launches never touch the balance."""
+    monkeypatch.delenv("ENABLE_CREDITS", raising=False)
+    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_nocredit", status="submitted")
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
+        db.commit()
+
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "nocredit-run"},
+        "datasetId": "dataset_123",
+        "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "id": "s1",
+            "number_of_final_designs": 999,
+        },
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 5  # unchanged

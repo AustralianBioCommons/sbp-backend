@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import string
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 from unidecode import unidecode
 
@@ -35,7 +37,12 @@ from ..services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
 )
-from ..services.credits import WorkflowCreditsResponse, list_workflow_credit_configs
+from ..services.credits import (
+    WorkflowCreditsResponse,
+    compute_cost,
+    is_credits_enabled,
+    list_workflow_credit_configs,
+)
 from ..services.datasets import (
     create_seqera_dataset,
     upload_dataset_to_seqera,
@@ -60,6 +67,8 @@ from .dependencies import (
     get_db,
     require_workflow_execution_role,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     tags=["workflows"],
@@ -152,10 +161,28 @@ async def sync_current_user(
 async def get_workflow_credits() -> WorkflowCreditsResponse:
     """Return the per-tool credit multipliers for each workflow.
 
-    The frontend uses these to compute the credit cost of a run as
-    ``tool_multiplier * quantity`` — see the SBP credit-calculation spec.
+    The frontend computes a run's display cost locally from these multipliers;
+    the backend remains the single source of truth for the authoritative
+    deduction at launch (see ``launch_workflow``).
     """
     return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
+
+
+def _launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
+    """Authoritative per-run cost for workflows charged server-side at launch.
+
+    Only de-novo (final designs) and single (constant) are charged today — their
+    quantity is fully determined by the launch payload. interaction/bulk are not
+    charged here (display-only); they return None.
+    """
+    cat = category.strip().lower()
+    if cat == "single-prediction":
+        return compute_cost(cat, tool, 1)
+    if cat == "de-novo-design":
+        if final_design_count is None or final_design_count < 1:
+            return None
+        return compute_cost(cat, tool, final_design_count)
+    return None
 
 
 @router.post(
@@ -236,6 +263,23 @@ async def launch_workflow(
     full_name = _require_launch_var("full_name", full_name)
     institute = _require_launch_var("institute", institute)
     ip_address = _require_launch_var("ip_address", ip_address)
+
+    # Authoritative credit cost (server-side, non-spoofable). Only charged for
+    # workflows whose quantity is fully determined by the launch payload
+    # (de-novo, single); interaction/bulk are display-only for now. Gated by the
+    # ENABLE_CREDITS flag so the feature can be rolled out independently.
+    run_credit_cost = (
+        _launch_credit_cost(requested_workflow, selected_tool, final_design_count)
+        if is_credits_enabled()
+        else None
+    )
+    if run_credit_cost is not None:
+        balance = db_session.scalar(select(AppUser.credit).where(AppUser.id == current_user_id))
+        if balance is None or balance < run_credit_cost:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Insufficient credits to launch this workflow.",
+            )
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
@@ -355,6 +399,33 @@ async def launch_workflow(
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
         workflow_run.seqera_run_id = result.workflow_id
+        # Deduct the run's credit cost now that the launch succeeded. Atomic and
+        # guarded (credit >= cost) so the balance can't go negative; committed
+        # together with the run finalisation.
+        if run_credit_cost is not None:
+            deducted = cast(
+                CursorResult,
+                db_session.execute(
+                    update(AppUser)
+                    .where(
+                        AppUser.id == current_user_id,
+                        AppUser.credit >= run_credit_cost,
+                    )
+                    .values(
+                        credit=AppUser.credit - run_credit_cost,
+                        credit_updated_at=datetime.now(timezone.utc),
+                        credit_updated_by=user_email,
+                    )
+                ),
+            )
+            if deducted.rowcount == 0:
+                logger.warning(
+                    "Launched run %s but could not deduct %s credits from user %s "
+                    "(balance changed since the pre-launch check)",
+                    run_id,
+                    run_credit_cost,
+                    current_user_id,
+                )
         db_session.commit()
     except HTTPException:
         db_session.rollback()
