@@ -90,9 +90,7 @@ class AppUserAdmin(ModelView):
         obj.credit_updated_at = datetime.now(timezone.utc)
         obj.credit_updated_by = DB_ADMIN_CREDIT_ACTOR
 
-    async def before_create(
-        self, request: Request, data: dict[str, Any], obj: Any
-    ) -> None:
+    async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
         # Only record an audit trail when the new user starts with a credit balance.
         if getattr(obj, "credit", 0):
             self._stamp_credit_audit(obj)
