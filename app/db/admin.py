@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 import secrets
+from datetime import datetime, timezone
 from time import time
 from typing import Any
 from urllib.parse import urlencode
@@ -16,6 +17,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy import inspect as sqla_inspect
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
@@ -44,6 +46,11 @@ DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
 
+# Actor recorded on app_users.credit_updated_by when a credit balance is changed
+# through the Starlette Admin database dashboard (as opposed to the admin REST
+# API, which records the acting administrator's identity).
+DB_ADMIN_CREDIT_ACTOR = "admin dashboard"
+
 # Timestamps are stored in the DB as UTC (DateTime(timezone=True)). The admin
 # always displays them in Sydney/Melbourne time (AEST/AEDT), regardless of the
 # viewer's location.
@@ -71,6 +78,30 @@ class AppUserAdmin(ModelView):
         "credit_updated_at",
         "credit_updated_by",
     ]
+
+    # credit_updated_at / credit_updated_by are stamped automatically whenever a
+    # credit balance is changed through the dashboard, so they are read-only:
+    # shown in the list/detail views but excluded from the create/edit forms.
+    exclude_fields_from_create = ("credit_updated_at", "credit_updated_by")
+    exclude_fields_from_edit = ("credit_updated_at", "credit_updated_by")
+
+    @staticmethod
+    def _stamp_credit_audit(obj: Any) -> None:
+        obj.credit_updated_at = datetime.now(timezone.utc)
+        obj.credit_updated_by = DB_ADMIN_CREDIT_ACTOR
+
+    async def before_create(
+        self, request: Request, data: dict[str, Any], obj: Any
+    ) -> None:
+        # Only record an audit trail when the new user starts with a credit balance.
+        if getattr(obj, "credit", 0):
+            self._stamp_credit_audit(obj)
+
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        # obj has already been populated with the submitted form values; SQLAlchemy
+        # change tracking tells us whether the credit column actually changed.
+        if sqla_inspect(obj).attrs.credit.history.has_changes():
+            self._stamp_credit_audit(obj)
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.email}"

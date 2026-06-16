@@ -93,6 +93,85 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit_updated_by" in field_names
 
 
+def test_app_user_admin_credit_audit_fields_are_read_only_on_forms() -> None:
+    # The audit columns are stamped automatically, so they must not be editable
+    # via the create/edit forms.
+    assert "credit_updated_at" in AppUserAdmin.exclude_fields_from_create
+    assert "credit_updated_by" in AppUserAdmin.exclude_fields_from_create
+    assert "credit_updated_at" in AppUserAdmin.exclude_fields_from_edit
+    assert "credit_updated_by" in AppUserAdmin.exclude_fields_from_edit
+
+
+async def test_app_user_admin_before_edit_stamps_credit_change(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|credit-edit",
+        name="Credit Edit",
+        email="credit-edit@example.com",
+        credit=0,
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    view = AppUserAdmin(AppUser)
+    user.credit = 500
+    await view.before_edit(None, {}, user)
+
+    assert user.credit == 500
+    assert user.credit_updated_by == "admin dashboard"
+    assert user.credit_updated_at is not None
+
+
+async def test_app_user_admin_before_edit_skips_when_credit_unchanged(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|credit-noedit",
+        name="Credit NoEdit",
+        email="credit-noedit@example.com",
+        credit=100,
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    view = AppUserAdmin(AppUser)
+    # Editing an unrelated field must not stamp the credit audit columns.
+    user.name = "Renamed"
+    await view.before_edit(None, {}, user)
+
+    assert user.credit_updated_by is None
+    assert user.credit_updated_at is None
+
+
+async def test_app_user_admin_before_create_stamps_when_credit_set() -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|credit-create",
+        name="Credit Create",
+        email="credit-create@example.com",
+        credit=250,
+    )
+
+    await AppUserAdmin(AppUser).before_create(None, {}, user)
+
+    assert user.credit_updated_by == "admin dashboard"
+    assert user.credit_updated_at is not None
+
+
+async def test_app_user_admin_before_create_skips_when_no_credit() -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|credit-create-zero",
+        name="Credit Create Zero",
+        email="credit-create-zero@example.com",
+        credit=0,
+    )
+
+    await AppUserAdmin(AppUser).before_create(None, {}, user)
+
+    assert user.credit_updated_by is None
+    assert user.credit_updated_at is None
+
+
 async def test_admin_s3_object_relation_serializes_url_safe_detail_url() -> None:
     async def detail_endpoint(request: Request) -> Response:
         _ = request
