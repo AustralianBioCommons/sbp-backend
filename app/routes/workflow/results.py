@@ -91,15 +91,21 @@ async def get_result_logs(
         truncated=bool(log_payload.get("truncated", False)),
         pending=bool(log_payload.get("pending", False)),
         message="" if log_payload.get("message") is None else str(log_payload.get("message", "")),
-        rewindToken=""
-        if log_payload.get("rewindToken") is None
-        else str(log_payload.get("rewindToken", "")),
-        forwardToken=""
-        if log_payload.get("forwardToken") is None
-        else str(log_payload.get("forwardToken", "")),
-        downloads=log_payload.get("downloads", [])
-        if isinstance(log_payload.get("downloads"), list)
-        else [],
+        rewindToken=(
+            ""
+            if log_payload.get("rewindToken") is None
+            else str(log_payload.get("rewindToken", ""))
+        ),
+        forwardToken=(
+            ""
+            if log_payload.get("forwardToken") is None
+            else str(log_payload.get("forwardToken", ""))
+        ),
+        downloads=(
+            log_payload.get("downloads", [])
+            if isinstance(log_payload.get("downloads"), list)
+            else []
+        ),
         entries=normalized_entries,
         formattedEntries=format_log_entries(normalized_entries),
     )

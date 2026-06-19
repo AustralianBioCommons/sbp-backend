@@ -11,7 +11,7 @@ import random
 import re
 import string
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -45,7 +45,7 @@ def build_unique_dataset_name(name: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-") or "dataset"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = now.strftime("%Y%m%d-%H%M%S")
     rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
     return f"{slug}_{ts}_{rand}"

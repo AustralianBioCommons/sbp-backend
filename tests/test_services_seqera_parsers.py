@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.services.seqera_parsers import (
     extract_workflow_type,
@@ -67,7 +67,7 @@ def test_parse_workflow_list_payload_dict_format():
     assert items[0].workflow_type == "BindCraft"
     assert items[0].ui_status == "Completed"
     assert items[0].pipeline_status == "SUCCEEDED"
-    assert items[0].submitted_at == datetime(2026, 2, 1, 10, 0, 0, tzinfo=timezone.utc)
+    assert items[0].submitted_at == datetime(2026, 2, 1, 10, 0, 0, tzinfo=UTC)
 
 
 def test_parse_workflow_list_payload_list_format():
@@ -165,7 +165,7 @@ def test_parse_workflow_list_payload_with_date_created():
     items, total = parse_workflow_list_payload(data)
 
     assert len(items) == 1
-    assert items[0].submitted_at == datetime(2026, 2, 5, 15, 30, 0, tzinfo=timezone.utc)
+    assert items[0].submitted_at == datetime(2026, 2, 5, 15, 30, 0, tzinfo=UTC)
 
 
 def test_parse_workflow_list_payload_invalid_date():

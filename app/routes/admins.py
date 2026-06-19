@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -170,7 +170,7 @@ def update_user_credit(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    updated_at = datetime.now(timezone.utc)
+    updated_at = datetime.now(UTC)
     updated_by = _admin_actor(admin_claims)
     db.execute(
         update(AppUser)

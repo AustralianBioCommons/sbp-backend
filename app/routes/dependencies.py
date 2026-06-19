@@ -81,7 +81,7 @@ def get_client_ip(request: Request) -> str | None:
     return forwarded_for or (request.client.host if request.client else None)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db() -> Generator[Session]:
     db = SessionLocal()
     try:
         yield db

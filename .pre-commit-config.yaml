@@ -22,11 +22,11 @@ repos:
     rev: 24.1.1
     hooks:
       - id: black
-        language_version: python3.11
+        language_version: python3.14
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-httpx]
+        language_version: python3.14
         args: [--ignore-missing-imports]

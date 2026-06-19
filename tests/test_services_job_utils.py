@@ -711,9 +711,9 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
-            side_effect=lambda prefix: [{"key": report_key}]
-            if prefix.endswith("generate/")
-            else [],
+            side_effect=lambda prefix: (
+                [{"key": report_key}] if prefix.endswith("generate/") else []
+            ),
         ),
         patch(
             "app.services.results_utils.generate_presigned_url",
@@ -744,9 +744,9 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
-            side_effect=lambda prefix: [{"key": snapshot_key}]
-            if prefix.endswith("sampleH_0_output/")
-            else [],
+            side_effect=lambda prefix: (
+                [{"key": snapshot_key}] if prefix.endswith("sampleH_0_output/") else []
+            ),
         ),
         patch(
             "app.services.results_utils.generate_presigned_url",

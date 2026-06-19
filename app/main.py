@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check():
-        return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+        return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
     app.include_router(workflow_router, prefix="/api/workflows")
     app.include_router(workflow_jobs_router, prefix="/api/jobs")
