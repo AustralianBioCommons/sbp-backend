@@ -28,7 +28,7 @@ dependencies = [
 [tool.setuptools]
 packages = ["app"]
 
-[depency-groups]
+[dependency-groups]
 dev = [
     "boto3-stubs>=1.43.26",
     "pytest~=8.3",
