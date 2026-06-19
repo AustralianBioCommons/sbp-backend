@@ -5,6 +5,7 @@ from faker import Faker
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from app.db.models.core import AppUser, RunInput, RunOutput, Workflow, WorkflowRun
+from app.db.models.job_queue import QueuedJob
 
 fake = Faker()
 
@@ -56,4 +57,8 @@ class RunInputFactory(SQLAlchemyFactory[RunInput]):
 
 
 class RunOutputFactory(SQLAlchemyFactory[RunOutput]):
+    __set_relationships__ = False
+
+
+class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
     __set_relationships__ = False
