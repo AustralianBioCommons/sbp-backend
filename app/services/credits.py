@@ -14,7 +14,7 @@ module as the one place to edit them.
 from __future__ import annotations
 
 import os
-from enum import Enum
+from enum import StrEnum
 from typing import cast
 
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ def is_credits_enabled() -> bool:
     return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
 
 
-class CreditBasis(str, Enum):
+class CreditBasis(StrEnum):
     """Which input quantity drives a workflow's credit cost.
 
     The frontend computes ``credits = tool_multiplier * quantity``, where
