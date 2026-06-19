@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sbp-backend"
 version = "1.0.0"
 description = "Structural Biology Platform Backend API"
-requires-python = ">=3.10"
+requires-python = ">=3.14, <3.15"
 dependencies = [
     "fastapi~=0.111",
     "uvicorn[standard]~=0.29",
@@ -28,7 +28,7 @@ dependencies = [
 [tool.setuptools]
 packages = ["app"]
 
-[project.optional-dependencies]
+[depency-groups]
 dev = [
     "boto3-stubs>=1.43.26",
     "pytest~=8.3",
@@ -92,7 +92,7 @@ directory = "htmlcov"
 # Ruff configuration
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [
@@ -116,7 +116,7 @@ ignore = [
 # Black configuration
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312"]
+target-version = ["py314"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -130,7 +130,7 @@ extend-exclude = '''
 
 # MyPy configuration
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
