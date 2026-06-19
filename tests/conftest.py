@@ -129,6 +129,30 @@ def test_db(test_engine) -> Generator:
         session.close()
 
 
+@pytest.fixture
+def persistent_models(test_db):
+    """Bind datagen SQLAlchemy factories to the test DB session."""
+    from tests import datagen
+
+    factories = [
+        datagen.AppUserFactory,
+        datagen.WorkflowFactory,
+        datagen.WorkflowRunFactory,
+        datagen.RunInputFactory,
+        datagen.RunOutputFactory,
+        datagen.QueuedJobFactory,
+    ]
+
+    for factory in factories:
+        factory.__session__ = test_db
+
+    try:
+        yield
+    finally:
+        for factory in factories:
+            factory.__session__ = None
+
+
 # ============================================================================
 # FastAPI Test Clients
 # ============================================================================
