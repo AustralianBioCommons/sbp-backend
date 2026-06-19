@@ -79,18 +79,29 @@ def test_mount_db_admin_registers_api_routers_before_admin_mount(mocker):
     # shadows them (routes match in registration order) and they 404.
     from starlette.routing import Mount
 
+    def route_contains_path(route, path: str) -> bool:
+        route_paths = (getattr(route, "path", None), getattr(route, "path_format", None))
+        if path in route_paths:
+            return True
+
+        nested_routes = list(getattr(route, "routes", []) or [])
+        original_router = getattr(route, "original_router", None)
+        nested_routes.extend(getattr(original_router, "routes", []) or [])
+        return any(route_contains_path(nested_route, path) for nested_route in nested_routes)
+
+    def route_index(path: str, routes) -> int:
+        return next(i for i, route in enumerate(routes) if route_contains_path(route, path))
+
     app = FastAPI()
     mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true", **DB_ADMIN_REQUIRED_ENV})
     mount_db_admin(app)
 
-    paths = [getattr(r, "path", getattr(r, "path_format", "")) for r in app.router.routes]
     mount_index = next(
         i for i, r in enumerate(app.router.routes) if isinstance(r, Mount) and r.path == "/admin"
     )
-    system_status_index = paths.index("/admin/api/system-status")
 
-    assert system_status_index < mount_index
-    assert paths.index("/admin/debug/s3-objects") < mount_index
+    assert route_index("/admin/api/system-status", app.router.routes) < mount_index
+    assert route_index("/admin/debug/s3-objects", app.router.routes) < mount_index
 
 
 def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):

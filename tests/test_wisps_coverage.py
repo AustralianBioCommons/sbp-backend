@@ -294,13 +294,15 @@ async def test_launch_wisps_workflow_success(monkeypatch):
 
     mock_result = WispsLaunchResult(workflow_id="wf_xyz", status="submitted")
 
-    with patch(
-        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
-    ), patch(
-        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
-    ), patch(
-        "app.services.wisps_executor.get_wisps_default_params",
-        return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
+    with (
+        patch(
+            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+        ),
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch(
+            "app.services.wisps_executor.get_wisps_default_params",
+            return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
+        ),
     ):
         form = WorkflowLaunchForm(
             workflow="interaction-screening", tool="boltz", runName="test-run"
@@ -340,16 +342,19 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
     mock_result = WispsLaunchResult(workflow_id="wf_prerun", status="submitted")
     prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
 
-    with patch(
-        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
-    ), patch(
-        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
-    ), patch(
-        "app.services.wisps_executor.get_wisps_default_params",
-        return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
-    ), patch(
-        "app.services.wisps_executor.get_wisps_executor_script", return_value="prerun_body"
-    ) as mock_script:
+    with (
+        patch(
+            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+        ),
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch(
+            "app.services.wisps_executor.get_wisps_default_params",
+            return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
+        ),
+        patch(
+            "app.services.wisps_executor.get_wisps_executor_script", return_value="prerun_body"
+        ) as mock_script,
+    ):
         form = WorkflowLaunchForm(
             workflow="interaction-screening", tool="boltz", runName="prerun-run"
         )
@@ -508,18 +513,20 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
 
     mock_result = WispsLaunchResult(workflow_id="wf_tool", status="submitted")
 
-    with patch(
-        "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
-    ), patch(
-        "app.services.wisps_executor.get_wisps_config_text", return_value="config_text"
-    ), patch(
-        "app.services.wisps_executor.get_wisps_default_params",
-        return_value={
-            "outdir": "s3://out",
-            "input": "https://sheet",
-            "mode": "g1-g2",
-            "tools": "boltz",
-        },
+    with (
+        patch(
+            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+        ),
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch(
+            "app.services.wisps_executor.get_wisps_default_params",
+            return_value={
+                "outdir": "s3://out",
+                "input": "https://sheet",
+                "mode": "g1-g2",
+                "tools": "boltz",
+            },
+        ),
     ):
         form = WorkflowLaunchForm(
             workflow="interaction-screening", tool="boltz", runName="test-run-tool"

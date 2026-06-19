@@ -360,14 +360,17 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
     test_db.commit()
 
-    with patch(
-        "app.services.results_utils.generate_presigned_url",
-        new_callable=AsyncMock,
-        side_effect=lambda key: f"https://signed.example/{key}",
-    ) as mock_presign, patch(
-        "app.services.results_utils.list_s3_files",
-        new_callable=AsyncMock,
-        return_value=[],
+    with (
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key: f"https://signed.example/{key}",
+        ) as mock_presign,
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         result = await get_result_downloads("wf-downloads-1", user.id, test_db)
 
@@ -459,15 +462,18 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
     test_db.commit()
 
-    with patch(
-        "app.services.results_utils.generate_presigned_url",
-        new_callable=AsyncMock,
-        side_effect=lambda key: f"https://signed.example/{key}",
-    ) as mock_presign, patch(
-        "app.services.results_utils.list_s3_files",
-        new_callable=AsyncMock,
-        return_value=[],
-    ) as mock_list_s3_files:
+    with (
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key: f"https://signed.example/{key}",
+        ) as mock_presign,
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_list_s3_files,
+    ):
         result = await get_result_downloads(f"wf-proteinfold-downloads-{tool}", user.id, test_db)
 
     assert result.runId == f"wf-proteinfold-downloads-{tool}"
@@ -585,14 +591,17 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
     test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
     test_db.commit()
 
-    with patch(
-        "app.services.results_utils.generate_presigned_url",
-        new_callable=AsyncMock,
-        side_effect=lambda key: f"https://signed.example/{key}",
-    ), patch(
-        "app.services.results_utils.list_s3_files",
-        new_callable=AsyncMock,
-        return_value=[],
+    with (
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key: f"https://signed.example/{key}",
+        ),
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         result = await get_result_snapshots("wf-snapshots-1", user.id, test_db)
 
@@ -694,14 +703,17 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     test_db.add(RunOutput(run_id=run.id, s3_object_id=report.object_key))
     test_db.commit()
 
-    with patch(
-        "app.services.results_utils.generate_presigned_url",
-        new_callable=AsyncMock,
-        side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
-    ) as mock_presign, patch(
-        "app.services.results_utils.list_s3_files",
-        new_callable=AsyncMock,
-        return_value=[],
+    with (
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new_callable=AsyncMock,
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
+        ) as mock_presign,
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         result = await get_result_report("wf-report-1", user.id, test_db)
 

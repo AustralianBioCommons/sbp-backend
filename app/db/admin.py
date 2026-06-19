@@ -1,4 +1,5 @@
 """Starlette Admin and DB debug API mounting helpers."""
+
 # mypy: ignore-errors
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ import hmac
 import json
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import time
 from typing import Any
 from urllib.parse import urlencode
@@ -102,7 +103,7 @@ class AppUserAdmin(ModelView):
 
     @staticmethod
     def _stamp_credit_audit(obj: Any, actor: str) -> None:
-        obj.credit_updated_at = datetime.now(timezone.utc)
+        obj.credit_updated_at = datetime.now(UTC)
         obj.credit_updated_by = actor
 
     async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:

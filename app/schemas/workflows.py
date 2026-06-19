@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -14,7 +14,7 @@ WorkflowName = Literal[
 WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "colabfold", "rfdiffusion"]
 
 
-class PipelineStatus(str, Enum):
+class PipelineStatus(StrEnum):
     """Pipeline status values from Seqera Platform."""
 
     SUBMITTED = "SUBMITTED"
@@ -25,7 +25,7 @@ class PipelineStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class UIStatus(str, Enum):
+class UIStatus(StrEnum):
     """User-facing status values for the frontend."""
 
     IN_QUEUE = "In queue"

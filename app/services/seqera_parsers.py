@@ -48,7 +48,7 @@ def parse_workflow_list_payload(
         if submit_str := wf.get("submit") or wf.get("dateCreated"):
             try:
                 submitted_at = datetime.fromisoformat(submit_str.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
+            except ValueError, AttributeError:
                 submitted_at = None
 
         items.append(

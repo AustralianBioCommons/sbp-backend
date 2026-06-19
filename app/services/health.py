@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -251,7 +251,7 @@ async def _collect_system_status() -> SystemStatus:
     overall = _worst([c.status for c in components])
     return SystemStatus(
         overall_status=overall,
-        checked_at=datetime.now(timezone.utc),
+        checked_at=datetime.now(UTC),
         components=components,
     )
 

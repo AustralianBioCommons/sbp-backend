@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,7 +15,7 @@ from app.services.health import ProbeResult, SystemStatus
 def _fake_status() -> SystemStatus:
     return SystemStatus(
         overall_status="unhealthy",
-        checked_at=datetime(2026, 6, 1, 3, 12, 55, tzinfo=timezone.utc),
+        checked_at=datetime(2026, 6, 1, 3, 12, 55, tzinfo=UTC),
         components=[
             ProbeResult("seqera_api", "healthy", 240, None, None),
             ProbeResult(

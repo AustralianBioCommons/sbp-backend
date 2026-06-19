@@ -1,5 +1,4 @@
-"""Proteinfold workflow configuration and executor settings (modeled after bindflow).
-"""
+"""Proteinfold workflow configuration and executor settings (modeled after bindflow)."""
 
 from __future__ import annotations
 

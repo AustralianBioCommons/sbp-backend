@@ -8,7 +8,7 @@ FastAPI backend for handling Seqera Platform workflow launches.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.14
 - [UV](https://docs.astral.sh/uv/) package manager
 
 ## Setup

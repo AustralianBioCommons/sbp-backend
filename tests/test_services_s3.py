@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -161,12 +161,12 @@ async def test_list_s3_files_success(mock_env_vars, mock_s3_client):
                 {
                     "Key": "results/test/file1.csv",
                     "Size": 1024,
-                    "LastModified": datetime(2026, 1, 15, tzinfo=timezone.utc),
+                    "LastModified": datetime(2026, 1, 15, tzinfo=UTC),
                 },
                 {
                     "Key": "results/test/file2.csv",
                     "Size": 2048,
-                    "LastModified": datetime(2026, 1, 15, tzinfo=timezone.utc),
+                    "LastModified": datetime(2026, 1, 15, tzinfo=UTC),
                 },
             ]
         }
@@ -188,9 +188,9 @@ async def test_list_s3_files_with_extension_filter(mock_env_vars, mock_s3_client
     mock_paginator.paginate.return_value = [
         {
             "Contents": [
-                {"Key": "test/file1.csv", "Size": 1024, "LastModified": datetime.now(timezone.utc)},
-                {"Key": "test/file2.txt", "Size": 2048, "LastModified": datetime.now(timezone.utc)},
-                {"Key": "test/file3.csv", "Size": 512, "LastModified": datetime.now(timezone.utc)},
+                {"Key": "test/file1.csv", "Size": 1024, "LastModified": datetime.now(UTC)},
+                {"Key": "test/file2.txt", "Size": 2048, "LastModified": datetime.now(UTC)},
+                {"Key": "test/file3.csv", "Size": 512, "LastModified": datetime.now(UTC)},
             ]
         }
     ]
