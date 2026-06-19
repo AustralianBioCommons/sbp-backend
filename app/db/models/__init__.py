@@ -9,3 +9,4 @@ from .core import (  # noqa: F401
     Workflow,
     WorkflowRun,
 )
+from .job_queue import QueuedJob
