@@ -54,11 +54,9 @@ def test_cors_middleware_configured(app: FastAPI):
 
 def test_workflow_router_included(app: FastAPI):
     """Test that workflow router is included with correct prefix."""
-    route_paths = [route.path for route in app.routes]
-
-    assert "/api/workflows/launch" in route_paths
-    assert "/api/jobs" in route_paths
-    assert "/api/users/me/credit" in route_paths
+    assert app.url_path_for("launch_workflow") == "/api/workflows/launch"
+    assert app.url_path_for("list_jobs") == "/api/jobs"
+    assert app.url_path_for("get_my_credit") == "/api/users/me/credit"
 
 
 def test_admin_debug_router_included_when_enabled():
@@ -79,10 +77,10 @@ def test_admin_debug_router_included_when_enabled():
     ):
         app = create_app()
 
-    route_paths = [route.path for route in app.routes]
-    assert "/admin/debug/s3-objects" in route_paths
-    assert "/admin/debug/run-inputs" in route_paths
-    assert "/admin/debug/run-outputs" in route_paths
+    paths = app.openapi()["paths"]
+    assert "/admin/debug/s3-objects" in paths
+    assert "/admin/debug/run-inputs" in paths
+    assert "/admin/debug/run-outputs" in paths
 
 
 def test_exception_handler(client: TestClient):
