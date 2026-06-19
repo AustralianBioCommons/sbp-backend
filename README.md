@@ -177,6 +177,8 @@ Required entries in `.env`:
 - `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
 - `DB_ADMIN_SESSION_SECRET` — Required when `ENABLE_DB_ADMIN=true`
 - `DB_ADMIN_AUTH_REDIRECT_URI` — Required when `ENABLE_DB_ADMIN=true`
+- `HEALTH_CACHE_TTL_SECONDS` — (Optional) cache TTL for system status probes (default `30`)
+- `SBP_BACKEND_LOG_GROUP` — (Optional) backend CloudWatch log group name for the admin System Status link
 
 ## DB Debug UI (Starlette Admin)
 
@@ -194,6 +196,33 @@ ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 
 Then open `http://localhost:3000/admin`.
 
 Use this only in trusted/internal environments.
+
+## System Status (admin only)
+
+When `ENABLE_DB_ADMIN=true`, two admin-only surfaces report the runtime health of
+the components workflow submission depends on:
+
+- **Seqera API reachability** — probes `GET {SEQERA_API_URL}/service-info`.
+- **Compute environment status** — reads `GET /compute-envs/{COMPUTE_ID}?workspaceId={WORK_SPACE}`
+  and maps the `computeEnv.status` field (the Seqera Tower agent connection state,
+  our proxy for Gadi-side health): `AVAILABLE` → healthy, `CREATING` → degraded,
+  `ERRORED`/`OFFLINE`/`INVALID` → unhealthy, anything else → degraded.
+
+Surfaces:
+
+- `GET /admin/api/system-status` — admin-only JSON with per-component status,
+  latency, last-error body, and the full Seqera compute-env JSON. Pass
+  `?refresh=true` to bypass the short-lived cache. Results are cached for
+  `HEALTH_CACHE_TTL_SECONDS` (default 30s) with stampede protection.
+- `/admin/system-status` — the **System Status** dashboard view (auto-refreshes
+  every 30s) rendering a per-component grid with status pills and an optional
+  one-click link to the backend CloudWatch log group.
+
+Relevant environment variables:
+
+- `HEALTH_CACHE_TTL_SECONDS` — (Optional) probe cache TTL in seconds (default `30`).
+- `SBP_BACKEND_LOG_GROUP` — (Optional) backend CloudWatch log group name; when set,
+  the dashboard shows a one-click link to it. Uses `AWS_REGION` for the console URL.
 
 ## Containerization
 

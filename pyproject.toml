@@ -28,6 +28,9 @@ dependencies = [
 [tool.setuptools]
 packages = ["app"]
 
+[tool.setuptools.package-data]
+app = ["templates/**/*.html"]
+
 [project.optional-dependencies]
 dev = [
     "boto3-stubs>=1.43.26",

@@ -1,0 +1,155 @@
+{% extends "layout.html" %}
+
+{% block header %}
+<div class="col">
+  <h2 class="page-title">System Status</h2>
+  <div class="text-muted mt-1">
+    Runtime health of the components SBP workflow submission depends on.
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="col-12">
+  <div class="card">
+    <div class="card-header d-flex align-items-center">
+      <h3 class="card-title mb-0">Components</h3>
+      <div class="ms-auto d-flex align-items-center gap-3">
+        <span id="overall-pill" class="badge bg-secondary text-white fw-semibold">checking…</span>
+        <span class="text-muted small">
+          Last checked: <span id="checked-at">—</span>
+        </span>
+        <button id="refresh-btn" class="btn btn-sm btn-outline-primary" type="button">
+          Refresh
+        </button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table card-table table-vcenter">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Status</th>
+            <th>Latency</th>
+            <th>Message / last error</th>
+          </tr>
+        </thead>
+        <tbody id="components-body">
+          <tr><td colspan="4" class="text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex align-items-center">
+      <span class="text-muted small">Auto-refreshes every 30s.</span>
+      <span id="cloudwatch-link-wrap" class="ms-auto" hidden>
+        <a id="cloudwatch-link" href="#" target="_blank" rel="noopener">
+          Open backend CloudWatch logs →
+        </a>
+      </span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // The verbose admin status API is mounted alongside the admin app.
+  var ENDPOINT = "/admin/api/system-status";
+  var REFRESH_MS = 30000;
+
+  // text-white + fw-semibold keeps the label readable on the colored fill
+  // (Tabler badges default to a muted text color, which washed out on green).
+  var pillClass = {
+    healthy: "bg-success text-white fw-semibold",
+    degraded: "bg-warning text-white fw-semibold",
+    unhealthy: "bg-danger text-white fw-semibold"
+  };
+  var DEFAULT_PILL = "bg-secondary text-white fw-semibold";
+
+  function badge(status) {
+    var cls = pillClass[status] || DEFAULT_PILL;
+    var label = status ? status.charAt(0).toUpperCase() + status.slice(1) : "Unknown";
+    return '<span class="badge ' + cls + '">' + label + "</span>";
+  }
+
+  function escapeHtml(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function detailText(component) {
+    var parts = [];
+    if (component.message) parts.push(escapeHtml(component.message));
+    var d = component.detail || {};
+    if (d.responseBody) {
+      parts.push('<code class="d-block mt-1 text-muted">' + escapeHtml(d.responseBody) + "</code>");
+    } else if (d.computeEnv && d.computeEnv.message) {
+      parts.push('<code class="d-block mt-1 text-muted">' + escapeHtml(d.computeEnv.message) + "</code>");
+    } else if (d.error && !component.message) {
+      parts.push(escapeHtml(d.error));
+    }
+    return parts.length ? parts.join("") : '<span class="text-muted">—</span>';
+  }
+
+  function render(data) {
+    var pill = document.getElementById("overall-pill");
+    pill.className = "badge " + (pillClass[data.overallStatus] || DEFAULT_PILL);
+    pill.textContent = data.overallStatus
+      ? data.overallStatus.charAt(0).toUpperCase() + data.overallStatus.slice(1)
+      : "Unknown";
+
+    var checkedAt = document.getElementById("checked-at");
+    checkedAt.textContent = data.checkedAt ? new Date(data.checkedAt).toLocaleString() : "—";
+
+    var body = document.getElementById("components-body");
+    body.innerHTML = "";
+    (data.components || []).forEach(function (c) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td><strong>" + escapeHtml(c.name) + "</strong></td>" +
+        "<td>" + badge(c.status) + "</td>" +
+        "<td>" + (c.latencyMs !== null && c.latencyMs !== undefined ? c.latencyMs + " ms" : "—") + "</td>" +
+        "<td>" + detailText(c) + "</td>";
+      body.appendChild(tr);
+    });
+
+    var wrap = document.getElementById("cloudwatch-link-wrap");
+    if (data.cloudwatchLogGroupUrl) {
+      document.getElementById("cloudwatch-link").href = data.cloudwatchLogGroupUrl;
+      wrap.hidden = false;
+    } else {
+      wrap.hidden = true;
+    }
+  }
+
+  function renderError(message) {
+    var body = document.getElementById("components-body");
+    body.innerHTML =
+      '<tr><td colspan="4" class="text-danger">Failed to load status: ' +
+      escapeHtml(message) + "</td></tr>";
+    var pill = document.getElementById("overall-pill");
+    pill.className = "badge " + DEFAULT_PILL;
+    pill.textContent = "Unknown";
+  }
+
+  function load() {
+    fetch(ENDPOINT, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(render)
+      .catch(function (err) {
+        renderError(err.message || String(err));
+      });
+  }
+
+  document.getElementById("refresh-btn").addEventListener("click", load);
+  load();
+  setInterval(load, REFRESH_MS);
+})();
+</script>
+{% endblock %}
