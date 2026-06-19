@@ -86,8 +86,7 @@ async def cancel_workflow(
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name or workflow type"),
-    status_filter: list[str]
-    | None = Query(
+    status_filter: list[str] | None = Query(
         None,
         alias="status",
         description="Filter by status (Completed, Stopped, Failed)",

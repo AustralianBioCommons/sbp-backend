@@ -31,15 +31,13 @@ OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
 class OutputClassifier(Protocol):
     """Function that classifies a workflow output key into a category."""
 
-    def __call__(self, key: str, sample_id: str | None) -> ClassifiedOutput | None:
-        ...
+    def __call__(self, key: str, sample_id: str | None) -> ClassifiedOutput | None: ...
 
 
 class GetScoreFile(Protocol):
     """Return the path to the score file for a workflow run."""
 
-    def __call__(self, keys: list[str], sample_id: str | None) -> str | None:
-        ...
+    def __call__(self, keys: list[str], sample_id: str | None) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -166,7 +164,7 @@ async def resolve_pdb_presigned_urls(
             response_content_disposition=_format_attachment_content_disposition(filename),
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except (S3ConfigurationError, S3ServiceError):
+    except S3ConfigurationError, S3ServiceError:
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",

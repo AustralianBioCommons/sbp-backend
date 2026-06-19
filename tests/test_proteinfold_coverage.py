@@ -230,13 +230,16 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
         workflow_id="wf_success", status="submitted", message=None
     )
 
-    with patch(
-        "app.services.proteinfold_executor._post_to_seqera",
-        new_callable=AsyncMock,
-        return_value=expected_result,
-    ) as mock_post, patch(
-        "app.services.proteinfold_executor.get_proteinfold_config_text",
-        return_value="config_text",
+    with (
+        patch(
+            "app.services.proteinfold_executor._post_to_seqera",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_post,
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
     ):
         form = _make_launch_form()
         result = await launch_proteinfold_workflow(
@@ -318,13 +321,16 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
 async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
     expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
 
-    with patch(
-        "app.services.proteinfold_executor._post_to_seqera",
-        new_callable=AsyncMock,
-        return_value=expected_result,
-    ), patch(
-        "app.services.proteinfold_executor.get_proteinfold_config_text",
-        return_value="config_text",
+    with (
+        patch(
+            "app.services.proteinfold_executor._post_to_seqera",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ),
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
     ):
         form = _make_launch_form()
         result = await launch_proteinfold_workflow(

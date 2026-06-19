@@ -144,7 +144,7 @@ def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | Non
         return None
     try:
         parsed = int(str(value).strip())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return parsed if parsed >= 1 else None
 
