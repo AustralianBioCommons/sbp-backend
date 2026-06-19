@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -143,7 +143,7 @@ async def list_jobs(
                     workflow=workflow_type,
                     tool=tool,
                     status=ui_status,
-                    submittedAt=parse_submit_datetime(payload) or datetime.now(timezone.utc),
+                    submittedAt=parse_submit_datetime(payload) or datetime.now(UTC),
                     score=score if ui_status == "Completed" else None,
                     finalDesignCount=_resolve_final_design_count(owned_run),
                 )
@@ -194,7 +194,7 @@ async def get_job_details(
     wf = coerce_workflow_payload(payload)
     pipeline_status = extract_pipeline_status(payload)
     ui_status = map_pipeline_status_to_ui(pipeline_status)
-    submitted_at = parse_submit_datetime(payload) or datetime.now(timezone.utc)
+    submitted_at = parse_submit_datetime(payload) or datetime.now(UTC)
 
     score = await ensure_completed_run_score(db, owned_run, ui_status)
     if ui_status != "Completed":

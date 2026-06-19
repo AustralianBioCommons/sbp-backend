@@ -33,7 +33,7 @@ class AppUser(Base):
     )
     credit_updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    workflow_runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="owner")
+    workflow_runs: Mapped[list[WorkflowRun]] = relationship(back_populates="owner")
 
 
 class Workflow(Base):
@@ -47,7 +47,7 @@ class Workflow(Base):
     config_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     prerun_script_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="workflow")
+    runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")
 
 
 class WorkflowRun(Base):
@@ -75,9 +75,9 @@ class WorkflowRun(Base):
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
-    metrics: Mapped["RunMetric | None"] = relationship(back_populates="run", uselist=False)
-    inputs: Mapped[list["RunInput"]] = relationship(back_populates="run")
-    outputs: Mapped[list["RunOutput"]] = relationship(back_populates="run")
+    metrics: Mapped[RunMetric | None] = relationship(back_populates="run", uselist=False)
+    inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
+    outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
 
 
 class S3Object(Base):
@@ -89,8 +89,8 @@ class S3Object(Base):
     version_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    run_inputs: Mapped[list["RunInput"]] = relationship(back_populates="s3_object")
-    run_outputs: Mapped[list["RunOutput"]] = relationship(back_populates="s3_object")
+    run_inputs: Mapped[list[RunInput]] = relationship(back_populates="s3_object")
+    run_outputs: Mapped[list[RunOutput]] = relationship(back_populates="s3_object")
 
 
 class RunInput(Base):

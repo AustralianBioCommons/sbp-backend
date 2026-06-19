@@ -7,7 +7,7 @@ import io
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, BinaryIO, cast
 
 import boto3
@@ -86,7 +86,7 @@ async def upload_file_to_s3(
         s3_client = get_s3_client()
 
         # Generate unique file key with timestamp
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         file_key = f"{folder}/{timestamp}_{filename}"
 
         # Upload file to S3

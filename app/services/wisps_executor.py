@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -114,7 +114,7 @@ async def launch_wisps_workflow(
         raise WispsConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     job_id = (form.runName or "").strip()
     if not job_id:
         raise WispsConfigurationError("Missing run name for workflow launch")

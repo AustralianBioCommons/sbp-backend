@@ -6,7 +6,7 @@ import logging
 import random
 import re
 import string
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -83,7 +83,7 @@ def build_unique_run_name(job_name: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)  # underscores → hyphens too
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-") or "run"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = now.strftime("%Y%m%d-%H%M%S")
     rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
     return f"{slug}_{ts}_{rand}"
@@ -283,7 +283,7 @@ async def launch_workflow(
 
     run_id = uuid4()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
-    submission_timestamp = datetime.now(timezone.utc)
+    submission_timestamp = datetime.now(UTC)
 
     # Reserve DB row first so a launched workflow always has a DB entry.
     # Use local run UUID as a temporary seqera_run_id placeholder.
@@ -413,7 +413,7 @@ async def launch_workflow(
                     )
                     .values(
                         credit=AppUser.credit - run_credit_cost,
-                        credit_updated_at=datetime.now(timezone.utc),
+                        credit_updated_at=datetime.now(UTC),
                         credit_updated_by=user_email,
                     )
                 ),
@@ -487,7 +487,7 @@ async def get_logs(run_id: str) -> LaunchLogs:
 @router.get("/{run_id}/details", response_model=LaunchDetails)
 async def get_details(run_id: str) -> LaunchDetails:
     """Return workflow details (placeholder)."""
-    iso_now = datetime.now(timezone.utc).isoformat()
+    iso_now = datetime.now(UTC).isoformat()
     return LaunchDetails(
         requiresAttention=False,
         status="UNKNOWN",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -80,7 +80,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
     dataset_url = (
         f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
