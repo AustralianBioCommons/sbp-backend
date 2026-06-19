@@ -6,7 +6,7 @@ from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .. import Base
-from . import WorkflowRun
+from . import WorkflowRun, Workflow
 
 JobStatus = Literal["pending", "submitted", "failed"]
 
@@ -15,7 +15,7 @@ class QueuedJob(Base):
     __tablename__ = "queued_jobs"
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     workflow_run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
-    workflow: Mapped[UUID] = mapped_column(ForeignKey("workflows.id"), nullable=False)
+    workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id"), nullable=False)
     launch_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[JobStatus] = mapped_column(String(length=20), nullable=False, default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -36,4 +36,5 @@ class QueuedJob(Base):
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    workflow: Mapped[Workflow] = relationship()
     workflow_run: Mapped[WorkflowRun] = relationship()

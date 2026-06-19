@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'b0568b4aebd0'
+revision = '8117c4e6e36e'
 down_revision = 'cb2033051aca'
 branch_labels = None
 depends_on = None
@@ -16,7 +16,7 @@ def upgrade() -> None:
     op.create_table('queued_jobs',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('workflow_run_id', sa.UUID(), nullable=False),
-    sa.Column('workflow', sa.UUID(), nullable=False),
+    sa.Column('workflow_id', sa.UUID(), nullable=False),
     sa.Column('launch_payload', sa.JSON(), nullable=False),
     sa.Column('status', sa.String(length=20), nullable=False),
     sa.Column('attempts', sa.Integer(), nullable=False),
@@ -25,7 +25,7 @@ def upgrade() -> None:
     sa.Column('next_attempt_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('submitted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.ForeignKeyConstraint(['workflow'], ['workflows.id'], name=op.f('fk_queued_jobs_workflow_workflows')),
+    sa.ForeignKeyConstraint(['workflow_id'], ['workflows.id'], name=op.f('fk_queued_jobs_workflow_id_workflows')),
     sa.ForeignKeyConstraint(['workflow_run_id'], ['workflow_runs.id'], name=op.f('fk_queued_jobs_workflow_run_id_workflow_runs')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_queued_jobs'))
     )
