@@ -36,4 +36,4 @@ class QueuedJob(Base):
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    workflow_run: Mapped["WorkflowRun"] = relationship()
+    workflow_run: Mapped[WorkflowRun] = relationship()
