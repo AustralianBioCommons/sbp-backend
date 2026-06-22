@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,8 +11,12 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
-from .seqera import params_to_yaml_text
-from .seqera_client import SeqeraClient
+from .seqera import (
+    WorkflowLaunchResult,
+    params_to_yaml_text,
+    post_seqera_launch,
+)
+from .seqera_errors import SeqeraConfigurationError
 from .wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
@@ -24,25 +27,10 @@ from .wisps_config import (
 logger = logging.getLogger(__name__)
 
 
-class WispsConfigurationError(RuntimeError):
-    """Raised when required configuration is missing."""
-
-
-class WispsExecutorError(RuntimeError):
-    """Raised when WISPS workflow execution fails."""
-
-
-@dataclass
-class WispsLaunchResult:
-    workflow_id: str
-    status: str
-    message: str | None = None
-
-
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise WispsConfigurationError(f"Missing required environment variable: {key}")
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -50,31 +38,6 @@ def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) ->
     return (
         f"{seqera_api_url}/workspaces/{workspace_id}"
         f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
-
-
-async def _post_to_seqera(url: str, payload: dict[str, Any]) -> WispsLaunchResult:
-    seqera_client = SeqeraClient()
-    response = await seqera_client.post(url, payload)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera API error %s %s: %s",
-            response.status_code,
-            response.reason_phrase,
-            body,
-        )
-        raise WispsExecutorError(f"WISPS workflow launch failed: {response.status_code} {body}")
-
-    data = response.json()
-    workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
-    if not workflow_id:
-        raise WispsExecutorError("WISPS workflow launch succeeded but did not return a workflowId")
-    return WispsLaunchResult(
-        workflow_id=workflow_id,
-        status=data.get("status", "submitted"),
-        message=data.get("message"),
     )
 
 
@@ -111,13 +74,13 @@ async def prepare_wisps_workflow(
     work_dir = _get_required_env("WORK_DIR")
 
     if not output_id or not output_id.strip():
-        raise WispsConfigurationError("Missing output identifier for workflow launch")
+        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     job_id = (form.runName or "").strip()
     if not job_id:
-        raise WispsConfigurationError("Missing run name for workflow launch")
+        raise SeqeraConfigurationError("Missing run name for workflow launch")
 
     sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     params_text = params_to_yaml_text(
@@ -184,7 +147,7 @@ async def launch_wisps_workflow(
     full_name: str,
     institute: str,
     ip_address: str,
-) -> WispsLaunchResult:
+) -> WorkflowLaunchResult:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
     launch_payload = await prepare_wisps_workflow(
         form,
@@ -219,4 +182,4 @@ async def launch_wisps_workflow(
         },
     )
 
-    return await _post_to_seqera(launch_url, {"launch": launch_payload})
+    return await post_seqera_launch(launch_url, {"launch": launch_payload}, workflow_label="WISPS")

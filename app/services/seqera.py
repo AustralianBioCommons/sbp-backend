@@ -4,14 +4,29 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import yaml
 
+from .seqera_client import SeqeraClient
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowExecutorError(RuntimeError):
+    """Raised when workflow execution through Seqera fails."""
+
+
+@dataclass
+class WorkflowLaunchResult:
+    """Result of a workflow launch."""
+
+    workflow_id: str
+    status: str
+    message: str | None = None
 
 
 def params_to_yaml_text(params: dict[str, Any]) -> str:
@@ -19,6 +34,42 @@ def params_to_yaml_text(params: dict[str, Any]) -> str:
     if not params:
         return ""
     return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
+
+
+async def post_seqera_launch(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    workflow_label: str,
+) -> WorkflowLaunchResult:
+    """Post a workflow launch payload to Seqera and return the launch result."""
+    seqera_client = SeqeraClient()
+    response = await seqera_client.post(url, payload)
+
+    if response.is_error:
+        body = response.text
+        logger.error(
+            "Seqera API error %s %s: %s",
+            response.status_code,
+            response.reason_phrase,
+            body,
+        )
+        raise WorkflowExecutorError(
+            f"{workflow_label} workflow launch failed: {response.status_code} {body}"
+        )
+
+    data = response.json()
+    workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
+    if not workflow_id:
+        raise WorkflowExecutorError(
+            f"{workflow_label} workflow launch succeeded but did not return a workflowId"
+        )
+
+    return WorkflowLaunchResult(
+        workflow_id=workflow_id,
+        status=data.get("status", "submitted"),
+        message=data.get("message"),
+    )
 
 
 def _get_required_env(key: str) -> str:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,8 +17,12 @@ from .proteinfold_config import (
     get_proteinfold_default_params,
     get_proteinfold_executor_script,
 )
-from .seqera import params_to_yaml_text
-from .seqera_client import SeqeraClient
+from .seqera import (
+    WorkflowLaunchResult,
+    params_to_yaml_text,
+    post_seqera_launch,
+)
+from .seqera_errors import SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -40,27 +43,10 @@ def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     return {key: extra[key] for key in _TOOL_PARAM_KEYS if key in extra and extra[key] is not None}
 
 
-class ProteinfoldConfigurationError(RuntimeError):
-    """Raised when required configuration is missing."""
-
-
-class ProteinfoldExecutorError(RuntimeError):
-    """Raised when proteinfold workflow execution fails."""
-
-
-@dataclass
-class ProteinfoldLaunchResult:
-    """Result of a proteinfold workflow launch."""
-
-    workflow_id: str
-    status: str
-    message: str | None = None
-
-
 def _get_required_env(key: str) -> str:
     value = os.getenv(key)
     if not value:
-        raise ProteinfoldConfigurationError(f"Missing required environment variable: {key}")
+        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
 
 
@@ -91,36 +77,6 @@ def _build_params_text(
     return params_text
 
 
-async def _post_to_seqera(url: str, payload: dict[str, Any]) -> ProteinfoldLaunchResult:
-    """Send the launch request to Seqera and return the result."""
-    seqera_client = SeqeraClient()
-    response = await seqera_client.post(url, payload)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera API error %s %s: %s",
-            response.status_code,
-            response.reason_phrase,
-            body,
-        )
-        raise ProteinfoldExecutorError(
-            f"Proteinfold workflow launch failed: {response.status_code} {body}"
-        )
-
-    data = response.json()
-    workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
-    if not workflow_id:
-        raise ProteinfoldExecutorError(
-            "Proteinfold workflow launch succeeded but did not return a workflowId"
-        )
-    return ProteinfoldLaunchResult(
-        workflow_id=workflow_id,
-        status=data.get("status", "submitted"),
-        message=data.get("message"),
-    )
-
-
 async def prepare_proteinfold_workflow(
     form: WorkflowLaunchForm,
     dataset_id: str,
@@ -145,13 +101,13 @@ async def prepare_proteinfold_workflow(
     work_dir = _get_required_env("WORK_DIR")
 
     if not output_id or not output_id.strip():
-        raise ProteinfoldConfigurationError("Missing output identifier for workflow launch")
+        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     job_id = (form.runName or "").strip()
     if not job_id:
-        raise ProteinfoldConfigurationError("Missing run name for workflow launch")
+        raise SeqeraConfigurationError("Missing run name for workflow launch")
 
     sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     params_text = _build_params_text(
@@ -218,7 +174,7 @@ async def launch_proteinfold_workflow(
     full_name: str,
     institute: str,
     ip_address: str,
-) -> ProteinfoldLaunchResult:
+) -> WorkflowLaunchResult:
     """Launch a proteinfold workflow on the Seqera Platform."""
     launch_payload = await prepare_proteinfold_workflow(
         form,
@@ -254,4 +210,6 @@ async def launch_proteinfold_workflow(
         },
     )
 
-    return await _post_to_seqera(launch_url, {"launch": launch_payload})
+    return await post_seqera_launch(
+        launch_url, {"launch": launch_payload}, workflow_label="Proteinfold"
+    )
