@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, mock_open, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import httpx
 import pytest
 import respx
+from sqlalchemy import select
 
+from app.db.models import QueuedJob
 from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,
@@ -23,12 +26,27 @@ from app.services.proteinfold_executor import (
     _post_to_seqera,
     _tool_params,
     launch_proteinfold_workflow,
+    prepare_proteinfold_workflow,
 )
 from app.services.seqera import params_to_yaml_text
+from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
 def _form_data(**extra) -> WorkflowFormData:
     return WorkflowFormData(workflow="single-prediction", tool="colabfold", **extra)
+
+
+@contextmanager
+def _mock_proteinfold_db_context():
+    workflow = Mock(name="workflow")
+    workflow_run = Mock(name="workflow_run")
+    workflow_run.workflow = workflow
+    db_session = Mock(name="db_session")
+    queued_job = Mock(name="queued_job")
+    with patch(
+        "app.services.proteinfold_executor.QueuedJob", return_value=queued_job
+    ) as queued_job_cls:
+        yield db_session, workflow_run, workflow, queued_job_cls, queued_job
 
 
 # =============================================================================
@@ -154,7 +172,6 @@ async def test_post_to_seqera_success():
         )
         result = await _post_to_seqera(
             "https://api.seqera.test/workflow/launch",
-            {"Authorization": "Bearer token"},
             {"launch": {}},
         )
 
@@ -171,7 +188,7 @@ async def test_post_to_seqera_nested_workflow_id():
                 200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
             )
         )
-        result = await _post_to_seqera("https://api.test/workflow/launch", {}, {})
+        result = await _post_to_seqera("https://api.test/workflow/launch", {})
     assert result.workflow_id == "wf_nested"
 
 
@@ -182,7 +199,7 @@ async def test_post_to_seqera_http_error():
             return_value=httpx.Response(401, text="Invalid token")
         )
         with pytest.raises(ProteinfoldExecutorError, match="401"):
-            await _post_to_seqera("https://api.test/workflow/launch", {}, {})
+            await _post_to_seqera("https://api.test/workflow/launch", {})
 
 
 @pytest.mark.anyio
@@ -192,7 +209,7 @@ async def test_post_to_seqera_missing_workflow_id():
             return_value=httpx.Response(200, json={"status": "submitted"})
         )
         with pytest.raises(ProteinfoldExecutorError, match="workflowId"):
-            await _post_to_seqera("https://api.test/workflow/launch", {}, {})
+            await _post_to_seqera("https://api.test/workflow/launch", {})
 
 
 # =============================================================================
@@ -231,6 +248,7 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
     )
 
     with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.proteinfold_executor._post_to_seqera",
             new_callable=AsyncMock,
@@ -245,6 +263,8 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
         result = await launch_proteinfold_workflow(
             form,
             "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             revision="dev",
@@ -263,16 +283,93 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
 
 
 @pytest.mark.anyio
+async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
+    test_db, persistent_models, seqera_env
+):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = _make_launch_form(runName="queued-proteinfold-run")
+    form_data = _form_data(colabfold_num_recycles=3, colabfold_use_templates=True)
+
+    with (
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_profiles",
+            return_value=["singularity"],
+        ),
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_executor_script",
+            return_value="prerun_body",
+        ),
+    ):
+        launch_payload = await prepare_proteinfold_workflow(
+            form=form,
+            dataset_id="dataset_abc",
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
+            revision="main",
+            output_id="run-output-id",
+            mode="colabfold",
+            form_data=form_data,
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    assert queued_job.workflow_id == workflow.id
+    assert queued_job.workflow_run_id == workflow_run.id
+    assert queued_job.status == "pending"
+    assert queued_job.next_attempt_at is not None
+    assert queued_job.launch_payload == launch_payload
+    assert queued_job.launch_payload["computeEnvId"] == "ce_456"
+    assert queued_job.launch_payload["runName"] == "queued-proteinfold-run"
+    assert queued_job.launch_payload["pipeline"] == "https://github.com/nf-core/proteinfold"
+    assert queued_job.launch_payload["workDir"] == "/work/dir"
+    assert queued_job.launch_payload["workspaceId"] == "ws_123"
+    assert queued_job.launch_payload["revision"] == "main"
+    assert queued_job.launch_payload["datasetIds"] == ["dataset_abc"]
+    assert queued_job.launch_payload["configProfiles"] == ["singularity"]
+    assert queued_job.launch_payload["configText"] == "config_text"
+    assert queued_job.launch_payload["preRunScript"] == "prerun_body"
+    assert queued_job.launch_payload["resume"] is False
+    assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
+    assert (
+        "input: https://api.seqera.test/workspaces/ws_123/datasets/dataset_abc/v/1/n/samplesheet.csv"
+        in queued_job.launch_payload["paramsText"]
+    )
+    assert "mode: colabfold" in queued_job.launch_payload["paramsText"]
+    assert "colabfold_num_recycles: 3" in queued_job.launch_payload["paramsText"]
+    assert "colabfold_use_templates: true" in queued_job.launch_payload["paramsText"]
+
+
+@pytest.mark.anyio
 async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
     # Remove a required env var
     monkeypatch.delenv("SEQERA_API_URL", raising=False)
     monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
 
     form = _make_launch_form()
-    with pytest.raises(ProteinfoldConfigurationError, match="SEQERA_API_URL"):
+    with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(ProteinfoldConfigurationError, match="SEQERA_API_URL"),
+    ):
         await launch_proteinfold_workflow(
             form,
             "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             output_id="run-output-id",
@@ -286,10 +383,15 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
 @pytest.mark.anyio
 async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
-    with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
+    with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(ProteinfoldConfigurationError, match="output identifier"),
+    ):
         await launch_proteinfold_workflow(
             form,
             "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             output_id=None,
@@ -303,10 +405,15 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
 @pytest.mark.anyio
 async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
-    with pytest.raises(ProteinfoldConfigurationError, match="output identifier"):
+    with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(ProteinfoldConfigurationError, match="output identifier"),
+    ):
         await launch_proteinfold_workflow(
             form,
             "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             output_id="   ",
@@ -322,6 +429,7 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
     expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
 
     with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.proteinfold_executor._post_to_seqera",
             new_callable=AsyncMock,
@@ -336,6 +444,8 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
         result = await launch_proteinfold_workflow(
             form,
             "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             revision="main",
