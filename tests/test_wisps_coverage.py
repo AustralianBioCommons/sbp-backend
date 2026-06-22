@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 import httpx
 import pytest
 import respx
+from sqlalchemy import select
 
+from app.db.models import QueuedJob
 from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchForm
 from app.services.seqera import params_to_yaml_text
 from app.services.wisps_config import (
@@ -23,11 +25,13 @@ from app.services.wisps_executor import (
     _post_to_seqera,
     _samplesheet_url,
     launch_wisps_workflow,
+    prepare_wisps_workflow,
 )
 from app.services.workflow_config_fetcher import (
     _validate_config_path,
     fetch_workflow_config,
 )
+from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
 @contextmanager
@@ -343,6 +347,82 @@ async def test_launch_wisps_workflow_success(monkeypatch):
         )
 
     assert result.workflow_id == "wf_xyz"
+
+
+@pytest.mark.anyio
+async def test_prepare_wisps_workflow_writes_expected_queued_job(
+    test_db, persistent_models, monkeypatch
+):
+    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
+    monkeypatch.setenv("WORK_SPACE", "ws1")
+    monkeypatch.setenv("COMPUTE_ID", "ce1")
+    monkeypatch.setenv("WORK_DIR", "s3://work")
+    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening",
+        tool="boltz",
+        fastaS3Uri="s3://bucket/seqs.fa",
+        splitOutputDir="/tmp/split",
+    )
+
+    with (
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch(
+            "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
+        ),
+        patch("app.services.wisps_executor.get_wisps_executor_script", return_value="prerun_body"),
+    ):
+        launch_payload = await prepare_wisps_workflow(
+            form=form,
+            dataset_id="ds1",
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            revision="dev",
+            output_id="output-queued",
+            user_email="user@test.com",
+            full_name="Test User",
+            institute="USYD",
+            ip_address="1.2.3.4",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    assert queued_job.workflow_id == workflow.id
+    assert queued_job.workflow_run_id == workflow_run.id
+    assert queued_job.status == "pending"
+    assert queued_job.next_attempt_at is not None
+    assert queued_job.launch_payload == launch_payload
+    assert queued_job.launch_payload["computeEnvId"] == "ce1"
+    assert queued_job.launch_payload["runName"] == "queued-run"
+    assert queued_job.launch_payload["pipeline"] == "nf-core/wisps"
+    assert queued_job.launch_payload["workDir"] == "s3://work"
+    assert queued_job.launch_payload["workspaceId"] == "ws1"
+    assert queued_job.launch_payload["revision"] == "dev"
+    assert queued_job.launch_payload["datasetIds"] == ["ds1"]
+    assert queued_job.launch_payload["configProfiles"] == ["singularity"]
+    assert queued_job.launch_payload["configText"] == "config_text"
+    assert queued_job.launch_payload["preRunScript"] == "prerun_body"
+    assert queued_job.launch_payload["resume"] is False
+    assert "outdir: s3://my-bucket/output-queued" in queued_job.launch_payload["paramsText"]
+    assert (
+        "input: https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesheet.csv"
+        in queued_job.launch_payload["paramsText"]
+    )
+    assert "tools: boltz" in queued_job.launch_payload["paramsText"]
 
 
 @pytest.mark.anyio
