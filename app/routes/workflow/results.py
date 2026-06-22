@@ -21,9 +21,7 @@ from ...services.results_utils import (
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
-    resolve_fasta_form_data,
-    resolve_pdb_presigned_urls,
-    resolve_submitted_form_data,
+    resolve_run_form_data,
 )
 from ...services.s3 import S3ConfigurationError, S3ServiceError
 from ...services.seqera_client import get_workflow_logs_raw
@@ -44,13 +42,11 @@ async def get_result_setting_params(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    form_data = resolve_submitted_form_data(owned_run)
-    resolved = await resolve_pdb_presigned_urls(form_data)
-    resolved = await resolve_fasta_form_data(resolved)
+    form_data = await resolve_run_form_data(owned_run)
 
     return JobSettingParamsResponse(
         runId=run_id,
-        settingParams=resolved,
+        settingParams=form_data,
     )
 
 

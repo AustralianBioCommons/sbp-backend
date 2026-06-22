@@ -213,6 +213,20 @@ async def resolve_pdb_presigned_urls(
         return form_data
 
 
+async def resolve_run_form_data(run: WorkflowRun) -> dict[str, Any] | None:
+    """Return the fully-resolved settings dict for a workflow run's result view.
+
+    Steps:
+    1. Extract stored form data (or reconstruct a fallback from local columns).
+    2. Replace the ``starting_pdb`` S3 URI with a presigned download URL.
+    3. Replace FASTA S3 URIs with presigned download URLs and strip internal fields.
+    """
+    form_data = resolve_submitted_form_data(run)
+    form_data = await resolve_pdb_presigned_urls(form_data)
+    form_data = await resolve_fasta_form_data(form_data)
+    return form_data
+
+
 def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:
     """Normalize raw Seqera log lines for frontend display."""
     formatted: list[ResultLogEntry] = []
