@@ -339,7 +339,8 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    # TODO: update to "pending" once we have a job queue
+    assert queued_job.status == "submitted"
     assert queued_job.next_attempt_at is not None
     assert queued_job.launch_payload == launch_payload
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"

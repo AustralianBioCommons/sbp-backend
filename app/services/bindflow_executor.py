@@ -116,7 +116,8 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending",
+        # TODO: set as submitted for now, we are still launching jobs immediately
+        status="submitted",
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
