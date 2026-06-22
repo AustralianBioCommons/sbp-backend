@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, mock_open, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import httpx
 import pytest
@@ -27,6 +28,22 @@ from app.services.workflow_config_fetcher import (
     _validate_config_path,
     fetch_workflow_config,
 )
+
+
+@contextmanager
+def _mock_wisps_db_context():
+    """
+    Mock the DB/workflow inputs required for launching a Wisps workflow.
+    Very simple mocks for when DB is not the focus of the test.
+    """
+    workflow = Mock(name="workflow")
+    workflow_run = Mock(name="workflow_run")
+    workflow_run.workflow = workflow
+    db_session = Mock(name="db_session")
+    queued_job = Mock(name="queued_job")
+    with patch("app.services.wisps_executor.QueuedJob", return_value=queued_job) as queued_job_cls:
+        yield db_session, workflow_run, workflow, queued_job_cls, queued_job
+
 
 # =============================================================================
 # Tests for wisps_config.py
@@ -234,7 +251,6 @@ async def test_post_to_seqera_success():
         )
         result = await _post_to_seqera(
             "https://api.test/launch",
-            {"Authorization": "Bearer token"},
             {"launch": {}},
         )
     assert result.workflow_id == "wf_abc"
@@ -249,7 +265,6 @@ async def test_post_to_seqera_nested_workflow_id():
         )
         result = await _post_to_seqera(
             "https://api.test/launch",
-            {"Authorization": "Bearer token"},
             {"launch": {}},
         )
     assert result.workflow_id == "wf_nested"
@@ -264,7 +279,6 @@ async def test_post_to_seqera_http_error():
         with pytest.raises(WispsExecutorError, match="401"):
             await _post_to_seqera(
                 "https://api.test/launch",
-                {"Authorization": "Bearer token"},
                 {"launch": {}},
             )
 
@@ -278,7 +292,6 @@ async def test_post_to_seqera_missing_workflow_id():
         with pytest.raises(WispsExecutorError, match="workflowId"):
             await _post_to_seqera(
                 "https://api.test/launch",
-                {"Authorization": "Bearer token"},
                 {"launch": {}},
             )
 
@@ -295,6 +308,7 @@ async def test_launch_wisps_workflow_success(monkeypatch):
     mock_result = WispsLaunchResult(workflow_id="wf_xyz", status="submitted")
 
     with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
         ),
@@ -316,6 +330,8 @@ async def test_launch_wisps_workflow_success(monkeypatch):
         result = await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -343,6 +359,7 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
     prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
 
     with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
         ),
@@ -367,6 +384,8 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
         result = await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -394,10 +413,15 @@ async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
         fastaS3Uri="s3://bucket/seqs.fa",
         splitOutputDir="/tmp/split",
     )
-    with pytest.raises(WispsConfigurationError, match="SEQERA_API_URL"):
+    with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(WispsConfigurationError, match="SEQERA_API_URL"),
+    ):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -425,10 +449,15 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
         fastaS3Uri="s3://bucket/seqs.fa",
         splitOutputDir="/tmp/split",
     )
-    with pytest.raises(WispsConfigurationError, match="output identifier"):
+    with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(WispsConfigurationError, match="output identifier"),
+    ):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -456,10 +485,15 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
         fastaS3Uri="s3://bucket/seqs.fa",
         splitOutputDir="/tmp/split",
     )
-    with pytest.raises(WispsConfigurationError):
+    with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(WispsConfigurationError),
+    ):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -487,10 +521,15 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
         fastaS3Uri="s3://bucket/seqs.fa",
         splitOutputDir="/tmp/split",
     )
-    with pytest.raises(WispsConfigurationError, match="run name"):
+    with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(WispsConfigurationError, match="run name"),
+    ):
         await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
@@ -514,6 +553,7 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
     mock_result = WispsLaunchResult(workflow_id="wf_tool", status="submitted")
 
     with (
+        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
         ),
@@ -540,6 +580,8 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
         result = await launch_wisps_workflow(
             form=form,
             dataset_id="ds1",
+            db_session=db_session,
+            workflow_run=workflow_run,
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
