@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+from sqlalchemy.orm import Session
 
+from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
@@ -18,6 +19,7 @@ from .proteinfold_config import (
     get_proteinfold_executor_script,
 )
 from .seqera import params_to_yaml_text
+from .seqera_client import SeqeraClient
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +91,10 @@ def _build_params_text(
     return params_text
 
 
-async def _post_to_seqera(
-    url: str, headers: dict[str, str], payload: dict[str, Any]
-) -> ProteinfoldLaunchResult:
+async def _post_to_seqera(url: str, payload: dict[str, Any]) -> ProteinfoldLaunchResult:
     """Send the launch request to Seqera and return the result."""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
-        response = await client.post(url, headers=headers, json=payload)
+    seqera_client = SeqeraClient()
+    response = await seqera_client.post(url, payload)
 
     if response.is_error:
         body = response.text
@@ -121,10 +121,12 @@ async def _post_to_seqera(
     )
 
 
-async def launch_proteinfold_workflow(
+async def prepare_proteinfold_workflow(
     form: WorkflowLaunchForm,
     dataset_id: str,
     *,
+    db_session: Session,
+    workflow_run: WorkflowRun,
     pipeline: str,
     config_path: str,
     revision: str | None = None,
@@ -135,10 +137,9 @@ async def launch_proteinfold_workflow(
     full_name: str,
     institute: str,
     ip_address: str,
-) -> ProteinfoldLaunchResult:
-    """Launch a proteinfold workflow on the Seqera Platform."""
+):
+    """Build and queue a proteinfold launch payload."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
@@ -163,36 +164,84 @@ async def launch_proteinfold_workflow(
     )
 
     launch_payload: dict[str, Any] = {
-        "launch": {
-            "computeEnvId": compute_env_id,
-            "runName": form.runName,
-            "pipeline": pipeline,
-            "workDir": work_dir,
-            "workspaceId": workspace_id,
-            "revision": revision or "dev",
-            "paramsText": params_text,
-            "configProfiles": get_proteinfold_config_profiles(),
-            "configText": get_proteinfold_config_text(
-                config_path,
-                job_id=job_id,
-                user_name=user_email,
-                timestamp=timestamp,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
-            ),
-            "preRunScript": get_proteinfold_executor_script(
-                os.getenv("AWS_ACCESS_KEY_ID", ""),
-                os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                os.getenv("AWS_REGION", "ap-southeast-2"),
-            ),
-            "resume": False,
-            "datasetIds": [dataset_id],
-        }
+        "computeEnvId": compute_env_id,
+        "runName": form.runName,
+        "pipeline": pipeline,
+        "workDir": work_dir,
+        "workspaceId": workspace_id,
+        "revision": revision or "dev",
+        "paramsText": params_text,
+        "configProfiles": get_proteinfold_config_profiles(),
+        "configText": get_proteinfold_config_text(
+            config_path,
+            job_id=job_id,
+            user_name=user_email,
+            timestamp=timestamp,
+            full_name=full_name,
+            institute=institute,
+            ip_address=ip_address,
+        ),
+        "preRunScript": get_proteinfold_executor_script(
+            os.getenv("AWS_ACCESS_KEY_ID", ""),
+            os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            os.getenv("AWS_REGION", "ap-southeast-2"),
+        ),
+        "resume": False,
+        "datasetIds": [dataset_id],
     }
 
+    queued_job = QueuedJob(
+        workflow=workflow_run.workflow,
+        workflow_run=workflow_run,
+        launch_payload=launch_payload,
+        status="pending",
+        next_attempt_at=datetime.now(UTC),
+    )
+    db_session.add(queued_job)
+    db_session.commit()
+    return launch_payload
+
+
+async def launch_proteinfold_workflow(
+    form: WorkflowLaunchForm,
+    dataset_id: str,
+    *,
+    db_session: Session,
+    workflow_run: WorkflowRun,
+    pipeline: str,
+    config_path: str,
+    revision: str | None = None,
+    output_id: str | None = None,
+    mode: str = "alphafold2",
+    form_data: WorkflowFormData | None = None,
+    user_email: str,
+    full_name: str,
+    institute: str,
+    ip_address: str,
+) -> ProteinfoldLaunchResult:
+    """Launch a proteinfold workflow on the Seqera Platform."""
+    launch_payload = await prepare_proteinfold_workflow(
+        form,
+        dataset_id,
+        db_session=db_session,
+        workflow_run=workflow_run,
+        pipeline=pipeline,
+        config_path=config_path,
+        revision=revision,
+        output_id=output_id,
+        mode=mode,
+        form_data=form_data,
+        user_email=user_email,
+        full_name=full_name,
+        institute=institute,
+        ip_address=ip_address,
+    )
+
+    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
+    workspace_id = _get_required_env("WORK_SPACE")
+    compute_env_id = _get_required_env("COMPUTE_ID")
     launch_url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
-    logger.info("Launch payload paramsText", extra={"paramsText": params_text})
+    logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
     logger.info("Full launch payload", extra={"payload": launch_payload})
     logger.info(
         "Launching proteinfold workflow via Seqera API",
@@ -205,12 +254,4 @@ async def launch_proteinfold_workflow(
         },
     )
 
-    return await _post_to_seqera(
-        launch_url,
-        {
-            "Authorization": f"Bearer {seqera_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        launch_payload,
-    )
+    return await _post_to_seqera(launch_url, {"launch": launch_payload})
