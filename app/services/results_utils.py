@@ -135,6 +135,45 @@ def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
     return fallback or None
 
 
+async def resolve_fasta_form_data(
+    form_data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Hide internal WISPS fields and replace FASTA S3 URIs with presigned download URLs.
+
+    - Removes ``splitOutputDir`` (WISPS internal cluster path, not user-facing)
+    - Replaces ``fastaS3Uri`` (WISPS) and ``fastaFileUrl`` (single-prediction) with
+      time-limited presigned download URLs when they contain ``s3://`` URIs.
+    """
+    if not form_data:
+        return form_data
+
+    result = {k: v for k, v in form_data.items() if k != "splitOutputDir"}
+
+    for key in ("fastaS3Uri", "fastaFileUrl"):
+        uri = result.get(key)
+        if not isinstance(uri, str) or not uri.startswith("s3://"):
+            continue
+        file_key = s3_uri_to_key(uri)
+        if not file_key:
+            continue
+        filename = file_key.rsplit("/", 1)[-1] if "/" in file_key else file_key
+        try:
+            result[key] = await generate_presigned_url(
+                file_key=file_key,
+                expiration=3600,
+                response_content_disposition=_format_attachment_content_disposition(filename),
+            )
+        except S3ConfigurationError, S3ServiceError:
+            logger.warning(
+                "Failed to generate presigned URL for %r (S3 key %r)",
+                key,
+                file_key,
+                exc_info=True,
+            )
+
+    return result
+
+
 async def resolve_pdb_presigned_urls(
     form_data: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -172,6 +211,20 @@ async def resolve_pdb_presigned_urls(
             exc_info=True,
         )
         return form_data
+
+
+async def resolve_run_form_data(run: WorkflowRun) -> dict[str, Any] | None:
+    """Return the fully-resolved settings dict for a workflow run's result view.
+
+    Steps:
+    1. Extract stored form data (or reconstruct a fallback from local columns).
+    2. Replace the ``starting_pdb`` S3 URI with a presigned download URL.
+    3. Replace FASTA S3 URIs with presigned download URLs and strip internal fields.
+    """
+    form_data = resolve_submitted_form_data(run)
+    form_data = await resolve_pdb_presigned_urls(form_data)
+    form_data = await resolve_fasta_form_data(form_data)
+    return form_data
 
 
 def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:
@@ -505,6 +558,56 @@ def build_alphafold2_proteinfold_output_listing_prefixes(run: WorkflowRun) -> li
     return prefixes
 
 
+def classify_wisps_output_key(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+    basename = normalized.rsplit("/", 1)[-1]
+    lowered = normalized.lower()
+
+    if "/multiqc/" in lowered and basename.lower() == "multiqc_report.html":
+        return ClassifiedOutput(category="report", label=basename)
+    if "/collect/" in lowered and basename.lower().endswith("_confidence_scores_full.csv"):
+        return ClassifiedOutput(category="stats_csv", label=basename)
+    if "/ipsae/" in lowered and basename.lower() == "ipsae_scores.csv":
+        return ClassifiedOutput(category="stats_csv", label=basename)
+    return None
+
+
+def get_wisps_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    for key in keys:
+        normalized = key.strip().lower()
+        basename = normalized.rsplit("/", 1)[-1]
+        if "/collect/" in normalized and basename.endswith("_confidence_scores_full.csv"):
+            return key.strip()
+    return None
+
+
+async def extract_wisps_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    values: list[float] = []
+    for row in csv_reader:
+        value = row.get("iptm")
+        if value and value.strip():
+            try:
+                values.append(float(value))
+            except ValueError:
+                pass
+    return max(values) if values else None
+
+
+def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+    return [
+        f"{run_uuid}/multiqc/",
+        f"{run_uuid}/collect/",
+        f"{run_uuid}/ipsae/",
+    ]
+
+
 def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
@@ -524,6 +627,18 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
         prefixes.append(f"{run_uuid}/colabfold/")
 
     return prefixes
+
+
+def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
+    return WorkflowResultsSpec(
+        kind="interaction-screening",
+        tool=tool,
+        required_categories={"report", "stats_csv"},
+        get_prefixes=build_wisps_output_listing_prefixes,
+        get_score_file=get_wisps_score_file,
+        extract_max_score=extract_wisps_max_score,
+        classify=classify_wisps_output_key,
+    )
 
 
 WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec]] = {
@@ -567,6 +682,10 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             extract_max_score=extract_proteinfold_max_score,
             classify=classify_colabfold_proteinfold_output,
         ),
+    },
+    "interaction-screening": {
+        "boltz": _make_wisps_spec("boltz"),
+        "colabfold": _make_wisps_spec("colabfold"),
     },
 }
 
