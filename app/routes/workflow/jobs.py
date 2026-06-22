@@ -152,13 +152,16 @@ async def list_jobs(
             continue
 
         db_score = score_by_run_id.get(run_id)
+
+        # A cached score means the job completed at some point; treat it as Completed
+        # when Seqera is unreachable and we cannot get the live status.
+        if ui_status == "N/A" and db_score is not None:
+            ui_status = "Completed"
+
         score = db_score
         if score is None and owned_run:
             score = await ensure_completed_run_score(db, owned_run, ui_status)
 
-        # Show score when status is Completed, or when Seqera is unreachable (N/A) but
-        # a score is already cached in the DB from a previous successful sync.
-        show_score = ui_status == "Completed" or (ui_status == "N/A" and db_score is not None)
         jobs.append(
             JobListItem(
                 id=run_id,
@@ -167,7 +170,7 @@ async def list_jobs(
                 tool=tool,
                 status=ui_status,
                 submittedAt=submitted_at,
-                score=score if show_score else None,
+                score=score if ui_status == "Completed" else None,
                 finalDesignCount=_resolve_final_design_count(owned_run),
             )
         )
