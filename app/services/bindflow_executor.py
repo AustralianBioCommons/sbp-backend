@@ -19,19 +19,14 @@ from .bindflow_config import (
 )
 from .seqera import (
     WorkflowLaunchResult,
+    _get_required_env,
+    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
 from .seqera_errors import SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
-
-
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
 
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
@@ -74,9 +69,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-    dataset_url = (
-        f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
+    dataset_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
     default_params["job_id"] = run_name

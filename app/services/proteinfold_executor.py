@@ -19,6 +19,8 @@ from .proteinfold_config import (
 )
 from .seqera import (
     WorkflowLaunchResult,
+    _get_required_env,
+    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -41,20 +43,6 @@ _TOOL_PARAM_KEYS = frozenset(
 def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     extra = form_data.extra_fields
     return {key: extra[key] for key in _TOOL_PARAM_KEYS if key in extra and extra[key] is not None}
-
-
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
-
-
-def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
-    return (
-        f"{seqera_api_url}/workspaces/{workspace_id}"
-        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
 
 
 def _build_params_text(

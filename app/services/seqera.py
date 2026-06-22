@@ -80,6 +80,14 @@ def _get_required_env(key: str) -> str:
     return value
 
 
+def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
+    """Build the Seqera samplesheet URL for a dataset."""
+    return (
+        f"{seqera_api_url}/workspaces/{workspace_id}"
+        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
+    )
+
+
 def _extract_workflow_type(workflow_data: dict) -> str | None:
     """
     Extract workflow type from workflow data.

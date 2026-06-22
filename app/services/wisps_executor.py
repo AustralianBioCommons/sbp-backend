@@ -13,6 +13,8 @@ from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .seqera import (
     WorkflowLaunchResult,
+    _get_required_env,
+    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -25,20 +27,6 @@ from .wisps_config import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
-
-
-def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
-    return (
-        f"{seqera_api_url}/workspaces/{workspace_id}"
-        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
 
 
 async def prepare_wisps_workflow(
