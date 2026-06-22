@@ -21,6 +21,7 @@ from ...services.results_utils import (
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
+    resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
 )
@@ -45,6 +46,7 @@ async def get_result_setting_params(
 
     form_data = resolve_submitted_form_data(owned_run)
     resolved = await resolve_pdb_presigned_urls(form_data)
+    resolved = await resolve_fasta_form_data(resolved)
 
     return JobSettingParamsResponse(
         runId=run_id,
