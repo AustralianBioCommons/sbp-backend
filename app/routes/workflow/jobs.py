@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -37,6 +38,8 @@ from ...services.seqera import describe_workflow
 from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, delete_workflows_raw
 from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["jobs"], dependencies=[Depends(get_current_user_id)])
 
@@ -97,77 +100,92 @@ async def list_jobs(
     db: Session = Depends(get_db),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
-    try:
-        owned_run_ids = get_owned_run_ids(db, current_user_id)
-        score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
-        workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
-        tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
-        search_text = (search or "").strip().lower()
-        allowed_statuses = set(status_filter or [])
-        jobs: list[JobListItem] = []
-        for run_id in owned_run_ids:
-            owned_run = get_owned_run(db, current_user_id, run_id)
-            try:
-                payload = await describe_workflow(run_id)
-            except SeqeraAPIError as exc:
-                if exc.status_code is None or exc.status_code >= 500:
-                    raise
+    owned_run_ids = get_owned_run_ids(db, current_user_id)
+    score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
+    workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
+    tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
+    search_text = (search or "").strip().lower()
+    allowed_statuses = set(status_filter or [])
+    jobs: list[JobListItem] = []
+    seqera_unavailable = False
+
+    for run_id in owned_run_ids:
+        owned_run = get_owned_run(db, current_user_id, run_id)
+
+        # Attempt live status from Seqera; fall back to DB-only data if unreachable.
+        seqera_payload: dict[str, object] = {}
+        ui_status = "N/A"
+        try:
+            seqera_payload = await describe_workflow(run_id)
+            pipeline_status = extract_pipeline_status(seqera_payload)
+            ui_status = map_pipeline_status_to_ui(pipeline_status)
+        except SeqeraAPIError as exc:
+            if exc.status_code is not None and exc.status_code < 500:
                 # 4xx: run is inaccessible (not found, wrong workspace, no permission).
                 continue
-            wf = coerce_workflow_payload(payload)
-            pipeline_status = extract_pipeline_status(payload)
-            ui_status = map_pipeline_status_to_ui(pipeline_status)
+            logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
+            seqera_unavailable = True
+        except Exception as exc:
+            # Network errors, timeouts, or configuration issues — do not fail the list.
+            logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
+            seqera_unavailable = True
 
-            if allowed_statuses and ui_status not in allowed_statuses:
-                continue
+        if allowed_statuses and ui_status not in allowed_statuses:
+            continue
 
-            workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
-            tool = tool_by_run_id.get(run_id, "Unknown")
-            job_name = _resolve_job_name(run_id, wf, owned_run)
-            if (
-                search_text
-                and search_text not in str(job_name).lower()
-                and search_text not in str(workflow_type or "").lower()
-            ):
-                continue
+        wf = coerce_workflow_payload(seqera_payload)
+        submitted_at = parse_submit_datetime(seqera_payload)
+        if submitted_at is None and owned_run and owned_run.submission_timestamp:
+            submitted_at = owned_run.submission_timestamp
+        if submitted_at is None:
+            submitted_at = datetime.now(UTC)
 
-            score = score_by_run_id.get(run_id)
-            if score is None and owned_run:
-                score = await ensure_completed_run_score(db, owned_run, ui_status)
+        workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
+        tool = tool_by_run_id.get(run_id, "Unknown")
+        job_name = _resolve_job_name(run_id, wf, owned_run)
 
-            jobs.append(
-                JobListItem(
-                    id=run_id,
-                    jobName=job_name,
-                    workflow=workflow_type,
-                    tool=tool,
-                    status=ui_status,
-                    submittedAt=parse_submit_datetime(payload) or datetime.now(UTC),
-                    score=score if ui_status == "Completed" else None,
-                    finalDesignCount=_resolve_final_design_count(owned_run),
-                )
+        if (
+            search_text
+            and search_text not in str(job_name).lower()
+            and search_text not in str(workflow_type or "").lower()
+        ):
+            continue
+
+        db_score = score_by_run_id.get(run_id)
+
+        # A cached score means the job completed at some point; treat it as Completed
+        # when Seqera is unreachable and we cannot get the live status.
+        if ui_status == "N/A" and db_score is not None:
+            ui_status = "Completed"
+
+        score = db_score
+        if score is None and owned_run:
+            score = await ensure_completed_run_score(db, owned_run, ui_status)
+
+        jobs.append(
+            JobListItem(
+                id=run_id,
+                jobName=job_name,
+                workflow=workflow_type,
+                tool=tool,
+                status=ui_status,
+                submittedAt=submitted_at,
+                score=score if ui_status == "Completed" else None,
+                finalDesignCount=_resolve_final_design_count(owned_run),
             )
-
-        jobs.sort(key=lambda item: item.submittedAt, reverse=True)
-        total = len(jobs)
-        jobs = jobs[offset : offset + limit]
-
-        return JobListResponse(
-            jobs=jobs,
-            total=total,
-            limit=limit,
-            offset=offset,
         )
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+
+    jobs.sort(key=lambda item: item.submittedAt, reverse=True)
+    total = len(jobs)
+    jobs = jobs[offset : offset + limit]
+
+    return JobListResponse(
+        jobs=jobs,
+        total=total,
+        limit=limit,
+        offset=offset,
+        seqeraUnavailable=seqera_unavailable,
+    )
 
 
 @router.get("/{run_id}", response_model=JobDetailsResponse)
