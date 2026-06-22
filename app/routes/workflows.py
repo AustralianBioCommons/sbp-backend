@@ -345,6 +345,8 @@ async def launch_workflow(
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,
                 dataset_id,
+                db_session=db_session,
+                workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
@@ -381,6 +383,8 @@ async def launch_workflow(
             result = await launch_wisps_workflow(
                 wisps_launch_form,
                 dataset_id,
+                db_session=db_session,
+                workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 config_path=workflow.config_path,
