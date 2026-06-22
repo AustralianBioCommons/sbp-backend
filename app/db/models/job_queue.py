@@ -6,7 +6,7 @@ from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .. import Base
-from . import WorkflowRun, Workflow
+from . import Workflow, WorkflowRun
 
 JobStatus = Literal["pending", "submitted", "failed"]
 

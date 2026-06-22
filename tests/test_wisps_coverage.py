@@ -16,13 +16,13 @@ from app.services.seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
+from app.services.seqera_errors import SeqeraConfigurationError
 from app.services.wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
     get_wisps_default_params,
     get_wisps_executor_script,
 )
-from app.services.seqera_errors import SeqeraConfigurationError
 from app.services.wisps_executor import (
     _get_required_env,
     _samplesheet_url,

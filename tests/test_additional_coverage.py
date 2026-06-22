@@ -13,8 +13,8 @@ from app.routes.workflows import (
     upload_interaction_screening_dataset_endpoint,
 )
 from app.schemas.workflows import DatasetUploadRequest, InteractionScreeningDatasetUploadRequest
-from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from app.services.datasets import DatasetUploadResult
+from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 
 @patch("app.routes.workflows.upload_dataset_to_seqera")

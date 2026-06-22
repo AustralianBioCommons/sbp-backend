@@ -9,7 +9,6 @@ import pytest
 import respx
 
 from app.schemas.workflows import SequenceItem
-from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from app.services.datasets import (
     DatasetCreationResult,
     DatasetUploadResult,
@@ -20,6 +19,7 @@ from app.services.datasets import (
     upload_dataset_to_seqera,
     upload_interaction_screening_dataset,
 )
+from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 
 
 def test_stringify_none():

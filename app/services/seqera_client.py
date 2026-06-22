@@ -32,21 +32,20 @@ class SeqeraClient:
         headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         request_headers = {
-            **self.default_headers, 
+            **self.default_headers,
             "Content-Type": "application/json",
-            **dict(headers or {})}
+            **dict(headers or {}),
+        }
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.post(url, headers=request_headers, json=dict(payload))
 
     async def get(
-            self,
-            url: str,
-            params: Mapping[str, Any] | None = None,
-            headers: Mapping[str, str] | None = None,
+        self,
+        url: str,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
-        request_headers = {
-            **self.default_headers,
-            **dict(headers or {})}
+        request_headers = {**self.default_headers, **dict(headers or {})}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.get(url, params=params, headers=request_headers)
 
