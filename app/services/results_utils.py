@@ -163,7 +163,7 @@ async def resolve_fasta_form_data(
                 expiration=3600,
                 response_content_disposition=_format_attachment_content_disposition(filename),
             )
-        except (S3ConfigurationError, S3ServiceError):
+        except S3ConfigurationError, S3ServiceError:
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,

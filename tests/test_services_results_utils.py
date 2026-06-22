@@ -18,17 +18,22 @@ from app.services.results_utils import (
     build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
     build_colabfold_proteinfold_output_listing_prefixes,
+    build_wisps_output_listing_prefixes,
     classify_alphafold2_proteinfold_output,
     classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
+    classify_wisps_output_key,
     extract_bindcraft_max_score,
     extract_proteinfold_max_score,
+    extract_wisps_max_score,
     format_log_entries,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
     get_sample_id_for_result,
     get_tool_name,
+    get_wisps_score_file,
+    resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
@@ -615,3 +620,242 @@ async def test_resolve_pdb_presigned_urls_passthrough_when_not_s3_uri():
 async def test_resolve_pdb_presigned_urls_returns_none_for_none_input():
     result = await resolve_pdb_presigned_urls(None)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_fasta_form_data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_returns_none_for_none_input():
+    result = await resolve_fasta_form_data(None)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_drops_split_output_dir():
+    form_data = {"splitOutputDir": "/cluster/tmp/abc", "fastaS3Uri": "https://cdn.example.com/seq.fa"}
+    result = await resolve_fasta_form_data(form_data)
+    assert "splitOutputDir" not in result
+    assert result["fastaS3Uri"] == "https://cdn.example.com/seq.fa"
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_replaces_fasta_s3_uri_with_presigned():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/seq.fa?X-Amz-Signature=abc"
+    form_data = {"fastaS3Uri": "s3://my-bucket/uploads/seq.fa", "otherKey": "value"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ):
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result["fastaS3Uri"] == presigned
+    assert result["otherKey"] == "value"
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_replaces_fasta_file_url_with_presigned():
+    presigned = "https://my-bucket.s3.amazonaws.com/uploads/seq.fa?X-Amz-Signature=xyz"
+    form_data = {"fastaFileUrl": "s3://my-bucket/uploads/seq.fa"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value=presigned),
+    ):
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result["fastaFileUrl"] == presigned
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_skips_non_s3_http_url():
+    form_data = {"fastaS3Uri": "https://cdn.example.com/seq.fa"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(),
+    ) as mock_presign:
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result["fastaS3Uri"] == "https://cdn.example.com/seq.fa"
+    mock_presign.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_skips_none_value():
+    form_data = {"fastaS3Uri": None, "fastaFileUrl": None}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(),
+    ) as mock_presign:
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result["fastaS3Uri"] is None
+    assert result["fastaFileUrl"] is None
+    mock_presign.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_keeps_original_on_s3_error(caplog):
+    form_data = {"fastaS3Uri": "s3://my-bucket/uploads/seq.fa"}
+
+    with (
+        caplog.at_level("WARNING", logger="app.services.results_utils"),
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new=AsyncMock(side_effect=S3ServiceError("presign failed")),
+        ),
+    ):
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result["fastaS3Uri"] == "s3://my-bucket/uploads/seq.fa"
+    assert "Failed to generate presigned URL" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# classify_wisps_output_key
+# ---------------------------------------------------------------------------
+
+
+def test_classify_wisps_output_key_report():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(f"{run_id}/multiqc/multiqc_report.html")
+    assert result == ClassifiedOutput(category="report", label="multiqc_report.html")
+
+
+def test_classify_wisps_output_key_confidence_scores_csv():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(f"{run_id}/collect/boltz_confidence_scores_full.csv")
+    assert result == ClassifiedOutput(category="stats_csv", label="boltz_confidence_scores_full.csv")
+
+
+def test_classify_wisps_output_key_ipsae_scores_csv():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(f"{run_id}/ipsae/ipsae_scores.csv")
+    assert result == ClassifiedOutput(category="stats_csv", label="ipsae_scores.csv")
+
+
+def test_classify_wisps_output_key_returns_none_for_unmatched():
+    run_id = str(uuid4())
+    assert classify_wisps_output_key(f"{run_id}/other/unknown_file.txt") is None
+
+
+def test_classify_wisps_output_key_returns_none_for_trailing_slash():
+    run_id = str(uuid4())
+    assert classify_wisps_output_key(f"{run_id}/multiqc/") is None
+
+
+def test_classify_wisps_output_key_returns_none_for_blank():
+    assert classify_wisps_output_key("   ") is None
+
+
+# ---------------------------------------------------------------------------
+# get_wisps_score_file
+# ---------------------------------------------------------------------------
+
+
+def test_get_wisps_score_file_returns_matching_key():
+    run_id = str(uuid4())
+    keys = [
+        f"{run_id}/multiqc/multiqc_report.html",
+        f"{run_id}/collect/boltz_confidence_scores_full.csv",
+        f"{run_id}/ipsae/ipsae_scores.csv",
+    ]
+    result = get_wisps_score_file(keys, None)
+    assert result == f"{run_id}/collect/boltz_confidence_scores_full.csv"
+
+
+def test_get_wisps_score_file_returns_none_when_no_match():
+    run_id = str(uuid4())
+    keys = [
+        f"{run_id}/multiqc/multiqc_report.html",
+        f"{run_id}/ipsae/ipsae_scores.csv",
+    ]
+    assert get_wisps_score_file(keys, None) is None
+
+
+# ---------------------------------------------------------------------------
+# extract_wisps_max_score
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_wisps_max_score_returns_max_iptm():
+    csv_text = "iptm,other\n0.42,x\n0.91,y\n0.11,z\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as mock_read:
+        score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
+
+    assert score == 0.91
+    mock_read.assert_awaited_once_with("run/collect/boltz_confidence_scores_full.csv")
+
+
+@pytest.mark.asyncio
+async def test_extract_wisps_max_score_returns_none_for_empty_csv():
+    csv_text = "iptm,other\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ):
+        score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
+
+    assert score is None
+
+
+@pytest.mark.asyncio
+async def test_extract_wisps_max_score_skips_non_numeric_iptm():
+    csv_text = "iptm,other\nN/A,x\n0.75,y\nnot_a_number,z\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ):
+        score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
+
+    assert score == 0.75
+
+
+# ---------------------------------------------------------------------------
+# build_wisps_output_listing_prefixes
+# ---------------------------------------------------------------------------
+
+
+def test_build_wisps_output_listing_prefixes_returns_three_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
+    prefixes = build_wisps_output_listing_prefixes(run)
+    assert len(prefixes) == 3
+    assert f"{run.id}/multiqc/" in prefixes
+    assert f"{run.id}/collect/" in prefixes
+    assert f"{run.id}/ipsae/" in prefixes
+
+
+def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
+    run = SimpleNamespace(id=None)
+    assert build_wisps_output_listing_prefixes(run) == []
+
+
+# ---------------------------------------------------------------------------
+# WORKFLOW_OUTPUT_SPECS interaction-screening entry
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_output_specs_has_interaction_screening():
+    assert "interaction-screening" in WORKFLOW_OUTPUT_SPECS
+    specs = WORKFLOW_OUTPUT_SPECS["interaction-screening"]
+    assert "boltz" in specs
+    assert "colabfold" in specs
+    for spec in specs.values():
+        assert spec.kind == "interaction-screening"
+        assert spec.get_score_file is not None
+        assert spec.extract_max_score is not None
