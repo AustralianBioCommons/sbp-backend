@@ -9,7 +9,7 @@ import pytest
 import respx
 
 from app.schemas.workflows import SequenceItem
-from app.services.bindflow_executor import BindflowConfigurationError, BindflowExecutorError
+from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
 from app.services.datasets import (
     DatasetCreationResult,
     DatasetUploadResult,
@@ -74,7 +74,7 @@ def test_get_required_env_success():
 
 def test_get_required_env_missing():
     """Test _get_required_env raises error when env var is missing."""
-    with pytest.raises(BindflowConfigurationError, match="Missing required environment variable"):
+    with pytest.raises(SeqeraConfigurationError, match="Missing required environment variable"):
         _get_required_env("NONEXISTENT_ENV_VAR")
 
 
@@ -210,7 +210,7 @@ async def test_create_dataset_api_error():
         return_value=httpx.Response(400, text="Bad request")
     )
 
-    with pytest.raises(BindflowExecutorError, match="400"):
+    with pytest.raises(SeqeraExecutorError, match="400"):
         await create_seqera_dataset(name="test")
 
 
@@ -230,7 +230,7 @@ async def test_create_dataset_missing_id_in_response():
         )
     )
 
-    with pytest.raises(BindflowExecutorError, match="response lacked dataset id"):
+    with pytest.raises(SeqeraExecutorError, match="response lacked dataset id"):
         await create_seqera_dataset(name="test")
 
 
@@ -305,7 +305,7 @@ async def test_upload_api_error():
 
     form_data = {"sample": "test"}
 
-    with pytest.raises(BindflowExecutorError, match="500"):
+    with pytest.raises(SeqeraExecutorError, match="500"):
         await upload_dataset_to_seqera("dataset_123", form_data)
 
 
@@ -410,14 +410,14 @@ async def test_upload_interaction_screening_csv_format():
 @pytest.mark.asyncio
 @respx.mock
 async def test_upload_interaction_screening_api_error():
-    """Test that API errors raise BindflowExecutorError."""
+    """Test that API errors raise SeqeraExecutorError."""
     respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
         return_value=httpx.Response(500, text="Internal error")
     )
 
     sequences = [SequenceItem(id="s1", group="query")]
 
-    with pytest.raises(BindflowExecutorError, match="500"):
+    with pytest.raises(SeqeraExecutorError, match="500"):
         await upload_interaction_screening_dataset("ds-1", sequences, "run-1")
 
 

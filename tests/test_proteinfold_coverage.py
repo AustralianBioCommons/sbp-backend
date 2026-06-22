@@ -19,16 +19,18 @@ from app.services.proteinfold_config import (
     get_proteinfold_executor_script,
 )
 from app.services.proteinfold_executor import (
-    ProteinfoldConfigurationError,
-    ProteinfoldExecutorError,
-    ProteinfoldLaunchResult,
     _build_params_text,
-    _post_to_seqera,
     _tool_params,
     launch_proteinfold_workflow,
     prepare_proteinfold_workflow,
 )
-from app.services.seqera import params_to_yaml_text
+from app.services.seqera import (
+    WorkflowExecutorError,
+    WorkflowLaunchResult,
+    params_to_yaml_text,
+    post_seqera_launch,
+)
+from app.services.seqera_errors import SeqeraConfigurationError
 from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
@@ -158,21 +160,22 @@ def test_build_params_text_empty_form_data_dict():
 
 
 # =============================================================================
-# Tests for _post_to_seqera()
+# Tests for post_seqera_launch()
 # =============================================================================
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_success():
+async def test_post_seqera_launch_success():
     with respx.mock:
         respx.post("https://api.seqera.test/workflow/launch").mock(
             return_value=httpx.Response(
                 200, json={"workflowId": "wf_abc123", "status": "submitted"}
             )
         )
-        result = await _post_to_seqera(
+        result = await post_seqera_launch(
             "https://api.seqera.test/workflow/launch",
             {"launch": {}},
+            workflow_label="Proteinfold",
         )
 
     assert result.workflow_id == "wf_abc123"
@@ -180,7 +183,7 @@ async def test_post_to_seqera_success():
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_nested_workflow_id():
+async def test_post_seqera_launch_nested_workflow_id():
     """workflowId can be found nested under the data key."""
     with respx.mock:
         respx.post("https://api.test/workflow/launch").mock(
@@ -188,28 +191,34 @@ async def test_post_to_seqera_nested_workflow_id():
                 200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
             )
         )
-        result = await _post_to_seqera("https://api.test/workflow/launch", {})
+        result = await post_seqera_launch(
+            "https://api.test/workflow/launch", {}, workflow_label="Proteinfold"
+        )
     assert result.workflow_id == "wf_nested"
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_http_error():
+async def test_post_seqera_launch_http_error():
     with respx.mock:
         respx.post("https://api.test/workflow/launch").mock(
             return_value=httpx.Response(401, text="Invalid token")
         )
-        with pytest.raises(ProteinfoldExecutorError, match="401"):
-            await _post_to_seqera("https://api.test/workflow/launch", {})
+        with pytest.raises(WorkflowExecutorError, match="401"):
+            await post_seqera_launch(
+                "https://api.test/workflow/launch", {}, workflow_label="Proteinfold"
+            )
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_missing_workflow_id():
+async def test_post_seqera_launch_missing_workflow_id():
     with respx.mock:
         respx.post("https://api.test/workflow/launch").mock(
             return_value=httpx.Response(200, json={"status": "submitted"})
         )
-        with pytest.raises(ProteinfoldExecutorError, match="workflowId"):
-            await _post_to_seqera("https://api.test/workflow/launch", {})
+        with pytest.raises(WorkflowExecutorError, match="workflowId"):
+            await post_seqera_launch(
+                "https://api.test/workflow/launch", {}, workflow_label="Proteinfold"
+            )
 
 
 # =============================================================================
@@ -243,14 +252,14 @@ def seqera_env(monkeypatch):
 
 @pytest.mark.anyio
 async def test_launch_proteinfold_workflow_success(seqera_env):
-    expected_result = ProteinfoldLaunchResult(
+    expected_result = WorkflowLaunchResult(
         workflow_id="wf_success", status="submitted", message=None
     )
 
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
         patch(
-            "app.services.proteinfold_executor._post_to_seqera",
+            "app.services.proteinfold_executor.post_seqera_launch",
             new_callable=AsyncMock,
             return_value=expected_result,
         ) as mock_post,
@@ -363,7 +372,7 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(ProteinfoldConfigurationError, match="SEQERA_API_URL"),
+        pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
     ):
         await launch_proteinfold_workflow(
             form,
@@ -385,7 +394,7 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(ProteinfoldConfigurationError, match="output identifier"),
+        pytest.raises(SeqeraConfigurationError, match="output identifier"),
     ):
         await launch_proteinfold_workflow(
             form,
@@ -407,7 +416,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(ProteinfoldConfigurationError, match="output identifier"),
+        pytest.raises(SeqeraConfigurationError, match="output identifier"),
     ):
         await launch_proteinfold_workflow(
             form,
@@ -426,12 +435,12 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
 
 @pytest.mark.anyio
 async def test_launch_proteinfold_workflow_with_form_data(seqera_env):
-    expected_result = ProteinfoldLaunchResult(workflow_id="wf_form", status="submitted")
+    expected_result = WorkflowLaunchResult(workflow_id="wf_form", status="submitted")
 
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
         patch(
-            "app.services.proteinfold_executor._post_to_seqera",
+            "app.services.proteinfold_executor.post_seqera_launch",
             new_callable=AsyncMock,
             return_value=expected_result,
         ),

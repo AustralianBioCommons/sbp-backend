@@ -10,19 +10,21 @@ from sqlalchemy import select
 
 from app.db.models import QueuedJob
 from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchForm
-from app.services.seqera import params_to_yaml_text
+from app.services.seqera import (
+    WorkflowExecutorError,
+    WorkflowLaunchResult,
+    params_to_yaml_text,
+    post_seqera_launch,
+)
 from app.services.wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
     get_wisps_default_params,
     get_wisps_executor_script,
 )
+from app.services.seqera_errors import SeqeraConfigurationError
 from app.services.wisps_executor import (
-    WispsConfigurationError,
-    WispsExecutorError,
-    WispsLaunchResult,
     _get_required_env,
-    _post_to_seqera,
     _samplesheet_url,
     launch_wisps_workflow,
     prepare_wisps_workflow,
@@ -235,7 +237,7 @@ def test_get_required_env_present(monkeypatch):
 
 def test_get_required_env_missing(monkeypatch):
     monkeypatch.delenv("MY_MISSING_VAR", raising=False)
-    with pytest.raises(WispsConfigurationError):
+    with pytest.raises(SeqeraConfigurationError):
         _get_required_env("MY_MISSING_VAR")
 
 
@@ -248,55 +250,51 @@ def test_samplesheet_url_format():
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_success():
+async def test_post_seqera_launch_success():
     with respx.mock:
         respx.post("https://api.test/launch").mock(
             return_value=httpx.Response(200, json={"workflowId": "wf_abc", "status": "submitted"})
         )
-        result = await _post_to_seqera(
-            "https://api.test/launch",
-            {"launch": {}},
+        result = await post_seqera_launch(
+            "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
         )
     assert result.workflow_id == "wf_abc"
     assert result.status == "submitted"
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_nested_workflow_id():
+async def test_post_seqera_launch_nested_workflow_id():
     with respx.mock:
         respx.post("https://api.test/launch").mock(
             return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}})
         )
-        result = await _post_to_seqera(
-            "https://api.test/launch",
-            {"launch": {}},
+        result = await post_seqera_launch(
+            "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
         )
     assert result.workflow_id == "wf_nested"
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_http_error():
+async def test_post_seqera_launch_http_error():
     with respx.mock:
         respx.post("https://api.test/launch").mock(
             return_value=httpx.Response(401, text="Unauthorized")
         )
-        with pytest.raises(WispsExecutorError, match="401"):
-            await _post_to_seqera(
-                "https://api.test/launch",
-                {"launch": {}},
+        with pytest.raises(WorkflowExecutorError, match="401"):
+            await post_seqera_launch(
+                "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
             )
 
 
 @pytest.mark.anyio
-async def test_post_to_seqera_missing_workflow_id():
+async def test_post_seqera_launch_missing_workflow_id():
     with respx.mock:
         respx.post("https://api.test/launch").mock(
             return_value=httpx.Response(200, json={"status": "submitted"})
         )
-        with pytest.raises(WispsExecutorError, match="workflowId"):
-            await _post_to_seqera(
-                "https://api.test/launch",
-                {"launch": {}},
+        with pytest.raises(WorkflowExecutorError, match="workflowId"):
+            await post_seqera_launch(
+                "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
             )
 
 
@@ -309,12 +307,13 @@ async def test_launch_wisps_workflow_success(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    mock_result = WispsLaunchResult(workflow_id="wf_xyz", status="submitted")
+    mock_result = WorkflowLaunchResult(workflow_id="wf_xyz", status="submitted")
 
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
-            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+            "app.services.wisps_executor.post_seqera_launch",
+            new=AsyncMock(return_value=mock_result),
         ),
         patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
@@ -435,13 +434,14 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    mock_result = WispsLaunchResult(workflow_id="wf_prerun", status="submitted")
+    mock_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
     prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
 
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
-            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+            "app.services.wisps_executor.post_seqera_launch",
+            new=AsyncMock(return_value=mock_result),
         ),
         patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
@@ -495,7 +495,7 @@ async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(WispsConfigurationError, match="SEQERA_API_URL"),
+        pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
     ):
         await launch_wisps_workflow(
             form=form,
@@ -531,7 +531,7 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(WispsConfigurationError, match="output identifier"),
+        pytest.raises(SeqeraConfigurationError, match="output identifier"),
     ):
         await launch_wisps_workflow(
             form=form,
@@ -567,7 +567,7 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(WispsConfigurationError),
+        pytest.raises(SeqeraConfigurationError),
     ):
         await launch_wisps_workflow(
             form=form,
@@ -603,7 +603,7 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(WispsConfigurationError, match="run name"),
+        pytest.raises(SeqeraConfigurationError, match="run name"),
     ):
         await launch_wisps_workflow(
             form=form,
@@ -630,12 +630,13 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
     monkeypatch.setenv("WORK_DIR", "s3://work")
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
-    mock_result = WispsLaunchResult(workflow_id="wf_tool", status="submitted")
+    mock_result = WorkflowLaunchResult(workflow_id="wf_tool", status="submitted")
 
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
-            "app.services.wisps_executor._post_to_seqera", new=AsyncMock(return_value=mock_result)
+            "app.services.wisps_executor.post_seqera_launch",
+            new=AsyncMock(return_value=mock_result),
         ),
         patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
