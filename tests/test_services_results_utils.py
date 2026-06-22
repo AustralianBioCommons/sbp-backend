@@ -635,7 +635,10 @@ async def test_resolve_fasta_form_data_returns_none_for_none_input():
 
 @pytest.mark.asyncio
 async def test_resolve_fasta_form_data_drops_split_output_dir():
-    form_data = {"splitOutputDir": "/cluster/tmp/abc", "fastaS3Uri": "https://cdn.example.com/seq.fa"}
+    form_data = {
+        "splitOutputDir": "/cluster/tmp/abc",
+        "fastaS3Uri": "https://cdn.example.com/seq.fa",
+    }
     result = await resolve_fasta_form_data(form_data)
     assert "splitOutputDir" not in result
     assert result["fastaS3Uri"] == "https://cdn.example.com/seq.fa"
@@ -730,7 +733,9 @@ def test_classify_wisps_output_key_report():
 def test_classify_wisps_output_key_confidence_scores_csv():
     run_id = str(uuid4())
     result = classify_wisps_output_key(f"{run_id}/collect/boltz_confidence_scores_full.csv")
-    assert result == ClassifiedOutput(category="stats_csv", label="boltz_confidence_scores_full.csv")
+    assert result == ClassifiedOutput(
+        category="stats_csv", label="boltz_confidence_scores_full.csv"
+    )
 
 
 def test_classify_wisps_output_key_ipsae_scores_csv():
