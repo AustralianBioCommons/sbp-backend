@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import CustomView, HasMany, JSONField, TimezoneConfig
+from starlette_admin import CustomView, DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
@@ -42,6 +42,7 @@ from .models.core import (
     Workflow,
     WorkflowRun,
 )
+from .models.job_queue import QueuedJob
 
 _ADMIN_TEMPLATES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
@@ -256,6 +257,22 @@ class RunOutputAdmin(UrlSafePrimaryKeyModelView):
     fields = [
         HasOne("run", identity="workflow-run"),
         HasOne("s3_object", identity="s3-object"),
+    ]
+
+
+class QueuedJobAdmin(ModelView):
+    fields = [
+        "id",
+        HasOne("workflow_run", identity="workflow-run"),
+        HasOne("workflow", identity="workflow"),
+        "launch_payload",
+        "status",
+        "attempts",
+        "queued_at",
+        "last_attempt_at",
+        "next_attempt_at",
+        "submitted_at",
+        "error",
     ]
 
 
@@ -738,6 +755,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(RunInputAdmin(RunInput))
     admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(S3ObjectAdmin(S3Object))
+    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
     admin.add_view(
         CustomView(
             label="System Status",

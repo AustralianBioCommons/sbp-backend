@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+from sqlalchemy.orm import Session
 
+from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
 from .bindflow_config import (
     get_bindflow_config_profiles,
@@ -17,36 +17,24 @@ from .bindflow_config import (
     get_bindflow_default_params,
     get_bindflow_executor_script,
 )
-from .seqera import params_to_yaml_text
-from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from .seqera import (
+    WorkflowLaunchResult,
+    _get_required_env,
+    _samplesheet_url,
+    params_to_yaml_text,
+    post_seqera_launch,
+)
+from .seqera_errors import SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
 
-# Backward-compatible aliases — use SeqeraConfigurationError / SeqeraExecutorError in new code.
-BindflowConfigurationError = SeqeraConfigurationError
-BindflowExecutorError = SeqeraExecutorError
 
-
-@dataclass
-class BindflowLaunchResult:
-    """Result of a bindflow workflow launch."""
-
-    workflow_id: str
-    status: str
-    message: str | None = None
-
-
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise BindflowConfigurationError(f"Missing required environment variable: {key}")
-    return value
-
-
-async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
+async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
     dataset_id: str,
     *,
+    db_session: Session,
+    workflow_run: WorkflowRun,
     pipeline: str,
     config_path: str,
     revision: str | None = None,
@@ -57,10 +45,9 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     full_name: str,
     institute: str,
     ip_address: str,
-) -> BindflowLaunchResult:
-    """Launch a bindflow workflow on the Seqera Platform."""
+) -> dict[str, Any]:
+    """Build and queue a bindflow launch payload."""
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
@@ -68,11 +55,11 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
 
     run_name = (form.runName or "").strip()
     if not run_name:
-        raise BindflowConfigurationError("Missing run name for workflow launch")
+        raise SeqeraConfigurationError("Missing run name for workflow launch")
     # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
     output_key = (output_id or "").strip()
     if not output_key:
-        raise BindflowConfigurationError("Missing output identifier for workflow launch")
+        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     # Get AWS credentials from backend env (if available)
@@ -82,9 +69,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-    dataset_url = (
-        f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/v/1/n/samplesheet.csv"
-    )
+    dataset_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
     default_params["job_id"] = run_name
@@ -105,37 +90,83 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
         params_text = f"{params_text}\n{form.paramsText.rstrip()}"
 
     launch_payload: dict[str, Any] = {
-        "launch": {
-            "computeEnvId": compute_env_id,
-            "runName": run_name,
-            "pipeline": pipeline,
-            "workDir": work_dir,
-            "workspaceId": workspace_id,
-            "revision": revision or "dev",
-            "paramsText": params_text,
-            "configProfiles": get_bindflow_config_profiles(),
-            "configText": get_bindflow_config_text(
-                config_path,
-                job_id=run_name,
-                username=user_email,
-                timestamp=timestamp,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
-            ),
-            "preRunScript": get_bindflow_executor_script(
-                aws_access_key, aws_secret_key, aws_region
-            ),
-            "resume": False,
-        }
+        "computeEnvId": compute_env_id,
+        "runName": run_name,
+        "pipeline": pipeline,
+        "workDir": work_dir,
+        "workspaceId": workspace_id,
+        "revision": revision or "dev",
+        "paramsText": params_text,
+        "configProfiles": get_bindflow_config_profiles(),
+        "configText": get_bindflow_config_text(
+            config_path,
+            job_id=run_name,
+            username=user_email,
+            timestamp=timestamp,
+            full_name=full_name,
+            institute=institute,
+            ip_address=ip_address,
+        ),
+        "preRunScript": get_bindflow_executor_script(aws_access_key, aws_secret_key, aws_region),
+        "resume": False,
+        "datasetIds": [dataset_id],
     }
 
-    launch_payload["launch"]["datasetIds"] = [dataset_id]
+    queued_job = QueuedJob(
+        workflow=workflow_run.workflow,
+        workflow_run=workflow_run,
+        launch_payload=launch_payload,
+        # TODO: set as submitted for now, we are still launching jobs immediately
+        status="submitted",
+        next_attempt_at=datetime.now(UTC),
+    )
+    db_session.add(queued_job)
+    db_session.commit()
+    return launch_payload
 
+
+async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
+    form: WorkflowLaunchForm,
+    dataset_id: str,
+    *,
+    db_session: Session,
+    workflow_run: WorkflowRun,
+    pipeline: str,
+    config_path: str,
+    revision: str | None = None,
+    output_id: str | None = None,
+    mode: str,
+    form_data: WorkflowFormData,
+    user_email: str,
+    full_name: str,
+    institute: str,
+    ip_address: str,
+) -> WorkflowLaunchResult:
+    """Launch a bindflow workflow on the Seqera Platform."""
+    launch_payload = await prepare_bindflow_workflow(
+        form,
+        dataset_id,
+        db_session=db_session,
+        workflow_run=workflow_run,
+        pipeline=pipeline,
+        config_path=config_path,
+        revision=revision,
+        output_id=output_id,
+        mode=mode,
+        form_data=form_data,
+        user_email=user_email,
+        full_name=full_name,
+        institute=institute,
+        ip_address=ip_address,
+    )
+
+    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
+    workspace_id = _get_required_env("WORK_SPACE")
+    compute_env_id = _get_required_env("COMPUTE_ID")
     url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
 
     # Log the complete params being sent
-    logger.info("Launch payload paramsText", extra={"paramsText": params_text})
+    logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
 
     logger.info("Full launch payload", extra={"payload": launch_payload})
 
@@ -145,43 +176,9 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
             "url": url,
             "workspaceId": workspace_id,
             "computeEnvId": compute_env_id,
-            "pipeline": launch_payload["launch"]["pipeline"],
-            "runName": launch_payload["launch"]["runName"],
+            "pipeline": launch_payload["pipeline"],
+            "runName": launch_payload["runName"],
         },
     )
 
-    headers = {
-        "Authorization": f"Bearer {seqera_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
-        response = await client.post(url, headers=headers, json=launch_payload)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera API error %s %s: %s",
-            response.status_code,
-            response.reason_phrase,
-            body,
-        )
-        raise BindflowExecutorError(
-            f"Bindflow workflow launch failed: {response.status_code} {body}"
-        )
-
-    data = response.json()
-    workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
-    status = data.get("status", "submitted")
-
-    if not workflow_id:
-        raise BindflowExecutorError(
-            "Bindflow workflow launch succeeded but did not return a workflowId"
-        )
-
-    return BindflowLaunchResult(
-        workflow_id=workflow_id,
-        status=status,
-        message=data.get("message"),
-    )
+    return await post_seqera_launch(url, {"launch": launch_payload}, workflow_label="Bindflow")

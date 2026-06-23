@@ -41,6 +41,7 @@ from app.db.models.core import (
     Workflow,
     WorkflowRun,
 )
+from app.db.models.job_queue import QueuedJob
 
 
 def main():
@@ -53,7 +54,7 @@ def main():
     print("Generating database schema diagram...")
 
     # Collect all models
-    models = [AppUser, Workflow, WorkflowRun, S3Object, RunInput, RunOutput, RunMetric]
+    models = [AppUser, Workflow, WorkflowRun, S3Object, RunInput, RunOutput, RunMetric, QueuedJob]
 
     print(f"Models found: {len(models)} tables")
     for model in models:

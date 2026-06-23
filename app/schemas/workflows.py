@@ -266,6 +266,10 @@ class JobListResponse(BaseModel):
     total: int = Field(..., description="Total number of jobs matching the criteria")
     limit: int = Field(..., description="Maximum number of items per page")
     offset: int = Field(..., description="Number of items skipped")
+    seqeraUnavailable: bool = Field(
+        False,
+        description="True when Seqera could not be reached; job status and logs will be unavailable",
+    )
 
 
 class JobDetailsResponse(BaseModel):

@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.services.seqera_client import (
+    SeqeraClient,
     cancel_workflow_raw,
     delete_workflow_raw,
     delete_workflows_raw,
@@ -16,6 +17,56 @@ from app.services.seqera_client import (
     list_workflows_raw,
 )
 from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+
+
+@pytest.mark.asyncio
+async def test_seqera_client_post_uses_default_headers(monkeypatch):
+    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+    ok = AsyncMock(spec=httpx.Response)
+
+    client = SeqeraClient()
+
+    with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
+        response = await client.post(
+            "https://api.seqera.test/workflow/launch",
+            payload={"launch": {"runName": "test"}},
+        )
+
+    assert response is ok
+    mock_post.assert_awaited_once_with(
+        "https://api.seqera.test/workflow/launch",
+        headers={
+            "Authorization": "Bearer token",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        json={"launch": {"runName": "test"}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_seqera_client_post_headers_override_defaults(monkeypatch):
+    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+    ok = AsyncMock(spec=httpx.Response)
+
+    client = SeqeraClient()
+
+    with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
+        await client.post(
+            "https://api.seqera.test/workflow/launch",
+            headers={"Accept": "application/vnd.seqera+json"},
+            payload={"launch": {}},
+        )
+
+    mock_post.assert_awaited_once_with(
+        "https://api.seqera.test/workflow/launch",
+        headers={
+            "Authorization": "Bearer token",
+            "Accept": "application/vnd.seqera+json",
+            "Content-Type": "application/json",
+        },
+        json={"launch": {}},
+    )
 
 
 @pytest.mark.asyncio

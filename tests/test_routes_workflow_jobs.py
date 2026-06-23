@@ -209,33 +209,40 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
-    """Test handling of Seqera configuration error."""
+async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id, mocker):
+    """When Seqera is misconfigured the job list falls back to DB data and flags seqeraUnavailable."""
     from app.services.seqera_errors import SeqeraConfigurationError
+
+    owned_run = mocker.Mock()
+    owned_run.submission_timestamp = None
+    owned_run.binder_name = None
+    owned_run.run_name = None
+    owned_run.metrics = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             side_effect=SeqeraConfigurationError("Missing config"),
         ),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await list_jobs(
-                search=None,
-                status_filter=None,
-                limit=50,
-                offset=0,
-                current_user_id=mock_user_id,
-                db=mock_db,
-            )
+        result = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
 
-    assert exc_info.value.status_code == 500
-    assert "Missing config" in str(exc_info.value.detail)
+    assert result.seqeraUnavailable is True
+    assert len(result.jobs) == 1
+    assert result.jobs[0].status == "N/A"
 
 
 @pytest.mark.asyncio
@@ -271,32 +278,40 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_seqera_5xx_error_propagates(mock_db, mock_user_id):
-    """Seqera 5xx errors (server failures) are surfaced as 502."""
+async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id, mocker):
+    """Seqera 5xx errors fall back to DB data and flag seqeraUnavailable instead of surfacing a 502."""
     from app.services.seqera_errors import SeqeraAPIError
+
+    owned_run = mocker.Mock()
+    owned_run.submission_timestamp = None
+    owned_run.binder_name = None
+    owned_run.run_name = None
+    owned_run.metrics = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
+        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
             side_effect=SeqeraAPIError("Internal error", status_code=500),
         ),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await list_jobs(
-                search=None,
-                status_filter=None,
-                limit=50,
-                offset=0,
-                current_user_id=mock_user_id,
-                db=mock_db,
-            )
+        result = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
 
-    assert exc_info.value.status_code == 502
+    assert result.seqeraUnavailable is True
+    assert len(result.jobs) == 1
+    assert result.jobs[0].status == "N/A"
 
 
 @pytest.mark.asyncio
@@ -419,6 +434,7 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mocker):
     """Test that completed jobs trigger score calculation."""
     run_id = "wf-score-test"
     owned_run = mocker.Mock()
+    owned_run.submission_timestamp = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
