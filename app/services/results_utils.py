@@ -93,6 +93,15 @@ def _sanitize_content_disposition_filename(filename: str) -> str:
     return sanitized or "download"
 
 
+def get_safe_zip_filename(folder: str, filename: str) -> str:
+    """Return a safe filename for a ZIP archive."""
+    UNSAFE_ZIP_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]+')
+    safe_folder = UNSAFE_ZIP_CHARS.sub("_", folder).strip()
+    safe_filename = UNSAFE_ZIP_CHARS.sub("_", filename).strip()
+    return f"{safe_folder}/{safe_filename}"
+
+
+
 def _format_attachment_content_disposition(filename: str) -> str:
     sanitized = _sanitize_content_disposition_filename(filename)
     ascii_fallback = sanitized.encode("ascii", "ignore").decode("ascii")
@@ -903,10 +912,10 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     with ZipFile(zip_file, "w") as zip_obj:
         for key, output in downloads:
             content = await read_s3_bytes(key)
-            output_name = f"{output.category}/{output.label}"
+            output_name = get_safe_zip_filename(output.category, output.label)
             # Simple protection against duplicate filenames
             if output_name in used_filenames:
-                output_name = f"{output.category}/{len(used_filenames)}_{output.label}"
+                output_name = get_safe_zip_filename(output.category, f"{len(used_filenames)}_{output.label}")
             zip_obj.writestr(output_name, content)
             used_filenames.add(output_name)
     zip_file.seek(0)
