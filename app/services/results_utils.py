@@ -906,7 +906,7 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     # Exclude snapshots
     downloads = [(key, output) for key, output in outputs.items() if output.category != "snapshot"]
 
-    used_filenames = set()
+    used_filenames: set[str] = set()
     zip_file = BytesIO()
     with ZipFile(zip_file, "w") as zip_obj:
         for key, output in downloads:

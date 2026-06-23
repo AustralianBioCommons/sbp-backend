@@ -323,7 +323,8 @@ async def read_s3_bytes(file_key: str) -> bytes:
 
         # Download file content
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        return response["Body"].read()
+        content = cast(bytes, response["Body"].read())
+        return content
     except (BotoCoreError, ClientError) as exc:
         error_msg = f"Failed to read file from S3: {str(exc)}"
         logger.error(error_msg)
