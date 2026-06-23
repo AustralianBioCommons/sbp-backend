@@ -101,7 +101,6 @@ def get_safe_zip_filename(folder: str, filename: str) -> str:
     return f"{safe_folder}/{safe_filename}"
 
 
-
 def _format_attachment_content_disposition(filename: str) -> str:
     sanitized = _sanitize_content_disposition_filename(filename)
     ascii_fallback = sanitized.encode("ascii", "ignore").decode("ascii")
@@ -915,7 +914,9 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
             output_name = get_safe_zip_filename(output.category, output.label)
             # Simple protection against duplicate filenames
             if output_name in used_filenames:
-                output_name = get_safe_zip_filename(output.category, f"{len(used_filenames)}_{output.label}")
+                output_name = get_safe_zip_filename(
+                    output.category, f"{len(used_filenames)}_{output.label}"
+                )
             zip_obj.writestr(output_name, content)
             used_filenames.add(output_name)
     zip_file.seek(0)

@@ -228,7 +228,9 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_each_output(test_db, persistent_models):
+async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_each_output(
+    test_db, persistent_models
+):
     user = AppUserFactory.create_sync()
     run = WorkflowRunFactory.create_sync(
         owner=user,

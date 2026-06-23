@@ -395,7 +395,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 @pytest.mark.asyncio
 async def test_get_result_download_all_returns_valid_zip_file(test_db, persistent_models):
-    user = AppUserFactory.create_sync( )
+    user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design")
     run = WorkflowRunFactory.create_sync(
         owner=user,
