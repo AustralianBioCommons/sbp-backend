@@ -131,9 +131,6 @@ class WorkflowAdmin(ModelView):
 
     _NULLABLE_FIELDS = (
         "description",
-        "repo_url",
-        "default_revision",
-        "config_path",
         "prerun_script_path",
     )
 
