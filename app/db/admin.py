@@ -268,7 +268,7 @@ class QueuedJobAdmin(ModelView):
         "last_attempt_at",
         "next_attempt_at",
         "submitted_at",
-        "error"
+        "error",
     ]
 
 
@@ -745,12 +745,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(RunInputAdmin(RunInput))
     admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(S3ObjectAdmin(S3Object))
-    admin.add_view(
-        DropDown(
-            "Job queue",
-            [QueuedJobAdmin(QueuedJob)]
-        )
-    )
+    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
     admin.mount_to(app)
 
 
