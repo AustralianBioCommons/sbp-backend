@@ -129,18 +129,24 @@ class WorkflowAdmin(ModelView):
         "prerun_script_path",
     ]
 
-    async def before_save(self, request: Request, obj: Any, is_created: bool) -> None:
-        nullable_fields = (
-            "description",
-            "repo_url",
-            "default_revision",
-            "config_path",
-            "prerun_script_path",
-        )
-        for field in nullable_fields:
+    _NULLABLE_FIELDS = (
+        "description",
+        "prerun_script_path",
+    )
+
+    def _nullify_empty_fields(self, obj: Any) -> None:
+        for field in self._NULLABLE_FIELDS:
             value = getattr(obj, field, None)
             if isinstance(value, str) and not value.strip():
                 setattr(obj, field, None)
+
+    async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        _ = (request, data)
+        self._nullify_empty_fields(obj)
+
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        _ = (request, data)
+        self._nullify_empty_fields(obj)
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.name}"
