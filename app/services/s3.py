@@ -310,6 +310,23 @@ async def read_s3_file(file_key: str) -> str:
         raise S3ServiceError(error_msg) from exc
 
 
+async def read_s3_bytes(file_key: str) -> bytes:
+    bucket_name = os.getenv("AWS_S3_BUCKET")
+    if not bucket_name:
+        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+
+    try:
+        s3_client = get_s3_client()
+
+        # Download file content
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        return response["Body"].read()
+    except (BotoCoreError, ClientError) as exc:
+        error_msg = f"Failed to read file from S3: {str(exc)}"
+        logger.error(error_msg)
+        raise S3ServiceError(error_msg) from exc
+
+
 async def calculate_csv_column_max(
     file_key: str,
     column_name: str,
