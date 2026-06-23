@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import HasMany, JSONField, TimezoneConfig, DropDown
+from starlette_admin import DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
