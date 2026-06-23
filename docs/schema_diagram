@@ -159,4 +159,43 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
                          </TR></TABLE>> URL="http://RunMetric_details.html"]
 	RunMetric -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
+	QueuedJob [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">QueuedJob</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">workflow_run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">workflow_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">launch_payload</TD>
+                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">status</TD>
+                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">attempts</TD>
+                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">queued_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">last_attempt_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">next_attempt_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">submitted_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">error</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR></TABLE>> URL="http://QueuedJob_details.html"]
+	QueuedJob -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and Workflow"]
+	QueuedJob -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and WorkflowRun"]
 }
