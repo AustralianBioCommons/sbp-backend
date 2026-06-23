@@ -8,9 +8,10 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from io import StringIO
+from io import StringIO, BytesIO
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
+from zipfile import ZipFile
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from .s3 import (
     generate_presigned_url,
     list_s3_files,
     read_s3_file,
+    read_s3_bytes,
 )
 
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
@@ -882,6 +884,30 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
         )
 
     return downloads
+
+
+async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
+    """
+    Get all results for a run as a zip file.
+    """
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+    # Exclude snapshots
+    downloads = [(key, output) for key, output in outputs.items() if output.category != "snapshot"]
+
+    used_filenames = set()
+    zip_file = BytesIO()
+    with ZipFile(zip_file, "w") as zip_obj:
+        for key, output in downloads:
+            content = await read_s3_bytes(key)
+            output_name = f"{output.category}/{output.label}"
+            # Simple protection against duplicate filenames
+            if output_name in used_filenames:
+                output_name = f"{output.category}/{len(used_filenames)}_{output.label}"
+            zip_obj.writestr(output_name, content)
+            used_filenames.add(output_name)
+    zip_file.seek(0)
+    return zip_file
 
 
 async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDownloadItem | None:
