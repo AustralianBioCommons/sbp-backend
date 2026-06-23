@@ -889,6 +889,9 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
 async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     """
     Get all results for a run as a zip file.
+
+    Currently builds the zip in memory and returns a BytesIO object that can
+    be used in StreamingResponse.
     """
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)

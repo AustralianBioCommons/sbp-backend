@@ -311,6 +311,9 @@ async def read_s3_file(file_key: str) -> str:
 
 
 async def read_s3_bytes(file_key: str) -> bytes:
+    """
+    Read a binary file from S3 and return its content as bytes.
+    """
     bucket_name = os.getenv("AWS_S3_BUCKET")
     if not bucket_name:
         raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
