@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette_admin import DropDown, HasMany, JSONField, TimezoneConfig
+from starlette_admin import CustomView, DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
@@ -43,6 +43,10 @@ from .models.core import (
     WorkflowRun,
 )
 from .models.job_queue import QueuedJob
+
+_ADMIN_TEMPLATES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
+)
 
 DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
@@ -488,8 +492,13 @@ def mount_db_admin(app: FastAPI) -> None:
         return
 
     _validate_db_admin_config()
-    _mount_starlette_admin(app)
+    # Register the debug JSON API router BEFORE mounting Starlette Admin. The admin
+    # is mounted as a greedy Mount("/admin") that would otherwise shadow any
+    # /admin/* APIRoute added after it (routes are matched in registration order).
+    # Note: the /admin/api/system-status router is registered in main.py (also
+    # before this mount) so it stays available independently of the dashboard.
     _mount_db_debug_api(app)
+    _mount_starlette_admin(app)
 
 
 def _mount_starlette_admin(app: FastAPI) -> None:
@@ -730,6 +739,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin = Admin(
         engine=engine,
         title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
+        templates_dir=_ADMIN_TEMPLATES_DIR,
         auth_provider=Auth0AdminAuthProvider(),
         # Timestamps are stored as UTC; always display them in Sydney/Melbourne
         # time. Browser-timezone auto-detection (use_user_locale_timezone) and the
@@ -752,6 +762,15 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(S3ObjectAdmin(S3Object))
     admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
+    admin.add_view(
+        CustomView(
+            label="System Status",
+            icon="fa-solid fa-heart-pulse",
+            path="/system-status",
+            template_path="admin/system_status.html",
+            name="system-status",
+        )
+    )
     admin.mount_to(app)
 
 
