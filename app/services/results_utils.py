@@ -8,7 +8,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from io import StringIO, BytesIO
+from io import BytesIO, StringIO
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
 from zipfile import ZipFile
@@ -23,8 +23,8 @@ from .s3 import (
     S3ServiceError,
     generate_presigned_url,
     list_s3_files,
-    read_s3_file,
     read_s3_bytes,
+    read_s3_file,
 )
 
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
