@@ -13,8 +13,10 @@ stays cheap; ``asyncio.Lock`` provides stampede protection on cache misses.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,6 +29,7 @@ from cachetools import TTLCache  # type: ignore[import-untyped]
 from ..schemas.health import (
     COMPONENT_COMPUTE_ENV,
     COMPONENT_SEQERA_API,
+    COMPONENT_TOWER_AGENT,
     HealthStatus,
 )
 from .seqera_errors import SeqeraConfigurationError
@@ -36,6 +39,17 @@ logger = logging.getLogger(__name__)
 # Probe network budget. Kept short so a hung Seqera call cannot stall the
 # dashboard / submission pre-flight check.
 PROBE_TIMEOUT_SECONDS = 5.0
+
+# Tower Agent liveness probe (opt-in via ENABLE_AGENT_HEALTHCHECK). This actively
+# verifies the agent by cloning the monitored compute env, creating a throwaway
+# copy (which forces Seqera to validate the agent connection), reading its status,
+# then deleting it. It mutates Seqera state, so it is off by default.
+_AGENT_HEALTHCHECK_NAME_PREFIX = "sbp-agent-healthcheck-"
+# Total time budget to wait for the throwaway env to reach a terminal state.
+_AGENT_PROBE_TIMEOUT_SECONDS = float(os.getenv("HEALTHCHECK_AGENT_TIMEOUT_SECONDS", "20"))
+_AGENT_PROBE_POLL_INTERVAL_SECONDS = 2.0
+# Best-effort retries when deleting the throwaway env, so we don't leak resources.
+_AGENT_PROBE_DELETE_ATTEMPTS = 3
 
 # Cache the whole computed status. 30s TTL keeps repeated polls (admin every 30s,
 # portal every 60s) off the Seqera API while staying fresh enough to be useful.
@@ -79,10 +93,12 @@ class SystemStatus:
 def _get_lock() -> Any:
     global _cache_lock
     if _cache_lock is None:
-        import asyncio
-
         _cache_lock = asyncio.Lock()
     return _cache_lock
+
+
+def _agent_probe_enabled() -> bool:
+    return os.getenv("ENABLE_AGENT_HEALTHCHECK", "false").strip().lower() in {"1", "true", "yes"}
 
 
 def _required_env(key: str) -> str:
@@ -112,12 +128,15 @@ def _truncate(text: str, limit: int = 500) -> str:
 
 
 async def _probe_seqera_api() -> ProbeResult:
-    """Probe Seqera Platform reachability via the lightweight service-info endpoint.
+    """Probe Seqera Platform reachability *and* credential validity via /user-info.
 
-    ``service-info`` is the canonical "I'm alive" endpoint and is cheaper than an
-    authenticated call; we still send the access token so the probe also confirms
-    our credentials are accepted. Non-2xx or timeout -> unhealthy, which lets us
-    distinguish a Seqera-side outage from a compute-env problem.
+    ``/user-info`` is an authenticated endpoint, so a 2xx confirms three things at
+    once: the platform is reachable, ``SEQERA_API_URL`` is correct, and our
+    ``SEQERA_ACCESS_TOKEN`` is accepted. We treat 401/403 specially so a rejected
+    or expired token is reported as a credential problem rather than a generic
+    outage. (``WORK_SPACE`` is validated separately by the workspace-scoped
+    compute-env probe below.) Non-2xx or timeout -> unhealthy, which lets us
+    distinguish a Seqera-side / credential problem from a compute-env problem.
     """
     name = COMPONENT_SEQERA_API
     try:
@@ -126,7 +145,7 @@ async def _probe_seqera_api() -> ProbeResult:
     except SeqeraConfigurationError as exc:
         return ProbeResult(name, "unhealthy", None, str(exc), {"error": str(exc)})
 
-    url = f"{api_url}/service-info"
+    url = f"{api_url}/user-info"
     start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
@@ -149,6 +168,20 @@ async def _probe_seqera_api() -> ProbeResult:
             latency_ms,
             f"Seqera API unreachable: {exc}",
             {"error": str(exc), "url": url},
+        )
+
+    if response.status_code in (401, 403):
+        return ProbeResult(
+            name,
+            "unhealthy",
+            latency_ms,
+            f"Seqera rejected the access token (HTTP {response.status_code}); "
+            "check SEQERA_ACCESS_TOKEN",
+            {
+                "statusCode": response.status_code,
+                "responseBody": _truncate(response.text),
+                "url": url,
+            },
         )
 
     if response.is_error:
@@ -209,12 +242,17 @@ async def _probe_compute_env() -> ProbeResult:
         )
 
     if response.is_error:
-        # If we cannot read the compute env, we cannot vouch for the agent.
+        # If we cannot read the compute env, we cannot vouch for the agent. A
+        # 403/404 here typically means a wrong WORK_SPACE / COMPUTE_ID or a token
+        # without access to them, so call that out explicitly.
+        error_message = f"Could not read compute environment (HTTP {response.status_code})"
+        if response.status_code in (403, 404):
+            error_message = f"{error_message}; check COMPUTE_ID, WORK_SPACE, and the access token"
         return ProbeResult(
             name,
             "unhealthy",
             latency_ms,
-            f"Could not read compute environment (HTTP {response.status_code})",
+            error_message,
             {
                 "statusCode": response.status_code,
                 "responseBody": _truncate(response.text),
@@ -229,9 +267,8 @@ async def _probe_compute_env() -> ProbeResult:
     status: HealthStatus = _COMPUTE_ENV_STATE_MAP.get(state, "degraded")
 
     env_message = compute_env.get("message")
-    if status == "healthy":
-        message = None
-    else:
+    message: str | None = None
+    if status != "healthy":
         message = f"Compute environment state: {state or 'UNKNOWN'}"
         if isinstance(env_message, str) and env_message.strip():
             message = f"{message} ({env_message.strip()})"
@@ -239,15 +276,195 @@ async def _probe_compute_env() -> ProbeResult:
     return ProbeResult(name, status, latency_ms, message, {"computeEnv": compute_env})
 
 
-async def _collect_system_status() -> SystemStatus:
-    """Run both probes and aggregate into an overall status."""
-    import asyncio
+async def _delete_compute_env(
+    api_url: str, headers: dict[str, str], params: dict[str, str], compute_env_id: str
+) -> bool:
+    """Best-effort delete of a throwaway compute env, with a few retries.
 
-    api_result, compute_result = await asyncio.gather(
-        _probe_seqera_api(),
-        _probe_compute_env(),
+    Returns True if the env was deleted (or already gone). Never raises, so it is
+    safe to call from a ``finally`` block.
+    """
+    url = f"{api_url}/compute-envs/{compute_env_id}"
+    for attempt in range(_AGENT_PROBE_DELETE_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
+                resp = await client.delete(url, headers=headers, params=params)
+            if resp.status_code == 404 or not resp.is_error:
+                return True
+        except httpx.HTTPError:
+            pass
+        if attempt < _AGENT_PROBE_DELETE_ATTEMPTS - 1:
+            await asyncio.sleep(1.0)
+    logger.error(
+        "Failed to delete health-check compute env %s after %d attempts; "
+        "it may need manual cleanup in Seqera",
+        compute_env_id,
+        _AGENT_PROBE_DELETE_ATTEMPTS,
     )
-    components = [api_result, compute_result]
+    return False
+
+
+async def _poll_compute_env_state(
+    client: httpx.AsyncClient,
+    api_url: str,
+    compute_env_id: str,
+    params: dict[str, str],
+    headers: dict[str, str],
+) -> tuple[HealthStatus, str | None, dict[str, Any]]:
+    """Poll a freshly-created compute env until it reaches a terminal state.
+
+    AVAILABLE -> healthy (agent answered and the env validated), ERRORED/INVALID
+    -> unhealthy (agent unreachable / validation failed), still CREATING at the
+    deadline -> degraded (could not confirm in time).
+    """
+    url = f"{api_url}/compute-envs/{compute_env_id}"
+    deadline = time.perf_counter() + _AGENT_PROBE_TIMEOUT_SECONDS
+    last_state = "UNKNOWN"
+    while True:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code == 404:
+            # The env vanished (e.g. concurrent cleanup); cannot confirm.
+            return "degraded", "Health-check compute env disappeared before validation", {}
+        if not resp.is_error:
+            env = resp.json().get("computeEnv", {})
+            last_state = str(env.get("status", "")).upper() or "UNKNOWN"
+            env_message = env.get("message")
+            if last_state == "AVAILABLE":
+                return "healthy", None, {"computeEnv": env}
+            if last_state in ("ERRORED", "INVALID", "OFFLINE"):
+                msg = f"Tower Agent validation failed: compute env {last_state}"
+                if isinstance(env_message, str) and env_message.strip():
+                    msg = f"{msg} ({env_message.strip()})"
+                return "unhealthy", msg, {"computeEnv": env}
+        if time.perf_counter() >= deadline:
+            return (
+                "degraded",
+                f"Tower Agent not confirmed within {int(_AGENT_PROBE_TIMEOUT_SECONDS)}s "
+                f"(compute env still {last_state})",
+                {"lastState": last_state},
+            )
+        await asyncio.sleep(_AGENT_PROBE_POLL_INTERVAL_SECONDS)
+
+
+async def _probe_tower_agent() -> ProbeResult:
+    """Actively verify Tower Agent liveness via a clone-create-delete cycle.
+
+    Clones the monitored compute env (``COMPUTE_ID``) — reusing its platform,
+    config and tw-agent credential — to create a throwaway copy. Creating an
+    agent-backed env forces Seqera to validate the agent connection, so the
+    resulting env status is a live liveness signal that the plain compute-env
+    ``status`` cannot give. The throwaway env is always deleted afterwards.
+    """
+    name = COMPONENT_TOWER_AGENT
+    try:
+        api_url = _required_env("SEQERA_API_URL").rstrip("/")
+        compute_id = _required_env("COMPUTE_ID")
+        workspace_id = _required_env("WORK_SPACE")
+        headers = _seqera_headers()
+    except SeqeraConfigurationError as exc:
+        return ProbeResult(name, "unhealthy", None, str(exc), {"error": str(exc)})
+
+    params = {"workspaceId": workspace_id}
+    post_headers = {**headers, "Content-Type": "application/json"}
+    start = time.perf_counter()
+    created_id: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
+            # 1. Clone the monitored compute env's platform / config / credential.
+            src = await client.get(
+                f"{api_url}/compute-envs/{compute_id}", headers=headers, params=params
+            )
+            if src.is_error:
+                return ProbeResult(
+                    name,
+                    "unhealthy",
+                    int((time.perf_counter() - start) * 1000),
+                    f"Could not read source compute env to clone (HTTP {src.status_code})",
+                    {"statusCode": src.status_code, "responseBody": _truncate(src.text)},
+                )
+            src_env = src.json().get("computeEnv", {})
+            platform = src_env.get("platform")
+            config = src_env.get("config")
+            credentials_id = src_env.get("credentialsId")
+            if not (platform and config and credentials_id):
+                return ProbeResult(
+                    name,
+                    "degraded",
+                    int((time.perf_counter() - start) * 1000),
+                    "Source compute env is missing platform/config/credentialsId to clone",
+                    {"platform": platform, "hasConfig": bool(config)},
+                )
+
+            # 2. Create a throwaway copy. This forces agent validation.
+            probe_name = (
+                f"{_AGENT_HEALTHCHECK_NAME_PREFIX}{int(time.time())}-{secrets.token_hex(3)}"
+            )
+            body = {
+                "computeEnv": {
+                    "name": probe_name,
+                    "platform": platform,
+                    "config": config,
+                    "credentialsId": credentials_id,
+                }
+            }
+            create = await client.post(
+                f"{api_url}/compute-envs", headers=post_headers, params=params, json=body
+            )
+            if create.is_error:
+                return ProbeResult(
+                    name,
+                    "unhealthy",
+                    int((time.perf_counter() - start) * 1000),
+                    f"Tower Agent health-check env creation was rejected "
+                    f"(HTTP {create.status_code})",
+                    {"statusCode": create.status_code, "responseBody": _truncate(create.text)},
+                )
+            created_id = str(create.json().get("computeEnvId") or "") or None
+            if not created_id:
+                return ProbeResult(
+                    name,
+                    "degraded",
+                    int((time.perf_counter() - start) * 1000),
+                    "Seqera did not return a computeEnvId for the health-check env",
+                    None,
+                )
+
+            # 3. Poll until the env validates (or the time budget runs out).
+            status, message, detail = await _poll_compute_env_state(
+                client, api_url, created_id, params, headers
+            )
+    except httpx.TimeoutException:
+        status, message, detail = (
+            "unhealthy",
+            f"Tower Agent probe timed out after {int(PROBE_TIMEOUT_SECONDS)}s",
+            {"error": "timeout"},
+        )
+    except httpx.HTTPError as exc:
+        status, message, detail = (
+            "unhealthy",
+            f"Tower Agent probe failed: {exc}",
+            {"error": str(exc)},
+        )
+    finally:
+        # 4. Always clean up the throwaway env.
+        if created_id:
+            await _delete_compute_env(api_url, headers, params, created_id)
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    return ProbeResult(name, status, latency_ms, message, detail)
+
+
+async def _collect_system_status() -> SystemStatus:
+    """Run the probes concurrently and aggregate into an overall status.
+
+    The Tower Agent probe is opt-in (ENABLE_AGENT_HEALTHCHECK) because it mutates
+    Seqera state (creates and deletes a throwaway compute env).
+    """
+    probes = [_probe_seqera_api(), _probe_compute_env()]
+    if _agent_probe_enabled():
+        probes.append(_probe_tower_agent())
+
+    components = list(await asyncio.gather(*probes))
     overall = _worst([c.status for c in components])
     return SystemStatus(
         overall_status=overall,

@@ -469,11 +469,12 @@ def mount_db_admin(app: FastAPI) -> None:
         return
 
     _validate_db_admin_config()
-    # Register the JSON API routers BEFORE mounting Starlette Admin. The admin is
-    # mounted as a greedy Mount("/admin") that would otherwise shadow any
+    # Register the debug JSON API router BEFORE mounting Starlette Admin. The admin
+    # is mounted as a greedy Mount("/admin") that would otherwise shadow any
     # /admin/* APIRoute added after it (routes are matched in registration order).
+    # Note: the /admin/api/system-status router is registered in main.py (also
+    # before this mount) so it stays available independently of the dashboard.
     _mount_db_debug_api(app)
-    _mount_system_status_api(app)
     _mount_starlette_admin(app)
 
 
@@ -822,34 +823,5 @@ def _mount_db_debug_api(app: FastAPI) -> None:
                 for row in rows
             ],
         }
-
-    app.include_router(router)
-
-
-def _mount_system_status_api(app: FastAPI) -> None:
-    """Mount the admin-only verbose system status endpoint.
-
-    Returns runtime health of the components workflow submission depends on,
-    including the Seqera Tower agent state (via the compute-env status proxy) and
-    raw latencies / last-error bodies. Drives the admin "System Status" dashboard.
-    """
-    from ..schemas.health import SystemStatusAdminResponse
-    from ..services.health import get_system_status, to_admin_dict
-
-    router = APIRouter(
-        prefix="/admin/api",
-        tags=["admin-system-status"],
-        dependencies=[Depends(require_admin_access)],
-    )
-
-    @router.get("/system-status", response_model=SystemStatusAdminResponse)
-    async def get_admin_system_status(
-        refresh: bool = Query(
-            default=False,
-            description="Bypass the short-lived cache and re-run the probes now",
-        ),
-    ) -> SystemStatusAdminResponse:
-        status_obj = await get_system_status(force_refresh=refresh)
-        return SystemStatusAdminResponse.model_validate(to_admin_dict(status_obj))
 
     app.include_router(router)

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 # the admin dashboard, and used as CloudWatch metric dimensions).
 COMPONENT_SEQERA_API = "seqera_api"
 COMPONENT_COMPUTE_ENV = "seqera_compute_env"
+COMPONENT_TOWER_AGENT = "seqera_tower_agent"
 
 HealthStatus = Literal["healthy", "degraded", "unhealthy"]
 

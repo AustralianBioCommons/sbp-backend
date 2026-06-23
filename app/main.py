@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
     from .routes.fasta_upload import router as fasta_router
     from .routes.pdb_upload import router as pdb_router
     from .routes.s3_files import router as s3_router
+    from .routes.system_status import router as system_status_router
     from .routes.users import router as users_router
     from .routes.workflow.jobs import router as workflow_jobs_router
     from .routes.workflow.results import router as results_router
@@ -63,6 +64,11 @@ def create_app() -> FastAPI:
     app.include_router(users_router, prefix="/api/users")
     app.include_router(admin_router, prefix="/api/users")
     app.include_router(s3_router)
+    # Registered before mount_db_admin so the /admin/api/system-status APIRoute
+    # is matched ahead of the admin's greedy Mount("/admin"). Admin-gated, so it
+    # is safe to expose independently of the optional dashboard (ENABLE_DB_ADMIN)
+    # and usable for healthchecks / monitoring.
+    app.include_router(system_status_router, prefix="/admin/api")
     mount_db_admin(app)
 
     @app.exception_handler(Exception)

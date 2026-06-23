@@ -73,10 +73,11 @@ def test_mount_db_admin_mounts_both_when_enabled(mocker):
     mount_debug.assert_called_once_with(app)
 
 
-def test_mount_db_admin_registers_api_routers_before_admin_mount(mocker):
-    # Starlette Admin mounts a greedy Mount("/admin"). The /admin/api and
-    # /admin/debug APIRoutes must be registered BEFORE it, otherwise the Mount
-    # shadows them (routes match in registration order) and they 404.
+def test_mount_db_admin_registers_debug_router_before_admin_mount(mocker):
+    # Starlette Admin mounts a greedy Mount("/admin"). The /admin/debug APIRoutes
+    # must be registered BEFORE it, otherwise the Mount shadows them (routes match
+    # in registration order) and they 404. (The /admin/api/system-status router is
+    # registered in main.py, also before the mount; covered separately.)
     from starlette.routing import Mount
 
     def route_contains_path(route, path: str) -> bool:
@@ -100,7 +101,6 @@ def test_mount_db_admin_registers_api_routers_before_admin_mount(mocker):
         i for i, r in enumerate(app.router.routes) if isinstance(r, Mount) and r.path == "/admin"
     )
 
-    assert route_index("/admin/api/system-status", app.router.routes) < mount_index
     assert route_index("/admin/debug/s3-objects", app.router.routes) < mount_index
 
 

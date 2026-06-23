@@ -199,28 +199,47 @@ Use this only in trusted/internal environments.
 
 ## System Status (admin only)
 
-When `ENABLE_DB_ADMIN=true`, two admin-only surfaces report the runtime health of
-the components workflow submission depends on:
+Two admin-only probes report the runtime health of the components workflow
+submission depends on:
 
-- **Seqera API reachability** — probes `GET {SEQERA_API_URL}/service-info`.
+- **Seqera API reachability + credentials** — authenticated `GET {SEQERA_API_URL}/user-info`.
+  A 2xx confirms the platform is reachable *and* `SEQERA_ACCESS_TOKEN` is valid;
+  401/403 is reported as a credential problem.
 - **Compute environment status** — reads `GET /compute-envs/{COMPUTE_ID}?workspaceId={WORK_SPACE}`
   and maps the `computeEnv.status` field (the Seqera Tower agent connection state,
   our proxy for Gadi-side health): `AVAILABLE` → healthy, `CREATING` → degraded,
-  `ERRORED`/`OFFLINE`/`INVALID` → unhealthy, anything else → degraded.
+  `ERRORED`/`OFFLINE`/`INVALID` → unhealthy, anything else → degraded. This call is
+  workspace-scoped, so it also validates `WORK_SPACE`/`COMPUTE_ID` access (a 403/404
+  is surfaced as a config hint).
+- **Tower Agent liveness** (opt-in via `ENABLE_AGENT_HEALTHCHECK=true`) — actively
+  verifies the agent: clones `COMPUTE_ID` (reusing its platform/config/tw-agent
+  credential) into a throwaway env named `sbp-agent-healthcheck-*`, which forces
+  Seqera to validate the agent connection, reads the resulting status
+  (`AVAILABLE` → healthy, `ERRORED`/`INVALID` → unhealthy, still `CREATING` after
+  `HEALTHCHECK_AGENT_TIMEOUT_SECONDS` → degraded), then deletes the throwaway env.
+  ⚠️ This **mutates Seqera state** (creates + deletes a compute env on every probe,
+  i.e. roughly once per cache TTL), which is why it is off by default.
 
 Surfaces:
 
 - `GET /admin/api/system-status` — admin-only JSON with per-component status,
   latency, last-error body, and the full Seqera compute-env JSON. Pass
   `?refresh=true` to bypass the short-lived cache. Results are cached for
-  `HEALTH_CACHE_TTL_SECONDS` (default 30s) with stampede protection.
-- `/admin/system-status` — the **System Status** dashboard view (auto-refreshes
-  every 30s) rendering a per-component grid with status pills and an optional
-  one-click link to the backend CloudWatch log group.
+  `HEALTH_CACHE_TTL_SECONDS` (default 30s) with stampede protection. This endpoint
+  is always mounted (independent of `ENABLE_DB_ADMIN`) and only requires an admin
+  token, so it is also suitable for healthchecks / external monitoring.
+- `/admin/system-status` — the **System Status** dashboard view (requires
+  `ENABLE_DB_ADMIN=true`; auto-refreshes every 30s) rendering a per-component grid
+  with status pills and an optional one-click link to the backend CloudWatch log
+  group.
 
 Relevant environment variables:
 
 - `HEALTH_CACHE_TTL_SECONDS` — (Optional) probe cache TTL in seconds (default `30`).
+- `ENABLE_AGENT_HEALTHCHECK` — (Optional) set `true` to enable the active Tower Agent
+  clone-create-delete liveness probe (default `false`; mutates Seqera state).
+- `HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — (Optional) max wait for the throwaway env to
+  validate before reporting degraded (default `20`).
 - `SBP_BACKEND_LOG_GROUP` — (Optional) backend CloudWatch log group name; when set,
   the dashboard shows a one-click link to it. Uses `AWS_REGION` for the console URL.
 

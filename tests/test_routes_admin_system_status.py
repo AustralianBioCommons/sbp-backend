@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.db.admin import _mount_system_status_api, require_admin_access
+from app.db.admin import require_admin_access
+from app.routes.system_status import router as system_status_router
 from app.services import health
 from app.services.health import ProbeResult, SystemStatus
+
+DB_ADMIN_REQUIRED_ENV = {
+    "AUTH_DOMAIN": "example.auth.test",
+    "AUTH_CLIENT_ID": "test-client-id",
+    "AUTH_AUDIENCE": "https://example.api.test",
+    "DB_ADMIN_AUTH_REDIRECT_URI": "http://localhost:3000/admin/login",
+    "DB_ADMIN_SESSION_SECRET": "test-session-secret",
+}
 
 
 def _fake_status() -> SystemStatus:
@@ -37,7 +47,7 @@ def _build_client(monkeypatch) -> TestClient:
 
     app = FastAPI()
     app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
-    _mount_system_status_api(app)
+    app.include_router(system_status_router, prefix="/admin/api")
     return TestClient(app)
 
 
@@ -64,7 +74,7 @@ def test_admin_system_status_returns_verbose_payload(monkeypatch):
 def test_admin_system_status_requires_admin():
     """Without the admin dependency override, the endpoint enforces auth."""
     app = FastAPI()
-    _mount_system_status_api(app)
+    app.include_router(system_status_router, prefix="/admin/api")
 
     with TestClient(app) as client:
         resp = client.get("/admin/api/system-status")
@@ -84,9 +94,38 @@ def test_admin_system_status_passes_refresh_flag(monkeypatch):
 
     app = FastAPI()
     app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
-    _mount_system_status_api(app)
+    app.include_router(system_status_router, prefix="/admin/api")
 
     with TestClient(app) as client:
         client.get("/admin/api/system-status?refresh=true")
 
     assert seen["force_refresh"] is True
+
+
+def test_system_status_available_without_dashboard(client):
+    """The endpoint is mounted in main.py regardless of ENABLE_DB_ADMIN.
+
+    The default test app runs with ENABLE_DB_ADMIN=false, so the admin dashboard
+    is not mounted. The endpoint must still exist (401 for missing auth), proving
+    it is not tied to the dashboard startup.
+    """
+    resp = client.get("/admin/api/system-status")
+    assert resp.status_code == 401  # present + auth-gated, not 404
+
+
+def test_system_status_not_shadowed_by_admin_mount(mocker):
+    """With the dashboard enabled, the route must not be shadowed by Mount("/admin").
+
+    If shadowed, the request would be handled by the admin sub-app (HTML/redirect).
+    Reaching our admin-gated JSON endpoint yields a 401 JSON response instead.
+    """
+    from app.main import create_app
+
+    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true", **DB_ADMIN_REQUIRED_ENV})
+    app = create_app()
+
+    with TestClient(app) as test_client:
+        resp = test_client.get("/admin/api/system-status")
+
+    assert resp.status_code == 401  # our endpoint's auth gate, not the admin mount
+    assert "text/html" not in resp.headers.get("content-type", "")
