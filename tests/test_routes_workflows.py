@@ -12,21 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.services.bindflow_executor import (
-    BindflowConfigurationError,
-    BindflowExecutorError,
-    BindflowLaunchResult,
-)
-from app.services.proteinfold_executor import (
-    ProteinfoldConfigurationError,
-    ProteinfoldExecutorError,
-    ProteinfoldLaunchResult,
-)
-from app.services.wisps_executor import (
-    WispsConfigurationError,
-    WispsExecutorError,
-    WispsLaunchResult,
-)
+from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult
+from app.services.seqera_errors import SeqeraConfigurationError
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
@@ -84,7 +71,7 @@ def role_check_client(test_engine):
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_success_without_dataset(mock_launch, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
-    mock_launch.return_value = BindflowLaunchResult(
+    mock_launch.return_value = WorkflowLaunchResult(
         workflow_id="wf_123",
         status="submitted",
         message="Success",
@@ -150,7 +137,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_engine):
     """Test successful workflow launch with pre-created dataset ID."""
-    mock_launch.return_value = BindflowLaunchResult(
+    mock_launch.return_value = WorkflowLaunchResult(
         workflow_id="wf_789",
         status="submitted",
     )
@@ -186,7 +173,7 @@ def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_en
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_configuration_error(mock_launch, client: TestClient, test_engine):
     """Test launch with configuration error."""
-    mock_launch.side_effect = BindflowConfigurationError("Missing API token")
+    mock_launch.side_effect = SeqeraConfigurationError("Missing API token")
 
     payload = {
         "launch": {
@@ -212,7 +199,7 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
 @patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_service_error(mock_launch, client: TestClient, test_engine):
     """Test launch with Seqera service error."""
-    mock_launch.side_effect = BindflowExecutorError("API returned 502")
+    mock_launch.side_effect = WorkflowExecutorError("API returned 502")
 
     payload = {
         "launch": {
@@ -592,7 +579,7 @@ def _add_proteinfold_workflow(test_engine):
 def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine):
     """Test successful proteinfold workflow launch."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.return_value = ProteinfoldLaunchResult(
+    mock_launch.return_value = WorkflowLaunchResult(
         workflow_id="pf_wf_001",
         status="submitted",
         message=None,
@@ -615,9 +602,9 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
 
 @patch("app.routes.workflows.launch_proteinfold_workflow")
 def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient, test_engine):
-    """ProteinfoldConfigurationError should return 500."""
+    """SeqeraConfigurationError should return 500."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.side_effect = ProteinfoldConfigurationError("Missing SEQERA_API_URL")
+    mock_launch.side_effect = SeqeraConfigurationError("Missing SEQERA_API_URL")
 
     payload = {
         "launch": {
@@ -636,9 +623,9 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
 
 @patch("app.routes.workflows.launch_proteinfold_workflow")
 def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test_engine):
-    """ProteinfoldExecutorError should return 502."""
+    """WorkflowExecutorError should return 502."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.side_effect = ProteinfoldExecutorError("Seqera API 503")
+    mock_launch.side_effect = WorkflowExecutorError("Seqera API 503")
 
     payload = {
         "launch": {
@@ -672,7 +659,7 @@ def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monke
     """Users holding the workflow execution role can launch."""
     monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
-    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_role_ok", status="submitted")
+    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_role_ok", status="submitted")
 
     with patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -854,7 +841,7 @@ def wisps_no_config_client(test_engine):
 @patch("app.routes.workflows.launch_wisps_workflow")
 def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClient, test_engine):
     """Test successful interaction-screening workflow launch."""
-    mock_wisps.return_value = WispsLaunchResult(
+    mock_wisps.return_value = WorkflowLaunchResult(
         workflow_id="wisps_wf_001",
         status="submitted",
     )
@@ -947,8 +934,8 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
 def test_launch_interaction_screening_config_error(
     mock_wisps, wisps_client: TestClient, test_engine
 ):
-    """WispsConfigurationError should return 500."""
-    mock_wisps.side_effect = WispsConfigurationError("missing token")
+    """SeqeraConfigurationError should return 500."""
+    mock_wisps.side_effect = SeqeraConfigurationError("missing token")
 
     payload = {
         "launch": {
@@ -982,8 +969,8 @@ def test_launch_interaction_screening_config_error(
 def test_launch_interaction_screening_executor_error(
     mock_wisps, wisps_client: TestClient, test_engine
 ):
-    """WispsExecutorError should return 502."""
-    mock_wisps.side_effect = WispsExecutorError("seqera 502")
+    """WorkflowExecutorError should return 502."""
+    mock_wisps.side_effect = WorkflowExecutorError("seqera 502")
 
     payload = {
         "launch": {
@@ -1039,7 +1026,7 @@ def test_launch_interaction_screening_missing_config_path(wisps_no_config_client
 @patch("app.routes.workflows.launch_wisps_workflow")
 def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClient, test_engine):
     """The new frontend format using launch.workflow is accepted alongside launch.tool."""
-    mock_wisps.return_value = WispsLaunchResult(
+    mock_wisps.return_value = WorkflowLaunchResult(
         workflow_id="wisps_wf_002",
         status="submitted",
     )
@@ -1129,7 +1116,7 @@ TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 def test_launch_deducts_credits_when_enabled(mock_launch, client, test_engine, monkeypatch):
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
-    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_credit", status="submitted")
+    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_credit", status="submitted")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1185,7 +1172,7 @@ def test_launch_does_not_deduct_when_credits_disabled(
 ):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
-    mock_launch.return_value = BindflowLaunchResult(workflow_id="wf_nocredit", status="submitted")
+    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_nocredit", status="submitted")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
         db.commit()

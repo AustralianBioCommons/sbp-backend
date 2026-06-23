@@ -3,11 +3,51 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any, cast
 
 import httpx
 
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+
+
+class SeqeraClient:
+    """Async HTTP client wrapper for Seqera API calls."""
+
+    def __init__(
+        self,
+        timeout: httpx.Timeout | float = 60,
+    ) -> None:
+        seqera_token = os.getenv("SEQERA_ACCESS_TOKEN")
+        self.default_headers = {
+            "Authorization": f"Bearer {seqera_token}",
+            "Accept": "application/json",
+        }
+        self.timeout = timeout
+
+    async def post(
+        self,
+        url: str,
+        payload: Mapping[str, Any],
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        request_headers = {
+            **self.default_headers,
+            "Content-Type": "application/json",
+            **dict(headers or {}),
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            return await client.post(url, headers=request_headers, json=dict(payload))
+
+    async def get(
+        self,
+        url: str,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        request_headers = {**self.default_headers, **dict(headers or {})}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            return await client.get(url, params=params, headers=request_headers)
 
 
 def _get_required_env(key: str) -> str:

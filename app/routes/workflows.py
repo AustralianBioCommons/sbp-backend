@@ -30,13 +30,7 @@ from ..schemas.workflows import (
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
 )
-from ..services.bindflow_executor import (
-    BindflowConfigurationError,
-    BindflowExecutorError,
-    BindflowLaunchResult,
-    _get_required_env,
-    launch_bindflow_workflow,
-)
+from ..services.bindflow_executor import _get_required_env, launch_bindflow_workflow
 from ..services.credits import (
     WorkflowCreditsResponse,
     compute_cost,
@@ -48,19 +42,10 @@ from ..services.datasets import (
     upload_dataset_to_seqera,
     upload_interaction_screening_dataset,
 )
-from ..services.proteinfold_executor import (
-    ProteinfoldConfigurationError,
-    ProteinfoldExecutorError,
-    ProteinfoldLaunchResult,
-    launch_proteinfold_workflow,
-)
+from ..services.proteinfold_executor import launch_proteinfold_workflow
+from ..services.seqera import WorkflowExecutorError, WorkflowLaunchResult
 from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
-from ..services.wisps_executor import (
-    WispsConfigurationError,
-    WispsExecutorError,
-    WispsLaunchResult,
-    launch_wisps_workflow,
-)
+from ..services.wisps_executor import launch_wisps_workflow
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -335,7 +320,7 @@ async def launch_workflow(
             ) from exc
 
     try:
-        result: BindflowLaunchResult | ProteinfoldLaunchResult | WispsLaunchResult
+        result: WorkflowLaunchResult
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
@@ -345,6 +330,8 @@ async def launch_workflow(
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,
                 dataset_id,
+                db_session=db_session,
+                workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
@@ -364,6 +351,8 @@ async def launch_workflow(
             result = await launch_bindflow_workflow(
                 bindcraft_launch_form,
                 dataset_id,
+                db_session=db_session,
+                workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
@@ -381,6 +370,8 @@ async def launch_workflow(
             result = await launch_wisps_workflow(
                 wisps_launch_form,
                 dataset_id,
+                db_session=db_session,
+                workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
                 revision=workflow.default_revision,
                 config_path=workflow.config_path,
@@ -430,16 +421,12 @@ async def launch_workflow(
     except HTTPException:
         db_session.rollback()
         raise
-    except (
-        BindflowConfigurationError,
-        ProteinfoldConfigurationError,
-        WispsConfigurationError,
-    ) as exc:
+    except SeqeraConfigurationError as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except (BindflowExecutorError, ProteinfoldExecutorError, WispsExecutorError) as exc:
+    except WorkflowExecutorError as exc:
         db_session.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:

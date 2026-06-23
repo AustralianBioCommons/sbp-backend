@@ -4,14 +4,29 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import yaml
 
+from .seqera_client import SeqeraClient
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowExecutorError(RuntimeError):
+    """Raised when workflow execution through Seqera fails."""
+
+
+@dataclass
+class WorkflowLaunchResult:
+    """Result of a workflow launch."""
+
+    workflow_id: str
+    status: str
+    message: str | None = None
 
 
 def params_to_yaml_text(params: dict[str, Any]) -> str:
@@ -21,12 +36,56 @@ def params_to_yaml_text(params: dict[str, Any]) -> str:
     return str(yaml.dump(params, default_flow_style=False, sort_keys=False)).rstrip()
 
 
+async def post_seqera_launch(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    workflow_label: str,
+) -> WorkflowLaunchResult:
+    """Post a workflow launch payload to Seqera and return the launch result."""
+    seqera_client = SeqeraClient()
+    response = await seqera_client.post(url, payload)
+
+    if response.is_error:
+        body = response.text
+        logger.error(
+            "Seqera API error %s %s: %s",
+            response.status_code,
+            response.reason_phrase,
+            body,
+        )
+        raise WorkflowExecutorError(
+            f"{workflow_label} workflow launch failed: {response.status_code} {body}"
+        )
+
+    data = response.json()
+    workflow_id = data.get("workflowId") or data.get("data", {}).get("workflowId")
+    if not workflow_id:
+        raise WorkflowExecutorError(
+            f"{workflow_label} workflow launch succeeded but did not return a workflowId"
+        )
+
+    return WorkflowLaunchResult(
+        workflow_id=workflow_id,
+        status=data.get("status", "submitted"),
+        message=data.get("message"),
+    )
+
+
 def _get_required_env(key: str) -> str:
     """Get required environment variable or raise error."""
     value = os.getenv(key)
     if not value:
         raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
     return value
+
+
+def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
+    """Build the Seqera samplesheet URL for a dataset."""
+    return (
+        f"{seqera_api_url}/workspaces/{workspace_id}"
+        f"/datasets/{dataset_id}/v/1/n/samplesheet.csv"
+    )
 
 
 def _extract_workflow_type(workflow_data: dict) -> str | None:
