@@ -133,7 +133,7 @@ def _extract_positive_int(form_data: WorkflowFormData | None, key: str) -> int |
         return None
     try:
         parsed = int(str(value).strip())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return parsed if parsed >= 1 else None
 
@@ -185,9 +185,7 @@ def _launch_quantity(category: str, form_data: WorkflowFormData | None) -> int |
     return None
 
 
-def _launch_credit_cost(
-    category: str, tool: str, form_data: WorkflowFormData | None
-) -> int | None:
+def _launch_credit_cost(category: str, tool: str, form_data: WorkflowFormData | None) -> int | None:
     """Authoritative per-run cost charged server-side at launch.
 
     Cost is ``tool_multiplier × quantity``; the quantity is derived per workflow
