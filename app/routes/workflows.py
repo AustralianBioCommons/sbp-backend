@@ -121,17 +121,25 @@ def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
     return text or None
 
 
-def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
+def _extract_positive_int(form_data: WorkflowFormData | None, key: str) -> int | None:
+    """Read a positive integer from a frontend-supplied form-data field.
+
+    Returns None when the field is absent, non-numeric, or < 1.
+    """
     if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.extra_fields.get("number_of_final_designs")
+    value = form_data.extra_fields.get(key)
     if value is None:
         return None
     try:
         parsed = int(str(value).strip())
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
     return parsed if parsed >= 1 else None
+
+
+def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
+    return _extract_positive_int(form_data, "number_of_final_designs")
 
 
 @router.post("/me/sync")
@@ -153,21 +161,43 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
     return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
 
 
-def _launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
-    """Authoritative per-run cost for workflows charged server-side at launch.
+def _launch_quantity(category: str, form_data: WorkflowFormData | None) -> int | None:
+    """Cost quantity for a run, derived from the (frontend-supplied) launch payload.
 
-    Only de-novo (final designs) and single (constant) are charged today — their
-    quantity is fully determined by the launch payload. interaction/bulk are not
-    charged here (display-only); they return None.
+    Same trust model as the deduction itself: the client cannot skip the charge,
+    and the quantity comes from the validated form data — mirroring how de-novo's
+    ``number_of_final_designs`` has always been read. Returns None when the
+    quantity can't be determined (no charge).
     """
     cat = category.strip().lower()
     if cat == "single-prediction":
-        return compute_cost(cat, tool, 1)
+        return 1
     if cat == "de-novo-design":
-        if final_design_count is None or final_design_count < 1:
+        return _extract_positive_int(form_data, "number_of_final_designs")
+    if cat == "bulk-prediction":
+        return _extract_positive_int(form_data, "fasta_entry_count")
+    if cat == "interaction-screening":
+        query_count = _extract_positive_int(form_data, "query_count")
+        target_count = _extract_positive_int(form_data, "target_count")
+        if query_count is None or target_count is None:
             return None
-        return compute_cost(cat, tool, final_design_count)
+        return query_count * target_count
     return None
+
+
+def _launch_credit_cost(
+    category: str, tool: str, form_data: WorkflowFormData | None
+) -> int | None:
+    """Authoritative per-run cost charged server-side at launch.
+
+    Cost is ``tool_multiplier × quantity``; the quantity is derived per workflow
+    by :func:`_launch_quantity`. Returns None when the workflow/tool is uncosted
+    or the quantity can't be determined.
+    """
+    quantity = _launch_quantity(category, form_data)
+    if quantity is None or quantity < 1:
+        return None
+    return compute_cost(category, tool, quantity)
 
 
 @router.post(
@@ -249,12 +279,11 @@ async def launch_workflow(
     institute = _require_launch_var("institute", institute)
     ip_address = _require_launch_var("ip_address", ip_address)
 
-    # Authoritative credit cost (server-side, non-spoofable). Only charged for
-    # workflows whose quantity is fully determined by the launch payload
-    # (de-novo, single); interaction/bulk are display-only for now. Gated by the
-    # ENABLE_CREDITS flag so the feature can be rolled out independently.
+    # Authoritative credit charge: computed and deducted server-side at launch so
+    # the client cannot skip it. The quantity is read from the validated form data
+    # (see _launch_quantity). Gated by ENABLE_CREDITS for independent rollout.
     run_credit_cost = (
-        _launch_credit_cost(requested_workflow, selected_tool, final_design_count)
+        _launch_credit_cost(requested_workflow, selected_tool, payload.formData)
         if is_credits_enabled()
         else None
     )

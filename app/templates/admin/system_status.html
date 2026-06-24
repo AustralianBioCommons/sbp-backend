@@ -5,6 +5,7 @@
   <h2 class="page-title">System Status</h2>
   <div class="text-muted mt-1">
     Runtime health of the components SBP workflow submission depends on.
+    Hover the <i class="fa-solid fa-circle-info"></i> next to a component for details.
   </div>
 </div>
 {% endblock %}
@@ -30,7 +31,12 @@
           <tr>
             <th>Component</th>
             <th>Status</th>
-            <th>Latency</th>
+            <th>
+              Latency
+              <i class="fa-solid fa-circle-info text-muted ms-1" style="cursor: help"
+                 data-bs-toggle="tooltip" data-bs-placement="top"
+                 title="Round-trip time for the probe (measured server-side). The Tower Agent check is much slower because it creates and deletes a throwaway compute env to validate the agent."></i>
+            </th>
             <th>Message / last error</th>
           </tr>
         </thead>
@@ -65,10 +71,110 @@
   };
   var DEFAULT_PILL = "bg-secondary text-white fw-semibold";
 
+  // What each status level means, shown as a hover tooltip on the status pill.
+  var STATUS_DESCRIPTIONS = {
+    healthy: "Operating normally.",
+    degraded:
+      "Working but impaired or in a transitional state (e.g. still starting up) — usually clears on its own.",
+    unhealthy:
+      "Failing and needs attention; workflow submission may be affected."
+  };
+
+  // Per-component explanations, shown as a hover tooltip next to the name.
+  var DESCRIPTIONS = {
+    seqera_api:
+      "Seqera Platform is reachable and the access token is valid (authenticated /user-info probe).",
+    seqera_compute_env:
+      "The configured Gadi compute environment's registered status (AVAILABLE / CREATING / ERRORED).",
+    seqera_tower_agent:
+      "Active check that the Tower Agent on Gadi is connected and responding right now " +
+      "(clones the compute env, creates a throwaway copy, then deletes it)."
+  };
+
+  // Per-cell latency explanation: a base sentence per component plus a note that
+  // varies with the actual number (normal / elevated / near-timeout).
+  var LATENCY_BASE = {
+    seqera_api: "Time for one authenticated round-trip to the Seqera API (/user-info).",
+    seqera_compute_env:
+      "Time for one workspace-scoped read of the compute environment's status.",
+    seqera_tower_agent:
+      "Time for the full agent check: clone the compute env, create a throwaway copy, " +
+      "poll until it validates, then delete it (4+ Seqera calls)."
+  };
+
+  function latencyTooltip(component) {
+    var base = LATENCY_BASE[component.name];
+    if (!base) return "";
+    var ms = component.latencyMs;
+    var note = "";
+    if (typeof ms === "number") {
+      if (component.name === "seqera_tower_agent") {
+        if (ms >= 18000) note = " Near the 20s timeout — the agent is slow or not responding.";
+        else if (ms >= 8000) note = " Elevated; the agent is taking a while to validate.";
+        else note = " Normal range for this check (a few seconds).";
+      } else {
+        if (ms >= 2000) note = " Unusually slow for a single call — Seqera may be degraded.";
+        else if (ms >= 500) note = " Slightly elevated.";
+        else note = " Normal for a single API call.";
+      }
+    }
+    return base + note;
+  }
+
+  function latencyCell(component) {
+    var ms = component.latencyMs;
+    if (ms === null || ms === undefined) return "—";
+    return (
+      '<span style="cursor:help" data-bs-toggle="tooltip" data-bs-placement="top" title="' +
+      escapeHtml(latencyTooltip(component)) +
+      '">' +
+      ms +
+      " ms</span>"
+    );
+  }
+
+  function infoIcon(name) {
+    var desc = DESCRIPTIONS[name];
+    if (!desc) return "";
+    return (
+      ' <i class="fa-solid fa-circle-info text-muted ms-1" style="cursor:help"' +
+      ' data-bs-toggle="tooltip" data-bs-placement="top" title="' +
+      escapeHtml(desc) +
+      '"></i>'
+    );
+  }
+
+  // Initialize Bootstrap tooltips (bundled with Tabler). container:'body' keeps
+  // them from being clipped by the table's horizontal-scroll wrapper. Falls back
+  // to the native `title` tooltip if the Bootstrap JS is unavailable.
+  function initTooltips(root) {
+    var bs = window.bootstrap;
+    if (!bs || !bs.Tooltip) return;
+    var scope = root || document;
+    scope.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      bs.Tooltip.getOrCreateInstance(el, { container: "body" });
+    });
+  }
+
+  function disposeTooltips(root) {
+    var bs = window.bootstrap;
+    if (!bs || !bs.Tooltip) return;
+    (root || document).querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      var inst = bs.Tooltip.getInstance(el);
+      if (inst) inst.dispose();
+    });
+  }
+
   function badge(status) {
     var cls = pillClass[status] || DEFAULT_PILL;
     var label = status ? status.charAt(0).toUpperCase() + status.slice(1) : "Unknown";
-    return '<span class="badge ' + cls + '">' + label + "</span>";
+    var desc = STATUS_DESCRIPTIONS[status];
+    var tip = desc
+      ? ' style="cursor:help" data-bs-toggle="tooltip" data-bs-placement="top" title="' +
+        escapeHtml(desc) +
+        '"'
+      : "";
+    return '<span class="badge ' + cls + '"' + tip + ">" + label + "</span>";
   }
 
   function escapeHtml(value) {
@@ -105,16 +211,18 @@
     checkedAt.textContent = data.checkedAt ? new Date(data.checkedAt).toLocaleString() : "—";
 
     var body = document.getElementById("components-body");
+    disposeTooltips(body); // tear down tooltips on the rows we're replacing
     body.innerHTML = "";
     (data.components || []).forEach(function (c) {
       var tr = document.createElement("tr");
       tr.innerHTML =
-        "<td><strong>" + escapeHtml(c.name) + "</strong></td>" +
+        "<td><strong>" + escapeHtml(c.name) + "</strong>" + infoIcon(c.name) + "</td>" +
         "<td>" + badge(c.status) + "</td>" +
-        "<td>" + (c.latencyMs !== null && c.latencyMs !== undefined ? c.latencyMs + " ms" : "—") + "</td>" +
+        "<td>" + latencyCell(c) + "</td>" +
         "<td>" + detailText(c) + "</td>";
       body.appendChild(tr);
     });
+    initTooltips(body); // (re)initialize tooltips on the freshly rendered rows
 
     var wrap = document.getElementById("cloudwatch-link-wrap");
     if (data.cloudwatchLogGroupUrl) {
@@ -148,6 +256,7 @@
   }
 
   document.getElementById("refresh-btn").addEventListener("click", load);
+  initTooltips(document); // static tooltips (e.g. the Latency column header)
   load();
   setInterval(load, REFRESH_MS);
 })();
