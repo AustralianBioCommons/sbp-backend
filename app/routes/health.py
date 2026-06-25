@@ -14,7 +14,7 @@ approved users), since it is only meaningful to users who can run workflows.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from ..schemas.health import ComponentsHealthResponse
 from ..services import health
@@ -27,17 +27,16 @@ router = APIRouter(
 
 
 @router.get("/components", response_model=ComponentsHealthResponse)
-async def get_components_health(
-    refresh: bool = Query(
-        default=False,
-        description="Bypass the short-lived cache and re-run the probes now",
-    ),
-) -> ComponentsHealthResponse:
+async def get_components_health() -> ComponentsHealthResponse:
     """Return a coarse, user-facing health summary for SBP-bundle users.
 
     ``overallStatus`` is the worst status across all monitored components; when it
     is not ``healthy`` a generic ``message`` is included for display on the job
     details page.
+
+    Always served from the short-lived cache (with background refresh); there is
+    no caller-triggered force-refresh here. Forcing a live probe run is reserved
+    for the admin endpoint, since the Tower Agent probe can mutate Seqera state.
     """
-    status_obj = await health.get_system_status(force_refresh=refresh)
+    status_obj = await health.get_system_status()
     return ComponentsHealthResponse.model_validate(health.to_components_health_dict(status_obj))

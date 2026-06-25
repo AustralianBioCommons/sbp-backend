@@ -78,7 +78,12 @@ def test_unhealthy_returns_user_message(monkeypatch):
     assert body["message"] == DEGRADED_USER_MESSAGE
 
 
-def test_passes_refresh_flag(monkeypatch):
+def test_served_from_cache_never_force_refreshes(monkeypatch):
+    """The user-facing endpoint never triggers a live probe run.
+
+    force_refresh would bypass the cache and (with the agent probe enabled) mutate
+    Seqera state, so it must stay admin-only.
+    """
     seen = {}
 
     async def fake_get_system_status(*, force_refresh: bool = False):
@@ -93,9 +98,11 @@ def test_passes_refresh_flag(monkeypatch):
     app.include_router(health_router, prefix="/api/health")
 
     with TestClient(app) as client:
-        client.get("/api/health/components?refresh=true")
+        # A ?refresh=true query is ignored — no such param is exposed.
+        resp = client.get("/api/health/components?refresh=true")
 
-    assert seen["force_refresh"] is True
+    assert resp.status_code == 200
+    assert seen["force_refresh"] is False
 
 
 def test_requires_authentication(client):
