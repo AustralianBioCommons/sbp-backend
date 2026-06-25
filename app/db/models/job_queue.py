@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid7
 
-from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, event, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .. import Base
@@ -45,6 +45,18 @@ class QueuedJob(Base):
         Ensure that launch_payload does not include a preRunScript -
         preRunScript may contain sensitive info like AWS keys.
         """
-        if "preRunScript" in value:
-            raise ValueError("QueuedJob.launch_payload must not include preRunScript")
+        _raise_if_prerun_script(value)
         return value
+
+
+def _raise_if_prerun_script(launch_payload: dict) -> None:
+    if "preRunScript" in launch_payload:
+        raise ValueError("QueuedJob.launch_payload must not include preRunScript")
+
+
+def _validate_queued_job_launch_payload(mapper, connection, target: QueuedJob) -> None:
+    _raise_if_prerun_script(target.launch_payload)
+
+
+event.listen(QueuedJob, "before_insert", _validate_queued_job_launch_payload)
+event.listen(QueuedJob, "before_update", _validate_queued_job_launch_payload)
