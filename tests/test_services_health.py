@@ -15,10 +15,14 @@ from app.services import health
 
 @pytest.fixture(autouse=True)
 def _clear_status_cache():
-    """Each test starts with an empty probe cache."""
+    """Each test starts with an empty probe cache and no stale fallback."""
     health._status_cache.clear()
+    health._last_status = None
+    health._refresh_task = None
     yield
     health._status_cache.clear()
+    health._last_status = None
+    health._refresh_task = None
 
 
 def _component(status: health.SystemStatus, name: str) -> health.ProbeResult:
@@ -197,6 +201,34 @@ async def test_results_are_cached(monkeypatch):
     second = await health.get_system_status()  # served from cache
     assert calls["count"] == after_refresh  # no new network calls
     assert second is first
+
+
+async def test_stale_while_revalidate_serves_immediately(monkeypatch):
+    """An expired cache returns the last status at once and refreshes in the bg.
+
+    The caller must not block on the (~2s) probes once we have a prior result.
+    """
+
+    async def ok_get(self, url, *args, **kwargs):  # noqa: ANN001
+        if url.endswith("/user-info"):
+            return _ok_user_info(url)
+        return _compute_env_with_status("AVAILABLE")(url)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ok_get)
+
+    first = await health.get_system_status(force_refresh=True)
+    # Simulate the 30s TTL expiring while the stale fallback is retained.
+    health._status_cache.clear()
+    assert health._last_status is first
+
+    # Non-force read returns the stale value immediately and schedules a refresh.
+    stale = await health.get_system_status()
+    assert stale is first
+    assert health._refresh_task is not None
+
+    # The background refresh repopulates the fresh cache.
+    await health._refresh_task
+    assert health._status_cache.get(health._CACHE_KEY) is not None
 
 
 def test_overall_status_aggregation():

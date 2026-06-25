@@ -50,9 +50,7 @@ class ComponentsHealthResponse(BaseModel):
     checkedAt: datetime
     message: str | None = Field(
         default=None,
-        description=(
-            "User-facing notice shown when not healthy; null when everything is healthy"
-        ),
+        description=("User-facing notice shown when not healthy; null when everything is healthy"),
     )
 
 

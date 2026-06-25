@@ -40,6 +40,4 @@ async def get_components_health(
     details page.
     """
     status_obj = await health.get_system_status(force_refresh=refresh)
-    return ComponentsHealthResponse.model_validate(
-        health.to_components_health_dict(status_obj)
-    )
+    return ComponentsHealthResponse.model_validate(health.to_components_health_dict(status_obj))
