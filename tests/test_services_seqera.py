@@ -101,7 +101,9 @@ async def test_launch_success_minimal():
     assert route.call_count == 1
     request = route.calls.last.request
     payload = json.loads(request.content)
-    assert "preRunScript" not in payload["launch"]
+    assert "module load singularity" in payload["launch"]["preRunScript"]
+    assert "module load nextflow" in payload["launch"]["preRunScript"]
+    assert "export AWS_ACCESS_KEY_ID" in payload["launch"]["preRunScript"]
 
 
 @pytest.mark.asyncio

@@ -290,7 +290,9 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
     assert result.status == "submitted"
     mock_post.assert_called_once()
     posted_payload = mock_post.call_args.args[1]["launch"]
-    assert "preRunScript" not in posted_payload
+    assert "module load singularity" in posted_payload["preRunScript"]
+    assert "module load nextflow" in posted_payload["preRunScript"]
+    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio

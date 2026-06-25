@@ -367,7 +367,9 @@ async def test_launch_wisps_workflow_success(monkeypatch):
 
     assert result.workflow_id == "wf_xyz"
     posted_payload = mock_post.call_args.args[1]["launch"]
-    assert "preRunScript" not in posted_payload
+    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
+    assert "export S3_PATH=bucket/seqs.fa" in posted_payload["preRunScript"]
+    assert "export D=/tmp/split" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio

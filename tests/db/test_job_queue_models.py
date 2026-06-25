@@ -22,5 +22,31 @@ def test_job_queue_no_prerun_script(test_db, persistent_models):
     with pytest.raises(ValueError):
         QueuedJobFactory.create_sync(
             workflow_run=workflow_run,
-            launch_payload={"preRunScript": "echo 'hello world'"}
+            launch_payload={"preRunScript": "echo 'hello world'"},
         )
+
+
+def test_job_queue_before_insert_blocks_mutated_prerun_script(test_db, persistent_models):
+    """
+    Test that flush-time validation catches preRunScript added after assignment.
+    """
+    workflow_run = WorkflowRunFactory.create_sync()
+    job = QueuedJobFactory.build(workflow_run=workflow_run, launch_payload={})
+    job.launch_payload["preRunScript"] = "echo 'hello world'"
+
+    test_db.add(job)
+    with pytest.raises(ValueError):
+        test_db.commit()
+
+
+def test_job_queue_before_update_blocks_mutated_prerun_script(test_db, persistent_models):
+    """
+    Test that flush-time validation catches preRunScript added to an existing queued job.
+    """
+    workflow_run = WorkflowRunFactory.create_sync()
+    job = QueuedJobFactory.create_sync(workflow_run=workflow_run, launch_payload={})
+    job.launch_payload["preRunScript"] = "echo 'hello world'"
+    job.attempts += 1
+
+    with pytest.raises(ValueError):
+        test_db.commit()
