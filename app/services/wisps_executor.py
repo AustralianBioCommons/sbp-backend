@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
@@ -23,7 +24,6 @@ from .wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
     get_wisps_default_params,
-    get_wisps_executor_script,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,20 +40,11 @@ async def prepare_wisps_workflow(
     form_data: WorkflowFormData,
     revision: str | None = None,
     output_id: str | None = None,
-    prerun_script_path: str | None = None,
     user_email: str,
     full_name: str,
     institute: str,
     ip_address: str,
 ):
-    fasta_s3_uri = str(
-        getattr(form_data, "fastaS3Uri", None) or form_data.extra_fields.get("fastaS3Uri") or ""
-    ).strip()
-    split_output_dir = str(
-        getattr(form_data, "splitOutputDir", None)
-        or form_data.extra_fields.get("splitOutputDir")
-        or ""
-    ).strip()
     tool: str | None = form_data.tool or None
 
     seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
@@ -95,14 +86,6 @@ async def prepare_wisps_workflow(
         "paramsText": params_text,
         "configProfiles": get_wisps_config_profiles(),
         "configText": config_text,
-        "preRunScript": get_wisps_executor_script(
-            fasta_s3_uri=fasta_s3_uri,
-            split_output_dir=split_output_dir,
-            aws_access_key=os.getenv("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            aws_region=os.getenv("AWS_REGION", "ap-southeast-2"),
-            prerun_script_path=prerun_script_path,
-        ),
         "resume": False,
         "datasetIds": [dataset_id],
     }
@@ -110,7 +93,7 @@ async def prepare_wisps_workflow(
     queued_job = QueuedJob(
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
-        launch_payload=launch_payload,
+        launch_payload=without_prerun_script(launch_payload),
         # TODO: set as submitted for now, we are still launching jobs immediately
         status="submitted",
         next_attempt_at=datetime.now(UTC),
@@ -148,7 +131,6 @@ async def launch_wisps_workflow(
         form_data=form_data,
         revision=revision,
         output_id=output_id,
-        prerun_script_path=prerun_script_path,
         user_email=user_email,
         full_name=full_name,
         institute=institute,
@@ -171,4 +153,26 @@ async def launch_wisps_workflow(
         },
     )
 
-    return await post_seqera_launch(launch_url, {"launch": launch_payload}, workflow_label="WISPS")
+    fasta_s3_uri = str(
+        getattr(form_data, "fastaS3Uri", None) or form_data.extra_fields.get("fastaS3Uri") or ""
+    ).strip()
+    split_output_dir = str(
+        getattr(form_data, "splitOutputDir", None)
+        or form_data.extra_fields.get("splitOutputDir")
+        or ""
+    ).strip()
+    prerun_script = get_executor_script(
+        prerun_script_path=prerun_script_path,
+        env={
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
+            "D": split_output_dir,
+        },
+    )
+    runtime_payload = inject_prerun_script(
+        launch_payload=launch_payload, prerun_script=prerun_script
+    )
+
+    return await post_seqera_launch(launch_url, {"launch": runtime_payload}, workflow_label="WISPS")
