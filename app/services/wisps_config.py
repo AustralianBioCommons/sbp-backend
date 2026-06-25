@@ -22,6 +22,7 @@ def get_wisps_default_params(
         params["tools"] = tool
     return params
 
+
 def get_wisps_config_profiles() -> list[str]:
     return ["singularity"]
 

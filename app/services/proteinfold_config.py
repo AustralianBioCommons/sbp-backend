@@ -13,6 +13,7 @@ def get_proteinfold_default_params(
     """Get default parameters for proteinfold workflow."""
     return {"input": samplesheet_url, "outdir": out_dir, "project": "yz52", "mode": mode}
 
+
 def get_proteinfold_config_profiles() -> list[str]:
     """Get config profiles for proteinfold workflow."""
     return ["singularity"]

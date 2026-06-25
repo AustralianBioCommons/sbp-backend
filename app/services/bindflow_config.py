@@ -15,6 +15,7 @@ def get_bindflow_default_params(out_dir: str, samplesheet_url: str) -> dict[str,
         "input": samplesheet_url,
     }
 
+
 def get_bindflow_config_profiles() -> list[str]:
     """Get config profiles for bindflow workflow."""
     return ["singularity", "gadi"]
