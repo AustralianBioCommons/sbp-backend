@@ -508,6 +508,29 @@ def _cloudwatch_log_group_url() -> str | None:
     )
 
 
+# User-facing notice shown on the job details page whenever any monitored
+# component is not healthy. Intentionally generic — the portal does not surface
+# which component is affected, only that data may be stale / submissions slow.
+DEGRADED_USER_MESSAGE = (
+    "Some workflow services are currently unavailable. Job status and logs may "
+    "not be up to date, and new submissions may take longer than usual."
+)
+
+
+def to_components_health_dict(status: SystemStatus) -> dict[str, Any]:
+    """Collapse the per-component status into a single user-facing summary.
+
+    The job details page only needs to know whether *anything* is degraded so it
+    can warn the user that job status / logs may be stale; it does not surface
+    which component is affected. ``message`` is null while everything is healthy.
+    """
+    return {
+        "overallStatus": status.overall_status,
+        "checkedAt": status.checked_at,
+        "message": None if status.overall_status == "healthy" else DEGRADED_USER_MESSAGE,
+    }
+
+
 def to_public_dict(status: SystemStatus) -> dict[str, Any]:
     """Coarse projection: status + short message only (no raw detail)."""
     return {
