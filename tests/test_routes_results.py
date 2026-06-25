@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from unittest.mock import AsyncMock, patch
+from zipfile import ZipFile
 
 import pytest
 from fastapi import HTTPException
 
 from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
 from app.routes.workflow.results import (
+    get_result_download_all,
     get_result_downloads,
     get_result_logs,
     get_result_report,
@@ -17,6 +20,7 @@ from app.routes.workflow.results import (
 )
 from app.services.s3 import S3ConfigurationError, S3ServiceError
 from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
@@ -387,6 +391,57 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
     )
     assert mock_presign.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_returns_valid_zip_file(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="bindcraft",
+        seqera_run_id="wf-download-all-1",
+        run_name="download-all-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    output_contents = {
+        f"{run.id}/generate/result.html": b"<html>report</html>",
+        f"{run.id}/ranker/download-all_final_design_stats.csv": b"score\n0.9\n",
+        f"{run.id}/ranker/download-all_Ranked/model.pdb": b"ATOM\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str) -> bytes:
+        return output_contents[key]
+
+    with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
+        response = await get_result_download_all("wf-download-all-1", user.id, test_db)
+
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    returned_zip = BytesIO(body)
+
+    assert response.media_type == "application/zip"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="results-download-all-run.zip"; '
+        "filename*=UTF-8''results-download-all-run.zip"
+    )
+    with ZipFile(returned_zip) as zip_file:
+        assert set(zip_file.namelist()) == {
+            "report/result.html",
+            "stats_csv/download-all_final_design_stats.csv",
+            "pdb/model.pdb",
+        }
+        assert zip_file.read("report/result.html") == b"<html>report</html>"
+        assert zip_file.read("stats_csv/download-all_final_design_stats.csv") == b"score\n0.9\n"
+        assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
 
 
 @pytest.mark.asyncio

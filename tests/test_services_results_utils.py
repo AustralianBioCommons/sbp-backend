@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+from zipfile import ZipFile
 
 import pytest
 
-from app.db.models.core import AppUser, RunOutput, S3Object, WorkflowRun
+from app.db.models.core import AppUser, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services.results_utils import (
     WORKFLOW_OUTPUT_SPECS,
     ClassifiedOutput,
@@ -28,6 +30,7 @@ from app.services.results_utils import (
     extract_proteinfold_max_score,
     extract_wisps_max_score,
     format_log_entries,
+    get_all_downloads_zipped,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
     get_sample_id_for_result,
@@ -39,6 +42,7 @@ from app.services.results_utils import (
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
+from tests.datagen import AppUserFactory, WorkflowRunFactory
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -221,6 +225,52 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_each_output(
+    test_db, persistent_models
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(name="de-novo-design"),
+        tool="bindcraft",
+        seqera_run_id="wf-zip-results",
+    )
+
+    output_contents = {
+        f"{run.id}/generate/result.html": b"<html>result</html>",
+        f"{run.id}/ranker/sampleZ_final_design_stats.csv": b"score\n0.9\n",
+        f"{run.id}/ranker/sampleZ_ranked/model.pdb": b"ATOM\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str) -> bytes:
+        return output_contents[key]
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(side_effect=read_bytes),
+    ) as mock_read_s3_bytes:
+        zip_buffer = await get_all_downloads_zipped(test_db, run)
+
+    with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
+        assert set(zip_file.namelist()) == {
+            "report/result.html",
+            "stats_csv/sampleZ_final_design_stats.csv",
+            "pdb/model.pdb",
+        }
+        assert zip_file.read("report/result.html") == b"<html>result</html>"
+        assert zip_file.read("stats_csv/sampleZ_final_design_stats.csv") == b"score\n0.9\n"
+        assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
+
+    assert mock_read_s3_bytes.await_count == len(output_contents)
+    assert {call.args[0] for call in mock_read_s3_bytes.await_args_list} == set(output_contents)
 
 
 def test_get_bindcraft_score_file_uses_final_design_stats():

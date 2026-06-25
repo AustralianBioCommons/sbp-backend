@@ -8,9 +8,10 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from io import StringIO
+from io import BytesIO, StringIO
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
+from zipfile import ZipFile
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from .s3 import (
     S3ServiceError,
     generate_presigned_url,
     list_s3_files,
+    read_s3_bytes,
     read_s3_file,
 )
 
@@ -89,6 +91,14 @@ logger = logging.getLogger(__name__)
 def _sanitize_content_disposition_filename(filename: str) -> str:
     sanitized = _HEADER_UNSAFE_FILENAME_CHARS.sub("_", filename).strip()
     return sanitized or "download"
+
+
+def get_safe_zip_filename(folder: str, filename: str) -> str:
+    """Return a safe filename for a ZIP archive."""
+    UNSAFE_ZIP_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]+')
+    safe_folder = UNSAFE_ZIP_CHARS.sub("_", folder).strip()
+    safe_filename = UNSAFE_ZIP_CHARS.sub("_", filename).strip()
+    return f"{safe_folder}/{safe_filename}"
 
 
 def _format_attachment_content_disposition(filename: str) -> str:
@@ -882,6 +892,35 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
         )
 
     return downloads
+
+
+async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
+    """
+    Get all results for a run as a zip file.
+
+    Currently builds the zip in memory and returns a BytesIO object that can
+    be used in StreamingResponse.
+    """
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+    # Exclude snapshots
+    downloads = [(key, output) for key, output in outputs.items() if output.category != "snapshot"]
+
+    used_filenames: set[str] = set()
+    zip_file = BytesIO()
+    with ZipFile(zip_file, "w") as zip_obj:
+        for key, output in downloads:
+            content = await read_s3_bytes(key)
+            output_name = get_safe_zip_filename(output.category, output.label)
+            # Simple protection against duplicate filenames
+            if output_name in used_filenames:
+                output_name = get_safe_zip_filename(
+                    output.category, f"{len(used_filenames)}_{output.label}"
+                )
+            zip_obj.writestr(output_name, content)
+            used_filenames.add(output_name)
+    zip_file.seek(0)
+    return zip_file
 
 
 async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDownloadItem | None:
