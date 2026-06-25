@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Callable
 from typing import Any
 
 from .workflow_config_fetcher import fetch_workflow_config
@@ -18,13 +17,11 @@ def without_prerun_script(launch_payload: dict[str, Any]) -> dict[str, Any]:
 
 def inject_prerun_script(
     launch_payload: dict[str, Any],
-    *,
-    prerun_script_path: str | None,
-    build_script: Callable[[str | None], str],
+    prerun_script: str,
 ) -> dict[str, Any]:
     """Return a launch-time payload with preRunScript generated at send time."""
     runtime_payload = launch_payload.copy()
-    runtime_payload["preRunScript"] = build_script(prerun_script_path)
+    runtime_payload["preRunScript"] = prerun_script
     return runtime_payload
 
 

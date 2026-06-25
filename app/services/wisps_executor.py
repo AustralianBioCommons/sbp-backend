@@ -161,19 +161,18 @@ async def launch_wisps_workflow(
         or form_data.extra_fields.get("splitOutputDir")
         or ""
     ).strip()
-    runtime_payload = inject_prerun_script(
-        launch_payload,
+    prerun_script = get_executor_script(
         prerun_script_path=prerun_script_path,
-        build_script=lambda path: get_executor_script(
-            prerun_script_path=path,
-            env={
-                "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-                "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-                "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
-                "D": split_output_dir,
-            },
-        ),
+        env={
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
+            "D": split_output_dir,
+        },
+    )
+    runtime_payload = inject_prerun_script(
+        launch_payload=launch_payload, prerun_script=prerun_script
     )
 
     return await post_seqera_launch(launch_url, {"launch": runtime_payload}, workflow_label="WISPS")

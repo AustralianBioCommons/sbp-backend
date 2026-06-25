@@ -194,18 +194,18 @@ async def launch_proteinfold_workflow(
         },
     )
 
-    runtime_payload = inject_prerun_script(
-        launch_payload,
+    prerun_script = get_executor_script(
         prerun_script_path=prerun_script_path,
-        build_script=lambda path: get_executor_script(
-            prerun_script_path=path,
-            module_loads=["singularity", "nextflow"],
-            env={
-                "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-                "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-            },
-        ),
+        module_loads=["singularity", "nextflow"],
+        env={
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+        },
+    )
+    runtime_payload = inject_prerun_script(
+        launch_payload=launch_payload,
+        prerun_script=prerun_script,
     )
 
     return await post_seqera_launch(
