@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import uuid7
 
 from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .. import Base
 from . import Workflow, WorkflowRun
@@ -38,3 +38,13 @@ class QueuedJob(Base):
 
     workflow: Mapped[Workflow] = relationship()
     workflow_run: Mapped[WorkflowRun] = relationship()
+
+    @validates("launch_payload")
+    def ensure_no_prerun_script(self, key: str, value: dict) -> dict:
+        """
+        Ensure that launch_payload does not include a preRunScript -
+        preRunScript may contain sensitive info like AWS keys.
+        """
+        if "preRunScript" in value:
+            raise ValueError("QueuedJob.launch_payload must not include preRunScript")
+        return value
