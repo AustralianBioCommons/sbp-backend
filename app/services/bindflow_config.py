@@ -15,21 +15,6 @@ def get_bindflow_default_params(out_dir: str, samplesheet_url: str) -> dict[str,
         "input": samplesheet_url,
     }
 
-
-def get_bindflow_executor_script(
-    aws_access_key: str = "",
-    aws_secret_key: str = "",
-    aws_region: str = "ap-southeast-2",
-) -> str:
-    """Get the executor pre-run script for bindflow workflow on Gadi."""
-    return f"""module load singularity
-module load nextflow
-export AWS_ACCESS_KEY_ID={aws_access_key}
-export AWS_SECRET_ACCESS_KEY={aws_secret_key}
-export AWS_REGION={aws_region}
-"""
-
-
 def get_bindflow_config_profiles() -> list[str]:
     """Get config profiles for bindflow workflow."""
     return ["singularity", "gadi"]

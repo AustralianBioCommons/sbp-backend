@@ -15,8 +15,8 @@ from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
     get_bindflow_default_params,
-    get_bindflow_executor_script,
 )
+from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
@@ -62,11 +62,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    # Get AWS credentials from backend env (if available)
-    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID", "")
-    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
-
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
     dataset_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
@@ -107,7 +102,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
             institute=institute,
             ip_address=ip_address,
         ),
-        "preRunScript": get_bindflow_executor_script(aws_access_key, aws_secret_key, aws_region),
         "resume": False,
         "datasetIds": [dataset_id],
     }
@@ -115,7 +109,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     queued_job = QueuedJob(
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
-        launch_payload=launch_payload,
+        launch_payload=without_prerun_script(launch_payload),
         # TODO: set as submitted for now, we are still launching jobs immediately
         status="submitted",
         next_attempt_at=datetime.now(UTC),
@@ -135,6 +129,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
+    prerun_script_path: str | None = None,
     mode: str,
     form_data: WorkflowFormData,
     user_email: str,
@@ -168,8 +163,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     # Log the complete params being sent
     logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
 
-    logger.info("Full launch payload", extra={"payload": launch_payload})
-
     logger.info(
         "Launching bindflow workflow via Seqera API",
         extra={
@@ -181,4 +174,18 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
         },
     )
 
-    return await post_seqera_launch(url, {"launch": launch_payload}, workflow_label="Bindflow")
+    runtime_payload = inject_prerun_script(
+        launch_payload,
+        prerun_script_path=prerun_script_path,
+        build_script=lambda path: get_executor_script(
+            prerun_script_path=path,
+            module_loads=["singularity", "nextflow"],
+            env={
+                "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+                "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+                "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+            },
+        ),
+    )
+
+    return await post_seqera_launch(url, {"launch": runtime_payload}, workflow_label="Bindflow")
