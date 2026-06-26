@@ -68,9 +68,6 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">owner_user_id</TD>
                          <TD BGCOLOR="#BBDEFB">UUID ()</TD>
                          </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">seqera_dataset_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
                          <TD BGCOLOR="#BBDEFB">seqera_run_id</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
