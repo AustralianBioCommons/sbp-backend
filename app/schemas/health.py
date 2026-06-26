@@ -37,6 +37,23 @@ class SystemStatusResponse(BaseModel):
     components: list[ComponentStatus]
 
 
+class ComponentsHealthResponse(BaseModel):
+    """Coarse, user-facing health summary for the job details page.
+
+    Deliberately collapses all monitored components into a single signal: the
+    portal does not surface *which* component is affected, only whether *some*
+    dependency is degraded, so it can warn that job status / logs may be stale
+    while a component is offline. Drives GET /api/health/components.
+    """
+
+    overallStatus: HealthStatus
+    checkedAt: datetime
+    message: str | None = Field(
+        default=None,
+        description=("User-facing notice shown when not healthy; null when everything is healthy"),
+    )
+
+
 class ComponentStatusDetail(ComponentStatus):
     """Verbose, admin-only status for a single component.
 

@@ -60,6 +60,13 @@ _status_cache: TTLCache[str, SystemStatus] = TTLCache(maxsize=1, ttl=_CACHE_TTL_
 # Lazily created so the module imports cleanly outside a running event loop.
 _cache_lock: Any = None
 
+# Stale-while-revalidate state. ``_last_status`` retains the most recent result
+# beyond the TTL so an expired-cache read can be served instantly while a refresh
+# runs in the background — callers never block on the (~2s) probes except on a
+# cold start. ``_refresh_task`` guards against launching duplicate refreshes.
+_last_status: SystemStatus | None = None
+_refresh_task: Any = None
+
 # Seqera compute-env state -> our normalized health bucket.
 _COMPUTE_ENV_STATE_MAP: dict[str, HealthStatus] = {
     "AVAILABLE": "healthy",
@@ -473,25 +480,63 @@ async def _collect_system_status() -> SystemStatus:
     )
 
 
-async def get_system_status(*, force_refresh: bool = False) -> SystemStatus:
-    """Return the (cached) system status, refreshing on cache miss.
+async def _refresh_cache() -> SystemStatus:
+    """Run the probes and update both the TTL cache and the stale fallback."""
+    global _last_status
+    status = await _collect_system_status()
+    _status_cache[_CACHE_KEY] = status
+    _last_status = status
+    return status
 
-    Uses an ``asyncio.Lock`` so that concurrent callers on a cold cache trigger a
-    single set of probes rather than a stampede.
+
+def _spawn_background_refresh() -> None:
+    """Kick off a single background refresh, discarding its result.
+
+    Guarded by ``_refresh_task`` so overlapping stale reads don't launch a
+    stampede of refreshes. Exceptions are logged, never propagated — a failed
+    background refresh just means we keep serving the last good status.
+    """
+    global _refresh_task
+    if _refresh_task is not None and not _refresh_task.done():
+        return
+
+    async def _run() -> None:
+        try:
+            async with _get_lock():
+                # Another waiter may have refreshed while we queued on the lock.
+                if _status_cache.get(_CACHE_KEY) is not None:
+                    return
+                await _refresh_cache()
+        except Exception:
+            logger.exception("Background health refresh failed; serving last known status")
+
+    _refresh_task = asyncio.ensure_future(_run())
+
+
+async def get_system_status(*, force_refresh: bool = False) -> SystemStatus:
+    """Return the system status, keeping callers off the slow probe path.
+
+    Fresh cache hit -> returned immediately. Expired cache but a prior result
+    exists -> that (slightly stale) result is returned immediately and a refresh
+    is kicked off in the background (stale-while-revalidate), so the caller never
+    waits ~2s on the probes. Only a genuine cold start (or ``force_refresh``, used
+    by the admin "refresh now" action) blocks on a live probe run. An
+    ``asyncio.Lock`` collapses a cold-start stampede into a single probe run.
     """
     if not force_refresh:
         cached: SystemStatus | None = _status_cache.get(_CACHE_KEY)
         if cached is not None:
             return cached
+        if _last_status is not None:
+            _spawn_background_refresh()
+            return _last_status
 
     async with _get_lock():
         if not force_refresh:
             cached = _status_cache.get(_CACHE_KEY)
             if cached is not None:
                 return cached
-        status = await _collect_system_status()
-        _status_cache[_CACHE_KEY] = status
-        return status
+        return await _refresh_cache()
 
 
 def _cloudwatch_log_group_url() -> str | None:
@@ -506,6 +551,29 @@ def _cloudwatch_log_group_url() -> str | None:
         f"https://{region}.console.aws.amazon.com/cloudwatch/home"
         f"?region={region}#logsV2:log-groups/log-group/{encoded}"
     )
+
+
+# User-facing notice shown on the job details page whenever any monitored
+# component is not healthy. Intentionally generic — the portal does not surface
+# which component is affected, only that data may be stale / submissions slow.
+DEGRADED_USER_MESSAGE = (
+    "Some workflow services are currently unavailable. Job status and logs may "
+    "not be up to date, and new submissions may take longer than usual."
+)
+
+
+def to_components_health_dict(status: SystemStatus) -> dict[str, Any]:
+    """Collapse the per-component status into a single user-facing summary.
+
+    The job details page only needs to know whether *anything* is degraded so it
+    can warn the user that job status / logs may be stale; it does not surface
+    which component is affected. ``message`` is null while everything is healthy.
+    """
+    return {
+        "overallStatus": status.overall_status,
+        "checkedAt": status.checked_at,
+        "message": None if status.overall_status == "healthy" else DEGRADED_USER_MESSAGE,
+    }
 
 
 def to_public_dict(status: SystemStatus) -> dict[str, Any]:
