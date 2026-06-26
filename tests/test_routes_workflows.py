@@ -50,6 +50,7 @@ def role_check_client(test_engine):
             repo_url="https://github.com/test/repo",
             default_revision="dev",
             config_path="/some/bindflow.config",
+            prerun_script_path="/some/bindflow-prerun.sh",
         )
     )
     setup_session.commit()
@@ -530,6 +531,7 @@ def _add_proteinfold_workflow(test_engine):
                     repo_url="https://github.com/nf-core/proteinfold",
                     default_revision="dev",
                     config_path="/some/proteinfold.config",
+                    prerun_script_path="/some/proteinfold-prerun.sh",
                 )
             )
             db.commit()
@@ -558,6 +560,7 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
     assert data["runId"] == "pf_wf_001"
     assert data["status"] == "submitted"
     mock_launch.assert_called_once()
+    assert mock_launch.call_args.kwargs["prerun_script_path"] == "/some/proteinfold-prerun.sh"
 
 
 @patch("app.routes.workflows.launch_proteinfold_workflow")
@@ -719,6 +722,7 @@ def wisps_client(test_engine):
                 repo_url="https://github.com/test/wisps",
                 default_revision="main",
                 config_path="/some/config.nf",
+                prerun_script_path="/some/wisps-prerun.sh",
             )
         )
 
@@ -830,6 +834,7 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
     call_kwargs = mock_wisps.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
     assert call_kwargs["form_data"].splitOutputDir == "/data/split"
+    assert call_kwargs["prerun_script_path"] == "/some/wisps-prerun.sh"
 
     with Session(test_engine) as db:
         created_run = db.execute(

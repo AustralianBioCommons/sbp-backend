@@ -99,6 +99,11 @@ async def test_launch_success_minimal():
     assert result.status == "submitted"
     assert route.called
     assert route.call_count == 1
+    request = route.calls.last.request
+    payload = json.loads(request.content)
+    assert "module load singularity" in payload["launch"]["preRunScript"]
+    assert "module load nextflow" in payload["launch"]["preRunScript"]
+    assert "export AWS_ACCESS_KEY_ID" in payload["launch"]["preRunScript"]
 
 
 @pytest.mark.asyncio
@@ -134,10 +139,6 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
         patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
         patch(
             "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
-        ),
-        patch(
-            "app.services.bindflow_executor.get_bindflow_executor_script",
-            return_value="prerun_body",
         ),
     ):
         launch_payload = await prepare_bindflow_workflow(
@@ -175,7 +176,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["gadi"]
     assert queued_job.launch_payload["configText"] == "config_text"
-    assert queued_job.launch_payload["preRunScript"] == "prerun_body"
+    assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
@@ -206,7 +207,13 @@ async def test_launch_success_with_all_params():
         paramsText="custom_param: value",
     )
 
-    with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
+    with (
+        _mock_bindflow_db_context() as (db_session, workflow_run, *_),
+        patch(
+            "app.services.bindflow_executor.get_executor_script",
+            return_value="prerun_body",
+        ) as mock_script,
+    ):
         result = await launch_bindflow_workflow(
             form,
             s3_input_key="inputs/samplesheets/test.csv",
@@ -222,6 +229,7 @@ async def test_launch_success_with_all_params():
             institute="example.com",
             ip_address="127.0.0.1",
             output_id="run-out-2",
+            prerun_script_path="/some/prerun.sh",
         )
 
     assert result.workflow_id == "wf_full_456"
@@ -231,6 +239,8 @@ async def test_launch_success_with_all_params():
     assert (
         "input: s3://test-s3-bucket/inputs/samplesheets/test.csv" in payload["launch"]["paramsText"]
     )
+    assert payload["launch"]["preRunScript"] == "prerun_body"
+    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
 
 
 @pytest.mark.asyncio

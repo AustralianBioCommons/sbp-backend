@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
     get_proteinfold_default_params,
-    get_proteinfold_executor_script,
 )
 from .seqera import (
     WorkflowLaunchResult,
@@ -124,18 +124,13 @@ async def prepare_proteinfold_workflow(
             institute=institute,
             ip_address=ip_address,
         ),
-        "preRunScript": get_proteinfold_executor_script(
-            os.getenv("AWS_ACCESS_KEY_ID", ""),
-            os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            os.getenv("AWS_REGION", "ap-southeast-2"),
-        ),
         "resume": False,
     }
 
     queued_job = QueuedJob(
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
-        launch_payload=launch_payload,
+        launch_payload=without_prerun_script(launch_payload),
         # TODO: set as submitted for now, we are still launching jobs immediately
         status="submitted",
         next_attempt_at=datetime.now(UTC),
@@ -155,6 +150,7 @@ async def launch_proteinfold_workflow(
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
+    prerun_script_path: str | None = None,
     mode: str = "alphafold2",
     form_data: WorkflowFormData | None = None,
     user_email: str,
@@ -185,7 +181,6 @@ async def launch_proteinfold_workflow(
     compute_env_id = _get_required_env("COMPUTE_ID")
     launch_url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
     logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
-    logger.info("Full launch payload", extra={"payload": launch_payload})
     logger.info(
         "Launching proteinfold workflow via Seqera API",
         extra={
@@ -197,6 +192,20 @@ async def launch_proteinfold_workflow(
         },
     )
 
+    prerun_script = get_executor_script(
+        prerun_script_path=prerun_script_path,
+        module_loads=["singularity", "nextflow"],
+        env={
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+        },
+    )
+    runtime_payload = inject_prerun_script(
+        launch_payload=launch_payload,
+        prerun_script=prerun_script,
+    )
+
     return await post_seqera_launch(
-        launch_url, {"launch": launch_payload}, workflow_label="Proteinfold"
+        launch_url, {"launch": runtime_payload}, workflow_label="Proteinfold"
     )

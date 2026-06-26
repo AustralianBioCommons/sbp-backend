@@ -12,11 +12,11 @@ from sqlalchemy import select
 
 from app.db.models import QueuedJob
 from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from app.services.launch_payloads import get_executor_script
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
     get_proteinfold_default_params,
-    get_proteinfold_executor_script,
 )
 from app.services.proteinfold_executor import (
     _build_params_text,
@@ -289,6 +289,54 @@ async def test_launch_proteinfold_workflow_success(seqera_env):
     assert result.workflow_id == "wf_success"
     assert result.status == "submitted"
     mock_post.assert_called_once()
+    posted_payload = mock_post.call_args.args[1]["launch"]
+    assert "module load singularity" in posted_payload["preRunScript"]
+    assert "module load nextflow" in posted_payload["preRunScript"]
+    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
+
+
+@pytest.mark.anyio
+async def test_launch_proteinfold_workflow_injects_prerun_script_at_launch(seqera_env):
+    expected_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
+
+    with (
+        _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
+        patch(
+            "app.services.proteinfold_executor.post_seqera_launch",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_post,
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
+        patch(
+            "app.services.proteinfold_executor.get_executor_script",
+            return_value="prerun_body",
+        ) as mock_script,
+    ):
+        result = await launch_proteinfold_workflow(
+            _make_launch_form(),
+            "dataset_abc",
+            db_session=db_session,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
+            revision="dev",
+            output_id="run-output-id",
+            prerun_script_path="/some/prerun.sh",
+            mode="alphafold2",
+            form_data=None,
+            user_email="test@example.com",
+            full_name="Test_User",
+            institute="example.com",
+            ip_address="127.0.0.1",
+        )
+
+    assert result.workflow_id == "wf_prerun"
+    posted_payload = mock_post.call_args.args[1]["launch"]
+    assert posted_payload["preRunScript"] == "prerun_body"
+    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
 
 
 @pytest.mark.anyio
@@ -310,10 +358,6 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
         patch(
             "app.services.proteinfold_executor.get_proteinfold_config_profiles",
             return_value=["singularity"],
-        ),
-        patch(
-            "app.services.proteinfold_executor.get_proteinfold_executor_script",
-            return_value="prerun_body",
         ),
     ):
         launch_payload = await prepare_proteinfold_workflow(
@@ -351,7 +395,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
-    assert queued_job.launch_payload["preRunScript"] == "prerun_body"
+    assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
@@ -498,8 +542,16 @@ def test_get_proteinfold_default_params_is_dict():
     assert len(result) > 0
 
 
-def test_get_proteinfold_executor_script_env_var_substitution():
-    script = get_proteinfold_executor_script("KEY123", "SECRET456", "us-east-1")
+def test_get_executor_script_env_var_substitution():
+    script = get_executor_script(
+        prerun_script_path=None,
+        module_loads=["singularity", "nextflow"],
+        env={
+            "AWS_ACCESS_KEY_ID": "KEY123",
+            "AWS_SECRET_ACCESS_KEY": "SECRET456",
+            "AWS_REGION": "us-east-1",
+        },
+    )
     assert "KEY123" in script
     assert "SECRET456" in script
     assert "us-east-1" in script
@@ -510,8 +562,11 @@ def test_get_proteinfold_executor_script_env_var_substitution():
     assert "export AWS_REGION" in script
 
 
-def test_get_proteinfold_executor_script_defaults():
-    script = get_proteinfold_executor_script()
+def test_get_executor_script_defaults():
+    script = get_executor_script(
+        prerun_script_path=None,
+        env={"AWS_REGION": "ap-southeast-2"},
+    )
     assert "ap-southeast-2" in script
 
 

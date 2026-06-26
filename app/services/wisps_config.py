@@ -23,37 +23,6 @@ def get_wisps_default_params(
     return params
 
 
-def get_wisps_executor_script(
-    fasta_s3_uri: str,
-    split_output_dir: str,
-    aws_access_key: str = "",
-    aws_secret_key: str = "",
-    aws_region: str = "ap-southeast-2",
-    prerun_script_path: str | None = None,
-) -> str:
-    """Pre-run script for WISPS workflow on Gadi.
-
-    Builds a variable-assignment header with dynamic values and appends the
-    script body fetched from prerun_script_path.
-    """
-    s3_path = fasta_s3_uri.replace("s3://", "", 1)
-    header = (
-        "\n".join(
-            [
-                f"AWS_ACCESS_KEY_ID={aws_access_key}",
-                f"AWS_SECRET_ACCESS_KEY={aws_secret_key}",
-                f"AWS_REGION={aws_region}",
-                f"S3_PATH={s3_path}",
-                f'D="{split_output_dir}"',
-            ]
-        )
-        + "\n"
-    )
-
-    body = fetch_workflow_config(prerun_script_path) if prerun_script_path else ""
-    return header + body
-
-
 def get_wisps_config_profiles() -> list[str]:
     return ["singularity"]
 
