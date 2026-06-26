@@ -229,8 +229,7 @@ async def test_launch_success_with_all_params():
     request = route.calls.last.request
     payload = json.loads(request.content)
     assert (
-        "input: s3://test-s3-bucket/inputs/samplesheets/test.csv"
-        in payload["launch"]["paramsText"]
+        "input: s3://test-s3-bucket/inputs/samplesheets/test.csv" in payload["launch"]["paramsText"]
     )
 
 

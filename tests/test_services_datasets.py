@@ -242,9 +242,7 @@ async def test_upload_interaction_screening_empty_sequences_raises():
 async def test_upload_interaction_screening_empty_run_id_raises():
     """Empty run_id raises ValueError."""
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_interaction_screening_csv_to_s3(
-            [SequenceItem(id="s1", group="query")], ""
-        )
+        await upload_interaction_screening_csv_to_s3([SequenceItem(id="s1", group="query")], "")
 
 
 @pytest.mark.asyncio

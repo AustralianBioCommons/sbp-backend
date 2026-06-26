@@ -1011,9 +1011,7 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     with Session(test_engine) as db:
         created_run = db.execute(
-            select(WorkflowRun.run_name).where(
-                WorkflowRun.seqera_run_id == "wisps_wf_002"
-            )
+            select(WorkflowRun.run_name).where(WorkflowRun.seqera_run_id == "wisps_wf_002")
         ).first()
         assert created_run is not None
         assert created_run.run_name == "wisps-run-workflow-field"
