@@ -164,7 +164,6 @@ class WorkflowRunAdmin(ModelView):
         "owner_user_id",
         HasOne("workflow", identity="workflow"),
         HasOne("owner", identity="app-user"),
-        "seqera_dataset_id",
         "seqera_run_id",
         "run_name",
         "binder_name",

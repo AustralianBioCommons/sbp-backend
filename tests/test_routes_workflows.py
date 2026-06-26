@@ -110,7 +110,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         created_run = db.execute(
             select(
                 WorkflowRun.id,
-                WorkflowRun.seqera_dataset_id,
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
                 WorkflowRun.sample_id,
@@ -119,7 +118,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             ).where(WorkflowRun.seqera_run_id == "wf_123")
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_123"
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "s1"
@@ -132,42 +130,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             select(RunMetric).where(RunMetric.run_id == created_run.id)
         ).scalar_one()
         assert metric.final_design_count == 20
-
-
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_engine):
-    """Test successful workflow launch with pre-created dataset ID."""
-    mock_launch.return_value = WorkflowLaunchResult(
-        workflow_id="wf_789",
-        status="submitted",
-    )
-
-    payload = {
-        "launch": {
-            "workflow": "de-novo-design",
-            "tool": "bindcraft",
-            "runName": "test-with-data",
-        },
-        "datasetId": "dataset_456",  # Use existing dataset
-        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
-    }
-
-    response = client.post("/api/workflows/launch", json=payload)
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["runId"] == "wf_789"
-
-    mock_launch.assert_called_once()
-    call_args = mock_launch.call_args
-    assert call_args[0][1] == "dataset_456"
-
-    with Session(test_engine) as db:
-        created_run = db.execute(
-            select(WorkflowRun.seqera_dataset_id).where(WorkflowRun.seqera_run_id == "wf_789")
-        ).first()
-        assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_456"
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
@@ -874,14 +836,12 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
     with Session(test_engine) as db:
         created_run = db.execute(
             select(
-                WorkflowRun.seqera_dataset_id,
                 WorkflowRun.run_name,
                 WorkflowRun.submitted_form_data,
                 WorkflowRun.submission_timestamp,
             ).where(WorkflowRun.seqera_run_id == "wisps_wf_001")
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_wisps"
         assert created_run.run_name == "wisps-run"
         assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
         assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
@@ -1053,12 +1013,11 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     with Session(test_engine) as db:
         created_run = db.execute(
-            select(WorkflowRun.seqera_dataset_id, WorkflowRun.run_name).where(
+            select(WorkflowRun.run_name).where(
                 WorkflowRun.seqera_run_id == "wisps_wf_002"
             )
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_wisps"
         assert created_run.run_name == "wisps-run-workflow-field"
 
 

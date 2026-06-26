@@ -277,7 +277,6 @@ async def launch_workflow(
         id=run_id,
         workflow_id=workflow.id,
         owner_user_id=current_user_id,
-        seqera_dataset_id=None,
         seqera_run_id=str(run_id),
         binder_name=binder_name,
         sample_id=sample_id,

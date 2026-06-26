@@ -282,7 +282,6 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         id=run_id,
         workflow_id=None,
         owner_user_id=user_id,
-        seqera_dataset_id=None,
         seqera_run_id="seed-run",
         run_name="seed-run-name",
         binder_name="PDL1",
