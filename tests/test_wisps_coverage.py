@@ -13,6 +13,7 @@ from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchFo
 from app.services.seqera import (
     WorkflowExecutorError,
     WorkflowLaunchResult,
+    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -25,7 +26,6 @@ from app.services.wisps_config import (
 )
 from app.services.wisps_executor import (
     _get_required_env,
-    _samplesheet_url,
     launch_wisps_workflow,
     prepare_wisps_workflow,
 )
@@ -332,7 +332,7 @@ async def test_launch_wisps_workflow_success(monkeypatch):
         )
         result = await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -382,7 +382,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     ):
         launch_payload = await prepare_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -412,14 +412,13 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["workDir"] == "s3://work"
     assert queued_job.launch_payload["workspaceId"] == "ws1"
     assert queued_job.launch_payload["revision"] == "dev"
-    assert queued_job.launch_payload["datasetIds"] == ["ds1"]
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
     assert queued_job.launch_payload["preRunScript"] == "prerun_body"
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/output-queued" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesheet.csv"
+        "input: s3://my-bucket/inputs/samplesheets/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "tools: boltz" in queued_job.launch_payload["paramsText"]
@@ -464,7 +463,7 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
         )
         result = await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -496,11 +495,12 @@ async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
     ):
         await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -536,7 +536,7 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
     ):
         await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -572,7 +572,7 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
     ):
         await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -608,7 +608,7 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
     ):
         await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -661,7 +661,7 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
         )
         result = await launch_wisps_workflow(
             form=form,
-            dataset_id="ds1",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",

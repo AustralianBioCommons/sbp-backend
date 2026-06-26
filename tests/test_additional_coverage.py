@@ -1,8 +1,8 @@
-"""Additional tests to increase coverage."""
+"""Additional tests to increase coverage for upload routes."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException, status
@@ -13,41 +13,77 @@ from app.routes.workflows import (
     upload_interaction_screening_dataset_endpoint,
 )
 from app.schemas.workflows import DatasetUploadRequest, InteractionScreeningDatasetUploadRequest
-from app.services.datasets import DatasetUploadResult
-from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from app.services.s3 import S3ConfigurationError, S3ServiceError, S3UploadResult
 
 
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_success(mock_create, mock_upload):
-    """Test successful dataset upload."""
-    # Mock dataset creation
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "dataset_123"
-    mock_create_result.raw_response = {"id": "dataset_123"}
-    mock_create.return_value = mock_create_result
-
-    # Mock upload
-    mock_upload_result = DatasetUploadResult(
+def _s3_result(
+    key: str = "inputs/samplesheets/test.csv", bucket: str = "my-bucket"
+) -> S3UploadResult:
+    return S3UploadResult(
         success=True,
-        dataset_id="dataset_123",
-        message="Uploaded",
-    )
-    mock_upload.return_value = mock_upload_result
-
-    # Create request
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
+        file_key=key,
+        bucket=bucket,
+        file_url=f"s3://{bucket}/{key}",
     )
 
-    # Execute
-    response = await upload_dataset(request)
 
-    # Verify
+# =============================================================================
+# Tests for upload_dataset (S3-backed)
+# =============================================================================
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+async def test_upload_dataset_success(mock_upload):
+    """Test successful CSV upload to S3."""
+    mock_upload.return_value = _s3_result()
+
+    response = await upload_dataset(DatasetUploadRequest(formData={"sample": "test"}))
+
     assert response.success is True
-    assert response.datasetId == "dataset_123"
-    mock_create.assert_called_once()
+    assert response.s3Key == "inputs/samplesheets/test.csv"
+    assert "s3://" in response.s3Uri
     mock_upload.assert_called_once()
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+async def test_upload_dataset_value_error(mock_upload):
+    """Test that ValueError (e.g. empty formData) returns 400."""
+    mock_upload.side_effect = ValueError("formData cannot be empty")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(DatasetUploadRequest(formData={"sample": "test"}))
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "formData cannot be empty" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+async def test_upload_dataset_s3_config_error(mock_upload):
+    """Test that S3ConfigurationError returns 500."""
+    mock_upload.side_effect = S3ConfigurationError("Missing bucket")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(DatasetUploadRequest(formData={"sample": "test"}))
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "S3 configuration error" in str(exc_info.value.detail)
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+async def test_upload_dataset_s3_service_error(mock_upload):
+    """Test that S3ServiceError returns 502."""
+    mock_upload.side_effect = S3ServiceError("Upload failed")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_dataset(DatasetUploadRequest(formData={"sample": "test"}))
+
+    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
+    assert "S3 upload failed" in str(exc_info.value.detail)
+
+
+# =============================================================================
+# Tests for get_details
+# =============================================================================
 
 
 async def test_get_details_returns_placeholder():
@@ -61,116 +97,12 @@ async def test_get_details_returns_placeholder():
     assert isinstance(result.params, dict)
 
 
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_create_config_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraConfigurationError during creation."""
-    # Mock dataset creation to raise error
-    mock_create.side_effect = SeqeraConfigurationError("Config error")
-
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_dataset(request)
-
-    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Config error" in str(exc_info.value.detail)
+# =============================================================================
+# Tests for upload_interaction_screening_dataset_endpoint (S3-backed)
+# =============================================================================
 
 
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_create_service_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraExecutorError during creation."""
-    mock_create.side_effect = SeqeraExecutorError("Service error")
-
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_dataset(request)
-
-    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
-    assert "Service error" in str(exc_info.value.detail)
-
-
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_upload_value_error(mock_create, mock_upload):
-    """Test dataset upload handles ValueError during upload."""
-    # Mock successful creation
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "dataset_123"
-    mock_create.return_value = mock_create_result
-
-    # Mock upload to raise ValueError
-    mock_upload.side_effect = ValueError("Invalid data")
-
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_dataset(request)
-
-    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-    assert "Invalid data" in str(exc_info.value.detail)
-
-
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_upload_config_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraConfigurationError during upload."""
-    # Mock successful creation
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "dataset_123"
-    mock_create.return_value = mock_create_result
-
-    # Mock upload to raise error
-    mock_upload.side_effect = SeqeraConfigurationError("Upload config error")
-
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_dataset(request)
-
-    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Upload config error" in str(exc_info.value.detail)
-
-
-@patch("app.routes.workflows.upload_dataset_to_seqera")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_dataset_upload_service_error(mock_create, mock_upload):
-    """Test dataset upload handles SeqeraExecutorError during upload."""
-    # Mock successful creation
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "dataset_123"
-    mock_create.return_value = mock_create_result
-
-    # Mock upload to raise error
-    mock_upload.side_effect = SeqeraExecutorError("Upload service error")
-
-    request = DatasetUploadRequest(
-        formData={"sample": "test"},
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_dataset(request)
-
-    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
-    assert "Upload service error" in str(exc_info.value.detail)
-
-
-# ============================================================================
-# Tests for upload_interaction_screening_dataset_endpoint
-# ============================================================================
-
-
-def _make_screening_request():
+def _screening_request() -> InteractionScreeningDatasetUploadRequest:
     return InteractionScreeningDatasetUploadRequest(
         sequences=[
             {"id": "seq_A", "group": "query"},
@@ -180,85 +112,50 @@ def _make_screening_request():
     )
 
 
-@patch("app.routes.workflows.upload_interaction_screening_dataset")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_success(mock_create, mock_upload):
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "ds-screen-1"
-    mock_create.return_value = mock_create_result
+@patch("app.routes.workflows.upload_interaction_screening_csv_to_s3")
+async def test_upload_interaction_screening_success(mock_upload):
+    """Test successful interaction screening samplesheet upload to S3."""
+    s3_result = _s3_result(key="inputs/samplesheets/run-screen-1.csv")
+    mock_upload.return_value = (s3_result, "/data/split/run-screen-1")
 
-    mock_upload.return_value = DatasetUploadResult(
-        success=True,
-        dataset_id="ds-screen-1",
-        message="Uploaded",
-        split_output_dir="/g/data/yz52/sbp-service/input/interaction_screening/run-screen-1",
-    )
-
-    response = await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+    response = await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert response.success is True
-    assert response.datasetId == "ds-screen-1"
-    mock_create.assert_called_once_with(name="run-screen-1")
+    assert response.s3Key == "inputs/samplesheets/run-screen-1.csv"
+    assert response.splitOutputDir == "/data/split/run-screen-1"
     mock_upload.assert_called_once()
 
 
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_create_config_error(mock_create):
-    mock_create.side_effect = SeqeraConfigurationError("missing env")
+@patch("app.routes.workflows.upload_interaction_screening_csv_to_s3")
+async def test_upload_interaction_screening_value_error(mock_upload):
+    """Test that ValueError returns 400."""
+    mock_upload.side_effect = ValueError("sequences cannot be empty")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
-
-    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-
-
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_create_executor_error(mock_create):
-    mock_create.side_effect = SeqeraExecutorError("api failure")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
-
-    assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
-
-
-@patch("app.routes.workflows.upload_interaction_screening_dataset")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_upload_value_error(mock_create, mock_upload):
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "ds-1"
-    mock_create.return_value = mock_create_result
-    mock_upload.side_effect = ValueError("bad sequences")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-@patch("app.routes.workflows.upload_interaction_screening_dataset")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_upload_config_error(mock_create, mock_upload):
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "ds-1"
-    mock_create.return_value = mock_create_result
-    mock_upload.side_effect = SeqeraConfigurationError("cfg err")
+@patch("app.routes.workflows.upload_interaction_screening_csv_to_s3")
+async def test_upload_interaction_screening_s3_config_error(mock_upload):
+    """Test that S3ConfigurationError returns 500."""
+    mock_upload.side_effect = S3ConfigurationError("Missing bucket")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "S3 configuration error" in str(exc_info.value.detail)
 
 
-@patch("app.routes.workflows.upload_interaction_screening_dataset")
-@patch("app.routes.workflows.create_seqera_dataset")
-async def test_upload_interaction_screening_upload_executor_error(mock_create, mock_upload):
-    mock_create_result = AsyncMock()
-    mock_create_result.dataset_id = "ds-1"
-    mock_create.return_value = mock_create_result
-    mock_upload.side_effect = SeqeraExecutorError("exec err")
+@patch("app.routes.workflows.upload_interaction_screening_csv_to_s3")
+async def test_upload_interaction_screening_s3_service_error(mock_upload):
+    """Test that S3ServiceError returns 502."""
+    mock_upload.side_effect = S3ServiceError("Upload failed")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_interaction_screening_dataset_endpoint(_make_screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
+    assert "S3 upload failed" in str(exc_info.value.detail)
