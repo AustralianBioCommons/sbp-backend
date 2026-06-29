@@ -362,7 +362,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     ):
         launch_payload = await prepare_proteinfold_workflow(
             form=form,
-            dataset_id="dataset_abc",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
@@ -393,14 +393,13 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["workDir"] == "/work/dir"
     assert queued_job.launch_payload["workspaceId"] == "ws_123"
     assert queued_job.launch_payload["revision"] == "main"
-    assert queued_job.launch_payload["datasetIds"] == ["dataset_abc"]
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: https://api.seqera.test/workspaces/ws_123/datasets/dataset_abc/v/1/n/samplesheet.csv"
+        "input: s3://my-bucket/inputs/samplesheets/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode: colabfold" in queued_job.launch_payload["paramsText"]
@@ -417,11 +416,15 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
         pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
     ):
         await launch_proteinfold_workflow(
             form,
-            "dataset_abc",
+            "inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",

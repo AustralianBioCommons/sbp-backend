@@ -1,4 +1,4 @@
-"""Dataset helpers for interacting with the Seqera Platform."""
+"""Dataset helpers — CSV generation and S3 upload for workflow samplesheets."""
 
 from __future__ import annotations
 
@@ -6,27 +6,16 @@ import csv
 import io
 import json
 import logging
-import os
 import random
 import re
 import string
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
-
 from ..schemas.workflows import SequenceItem
-from .seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from .s3 import S3UploadResult, upload_file_to_s3
 
 logger = logging.getLogger(__name__)
-
-
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
 
 
 def _stringify_field(value: Any) -> str:
@@ -40,7 +29,7 @@ def _stringify_field(value: Any) -> str:
 
 
 def build_unique_dataset_name(name: str) -> str:
-    """Build a unique dataset name. E.g. 'my-run' -> 'my-run_20240101-120000_ab3x'"""
+    """Build a unique slug. E.g. 'my-run' -> 'my-run_20240101-120000_ab3x'"""
     base = name.strip()
     slug = re.sub(r"[^a-zA-Z0-9\-]", "-", base)
     slug = re.sub(r"-{2,}", "-", slug)
@@ -66,147 +55,41 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
         return output.getvalue()
 
 
-@dataclass
-class DatasetCreationResult:
-    dataset_id: str
-    raw_response: dict[str, Any]
-
-
-@dataclass
-class DatasetUploadResult:
-    success: bool
-    dataset_id: str
-    message: str
-    raw_response: dict[str, Any] | None = None
-    split_output_dir: str | None = None
-
-
-async def create_seqera_dataset(name: str = "dataset") -> DatasetCreationResult:
-    """Create a dataset on the Seqera Platform."""
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
-    workspace_id = _get_required_env("WORK_SPACE")
-
-    dataset_name = build_unique_dataset_name(name)
-    payload = {"name": dataset_name}
-
-    url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/"
-    headers = {
-        "Authorization": f"Bearer {seqera_token}",
-        "Content-Type": "application/json",
-    }
-
-    logger.info(
-        "Creating Seqera dataset",
-        extra={"datasetName": dataset_name},
-    )
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
-        response = await client.post(url, headers=headers, json=payload)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera dataset creation failed",
-            extra={
-                "status": response.status_code,
-                "reason": response.reason_phrase,
-                "body": body,
-            },
-        )
-        raise SeqeraExecutorError(f"Seqera dataset creation failed: {response.status_code} {body}")
-
-    data = response.json()
-    dataset_id = data.get("dataset", {}).get("id")
-    if not dataset_id:
-        raise SeqeraExecutorError(
-            "Seqera dataset creation succeeded but response lacked dataset id"
-        )
-
-    logger.info("Seqera dataset created", extra={"datasetId": dataset_id})
-    return DatasetCreationResult(dataset_id=dataset_id, raw_response=data)
-
-
-async def upload_dataset_to_seqera(
-    dataset_id: str, form_data: dict[str, Any]
-) -> DatasetUploadResult:
-    """Upload CSV-encoded form data to an existing Seqera dataset."""
-    if not dataset_id:
-        raise ValueError("dataset_id is required")
-    if not form_data:
-        raise ValueError("formData cannot be empty")
-
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
-    workspace_id = _get_required_env("WORK_SPACE")
-
-    csv_payload = convert_form_data_to_csv(form_data)
-    url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
-    headers = {
-        "Authorization": f"Bearer {seqera_token}",
-        "Accept": "application/json",
-    }
-
-    logger.info(
-        "Uploading dataset to Seqera",
-        extra={"datasetId": dataset_id},
-    )
-
-    files = {
-        "file": ("samplesheet.csv", csv_payload, "text/csv"),
-    }
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
-        response = await client.post(url, headers=headers, files=files)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera dataset upload failed",
-            extra={
-                "status": response.status_code,
-                "reason": response.reason_phrase,
-                "body": body,
-            },
-        )
-        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
-
-    data = response.json()
-    returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
-    message = data.get("message") or "Upload successful"
-
-    logger.info(
-        "Seqera dataset upload completed",
-        extra={"datasetId": returned_dataset_id, "status": response.status_code},
-    )
-
-    return DatasetUploadResult(
-        success=True,
-        dataset_id=returned_dataset_id,
-        message=message,
-        raw_response=data,
-    )
-
-
 INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_screening"
 
 
-async def upload_interaction_screening_dataset(
-    dataset_id: str,
+async def upload_csv_to_s3(
+    form_data: dict[str, Any],
+) -> S3UploadResult:
+    """Generate a CSV from form_data and upload directly to S3."""
+    if not form_data:
+        raise ValueError("form_data cannot be empty")
+
+    csv_content = convert_form_data_to_csv(form_data)
+    file_bytes = io.BytesIO(csv_content.encode("utf-8"))
+
+    logger.info("Uploading CSV samplesheet to S3")
+
+    result = await upload_file_to_s3(
+        file_content=file_bytes,
+        filename="samplesheet.csv",
+        content_type="text/csv",
+        folder="inputs/samplesheets",
+    )
+
+    logger.info("CSV samplesheet uploaded to S3", extra={"s3Key": result.file_key})
+    return result
+
+
+async def upload_interaction_screening_csv_to_s3(
     sequences: list[SequenceItem],
     run_id: str,
-) -> DatasetUploadResult:
-    """Build and upload an interaction screening samplesheet to a Seqera dataset."""
-    if not dataset_id:
-        raise ValueError("dataset_id is required")
+) -> tuple[S3UploadResult, str]:
+    """Build and upload an interaction screening samplesheet directly to S3."""
     if not sequences:
         raise ValueError("sequences cannot be empty")
     if not run_id:
         raise ValueError("run_id is required")
-
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
-    workspace_id = _get_required_env("WORK_SPACE")
 
     unique_run_path = build_unique_dataset_name(run_id)
     rows = [
@@ -225,51 +108,24 @@ async def upload_interaction_screening_dataset(
         writer.writerows(rows)
         csv_content = output.getvalue()
 
-    url = f"{seqera_api_url}/workspaces/{workspace_id}/datasets/{dataset_id}/upload"
-    headers = {
-        "Authorization": f"Bearer {seqera_token}",
-        "Accept": "application/json",
-    }
-
-    logger.info(
-        "Uploading interaction screening samplesheet to Seqera",
-        extra={"datasetId": dataset_id},
-    )
-
-    files = {
-        "file": ("samplesheet.csv", csv_content, "text/csv"),
-    }
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
-        response = await client.post(url, headers=headers, files=files)
-
-    if response.is_error:
-        body = response.text
-        logger.error(
-            "Seqera interaction screening dataset upload failed",
-            extra={
-                "status": response.status_code,
-                "reason": response.reason_phrase,
-                "body": body,
-            },
-        )
-        raise SeqeraExecutorError(f"Seqera dataset upload failed: {response.status_code} {body}")
-
-    data = response.json()
-    returned_dataset_id = data.get("version", {}).get("datasetId") or dataset_id
-    message = data.get("message") or "Upload successful"
-
-    logger.info(
-        "Seqera interaction screening dataset upload completed",
-        extra={"datasetId": returned_dataset_id, "status": response.status_code},
-    )
-
+    file_bytes = io.BytesIO(csv_content.encode("utf-8"))
     split_output_dir = f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}"
 
-    return DatasetUploadResult(
-        success=True,
-        dataset_id=returned_dataset_id,
-        message=message,
-        raw_response=data,
-        split_output_dir=split_output_dir,
+    logger.info(
+        "Uploading interaction screening samplesheet to S3",
+        extra={"runId": run_id},
     )
+
+    result = await upload_file_to_s3(
+        file_content=file_bytes,
+        filename="samplesheet.csv",
+        content_type="text/csv",
+        folder="inputs/samplesheets",
+    )
+
+    logger.info(
+        "Interaction screening samplesheet uploaded to S3",
+        extra={"s3Key": result.file_key, "splitOutputDir": split_output_dir},
+    )
+
+    return result, split_output_dir

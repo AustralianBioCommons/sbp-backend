@@ -20,7 +20,6 @@ from .proteinfold_config import (
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
-    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -67,7 +66,7 @@ def _build_params_text(
 
 async def prepare_proteinfold_workflow(
     form: WorkflowLaunchForm,
-    dataset_id: str,
+    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -83,21 +82,21 @@ async def prepare_proteinfold_workflow(
     ip_address: str,
 ):
     """Build and queue a proteinfold launch payload."""
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
+    s3_bucket = _get_required_env("AWS_S3_BUCKET")
 
     if not output_id or not output_id.strip():
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{_get_required_env('AWS_S3_BUCKET')}/{output_id.strip()}"
+    out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     job_id = (form.runName or "").strip()
     if not job_id:
         raise SeqeraConfigurationError("Missing run name for workflow launch")
 
-    sheet_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
+    sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
     params_text = _build_params_text(
         out_dir,
         sheet_url,
@@ -126,7 +125,6 @@ async def prepare_proteinfold_workflow(
             ip_address=ip_address,
         ),
         "resume": False,
-        "datasetIds": [dataset_id],
     }
 
     queued_job = QueuedJob(
@@ -144,7 +142,7 @@ async def prepare_proteinfold_workflow(
 
 async def launch_proteinfold_workflow(
     form: WorkflowLaunchForm,
-    dataset_id: str,
+    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -163,7 +161,7 @@ async def launch_proteinfold_workflow(
     """Launch a proteinfold workflow on the Seqera Platform."""
     launch_payload = await prepare_proteinfold_workflow(
         form,
-        dataset_id,
+        s3_input_key,
         db_session=db_session,
         workflow_run=workflow_run,
         pipeline=pipeline,

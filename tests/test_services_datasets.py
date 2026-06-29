@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
-import httpx
 import pytest
-import respx
 
 from app.schemas.workflows import SequenceItem
 from app.services.datasets import (
-    DatasetCreationResult,
-    DatasetUploadResult,
-    _get_required_env,
     _stringify_field,
+    build_unique_dataset_name,
     convert_form_data_to_csv,
-    create_seqera_dataset,
-    upload_dataset_to_seqera,
-    upload_interaction_screening_dataset,
+    upload_csv_to_s3,
+    upload_interaction_screening_csv_to_s3,
 )
-from app.services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from app.services.s3 import S3UploadResult
+
+
+def _s3_result(key: str = "inputs/samplesheets/samplesheet.csv") -> S3UploadResult:
+    return S3UploadResult(
+        success=True, file_key=key, bucket="my-bucket", file_url=f"s3://my-bucket/{key}"
+    )
+
+
+# =============================================================================
+# Tests for _stringify_field
+# =============================================================================
 
 
 def test_stringify_none():
@@ -62,34 +69,49 @@ def test_stringify_boolean():
     assert _stringify_field(False) == "False"
 
 
-def test_get_required_env_success():
-    """Test _get_required_env returns value when env var exists."""
-    import os
-
-    os.environ["TEST_ENV_VAR"] = "test_value"
-    result = _get_required_env("TEST_ENV_VAR")
-    assert result == "test_value"
-    del os.environ["TEST_ENV_VAR"]
+# =============================================================================
+# Tests for build_unique_dataset_name
+# =============================================================================
 
 
-def test_get_required_env_missing():
-    """Test _get_required_env raises error when env var is missing."""
-    with pytest.raises(SeqeraConfigurationError, match="Missing required environment variable"):
-        _get_required_env("NONEXISTENT_ENV_VAR")
+def test_build_unique_dataset_name_basic():
+    """Unique name starts with the given slug."""
+    name = build_unique_dataset_name("my-run")
+    assert name.startswith("my-run_")
+    assert len(name) > len("my-run_")
+
+
+def test_build_unique_dataset_name_strips_special_chars():
+    """Special characters are replaced with hyphens."""
+    name = build_unique_dataset_name("run@name!")
+    assert "@" not in name
+    assert "!" not in name
+
+
+def test_build_unique_dataset_name_empty_falls_back():
+    """Empty input falls back to 'dataset' prefix."""
+    name = build_unique_dataset_name("")
+    assert name.startswith("dataset")
+
+
+def test_build_unique_dataset_name_unique():
+    """Two calls produce different names due to random suffix."""
+    name_a = build_unique_dataset_name("run")
+    name_b = build_unique_dataset_name("run")
+    assert name_a != name_b
+
+
+# =============================================================================
+# Tests for convert_form_data_to_csv
+# =============================================================================
 
 
 def test_convert_simple_data():
     """Test converting simple form data to CSV."""
-    form_data = {
-        "name": "test",
-        "value": "123",
-        "flag": "true",
-    }
-
+    form_data = {"name": "test", "value": "123", "flag": "true"}
     csv_output = convert_form_data_to_csv(form_data)
-
     lines = csv_output.strip().split("\n")
-    assert len(lines) == 2  # header + 1 data row
+    assert len(lines) == 2
     assert "name" in lines[0]
     assert "value" in lines[0]
     assert "flag" in lines[0]
@@ -99,41 +121,23 @@ def test_convert_simple_data():
 
 def test_convert_with_numbers():
     """Test converting data with numeric values."""
-    form_data = {
-        "sample_id": "sample_001",
-        "count": 42,
-        "ratio": 3.14,
-    }
-
-    csv_output = convert_form_data_to_csv(form_data)
-
+    csv_output = convert_form_data_to_csv({"sample_id": "s1", "count": 42, "ratio": 3.14})
     assert "42" in csv_output
     assert "3.14" in csv_output
 
 
 def test_convert_with_list():
     """Test converting data with list values."""
-    form_data = {
-        "sample": "test",
-        "files": ["file1.txt", "file2.txt"],
-    }
-
-    csv_output = convert_form_data_to_csv(form_data)
-
+    csv_output = convert_form_data_to_csv({"sample": "test", "files": ["file1.txt", "file2.txt"]})
     assert "file1.txt;file2.txt" in csv_output
 
 
 def test_convert_with_dict():
     """Test converting data with dict values."""
-    form_data = {
-        "sample": "test",
-        "metadata": {"type": "experiment", "id": 1},
-    }
-
-    csv_output = convert_form_data_to_csv(form_data)
-
+    csv_output = convert_form_data_to_csv(
+        {"sample": "test", "metadata": {"type": "experiment", "id": 1}}
+    )
     assert "metadata" in csv_output
-    assert "type" in csv_output or "experiment" in csv_output
 
 
 def test_convert_empty_data_raises_error():
@@ -144,292 +148,132 @@ def test_convert_empty_data_raises_error():
 
 def test_convert_with_none_values():
     """Test converting data with None values."""
-    form_data = {
-        "sample": "test",
-        "optional_field": None,
-    }
-
-    csv_output = convert_form_data_to_csv(form_data)
-
+    csv_output = convert_form_data_to_csv({"sample": "test", "optional_field": None})
     lines = csv_output.strip().split("\n")
     assert len(lines) == 2
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_create_dataset_success():
-    """Test successful dataset creation."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "dataset": {
-                    "id": "dataset_123",
-                    "name": "test-dataset",
-                }
-            },
-        )
-    )
-
-    result = await create_seqera_dataset(name="test-dataset")
-
-    assert isinstance(result, DatasetCreationResult)
-    assert result.dataset_id == "dataset_123"
-    assert result.raw_response["dataset"]["name"] == "test-dataset"
-    assert route.called
+# =============================================================================
+# Tests for upload_csv_to_s3
+# =============================================================================
 
 
 @pytest.mark.asyncio
-@respx.mock
-async def test_create_dataset_default_name():
-    """Test dataset creation with auto-generated name."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "dataset": {
-                    "id": "dataset_456",
-                    "name": "dataset-1234567890",
-                }
-            },
-        )
-    )
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_csv_to_s3_success(mock_upload):
+    """Test successful CSV upload to S3."""
+    mock_upload.return_value = _s3_result()
 
-    result = await create_seqera_dataset()
-
-    assert result.dataset_id == "dataset_456"
-    # Verify a name was generated
-    assert route.called
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_create_dataset_api_error():
-    """Test dataset creation with API error."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/").mock(
-        return_value=httpx.Response(400, text="Bad request")
-    )
-
-    with pytest.raises(SeqeraExecutorError, match="400"):
-        await create_seqera_dataset(name="test")
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_create_dataset_missing_id_in_response():
-    """Test handling when response is missing dataset ID."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "dataset": {
-                    "name": "test-dataset",
-                    # Missing "id" field
-                }
-            },
-        )
-    )
-
-    with pytest.raises(SeqeraExecutorError, match="response lacked dataset id"):
-        await create_seqera_dataset(name="test")
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_upload_success():
-    """Test successful dataset upload."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "version": {"datasetId": "dataset_789"},
-                "message": "Upload successful",
-            },
-        )
-    )
-
-    form_data = {
-        "sample": "test_sample",
-        "input": "/path/file.txt",
-    }
-
-    result = await upload_dataset_to_seqera(dataset_id="dataset_789", form_data=form_data)
-
-    assert isinstance(result, DatasetUploadResult)
-    assert result.success is True
-    assert result.dataset_id == "dataset_789"
-    assert route.called
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_upload_creates_csv():
-    """Test that upload creates proper CSV."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(200, json={})
-    )
-
-    form_data = {
-        "col1": "value1",
-        "col2": "value2",
-    }
-
-    await upload_dataset_to_seqera("dataset_123", form_data)
-
-    # Verify POST was called
-    assert route.called
-    # The CSV data should be in the request
-
-
-@pytest.mark.asyncio
-async def test_upload_empty_dataset_id():
-    """Test upload fails with empty dataset_id."""
-    with pytest.raises(ValueError, match="dataset_id is required"):
-        await upload_dataset_to_seqera("", {"sample": "test"})
-
-
-@pytest.mark.asyncio
-async def test_upload_empty_form_data():
-    """Test upload fails with empty form_data."""
-    with pytest.raises(ValueError, match="formData cannot be empty"):
-        await upload_dataset_to_seqera("dataset_123", {})
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_upload_api_error():
-    """Test upload with API error."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(500, text="Server error")
-    )
-
-    form_data = {"sample": "test"}
-
-    with pytest.raises(SeqeraExecutorError, match="500"):
-        await upload_dataset_to_seqera("dataset_123", form_data)
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_upload_with_complex_data():
-    """Test upload with complex form data."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(200, json={})
-    )
-
-    form_data = {
-        "sample": "test",
-        "files": ["file1.txt", "file2.txt"],
-        "count": 42,
-        "metadata": {"type": "test"},
-    }
-
-    result = await upload_dataset_to_seqera("dataset_123", form_data)
+    result = await upload_csv_to_s3({"sample": "test", "value": "123"})
 
     assert result.success is True
-
-
-# ============================================================================
-# Tests for upload_interaction_screening_dataset
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_upload_interaction_screening_empty_dataset_id():
-    with pytest.raises(ValueError, match="dataset_id is required"):
-        await upload_interaction_screening_dataset(
-            "", [SequenceItem(id="s1", group="query")], "run-1"
-        )
+    assert result.bucket == "my-bucket"
+    mock_upload.assert_called_once()
+    _, kwargs = mock_upload.call_args
+    assert kwargs["filename"] == "samplesheet.csv"
+    assert kwargs["content_type"] == "text/csv"
 
 
 @pytest.mark.asyncio
-async def test_upload_interaction_screening_empty_sequences():
-    with pytest.raises(ValueError, match="sequences cannot be empty"):
-        await upload_interaction_screening_dataset("ds-1", [], "run-1")
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_csv_to_s3_empty_raises(mock_upload):
+    """Test that empty form_data raises ValueError before upload."""
+    with pytest.raises(ValueError, match="form_data cannot be empty"):
+        await upload_csv_to_s3({})
+
+    mock_upload.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_upload_interaction_screening_empty_run_id():
-    with pytest.raises(ValueError, match="run_id is required"):
-        await upload_interaction_screening_dataset(
-            "ds-1", [SequenceItem(id="s1", group="query")], ""
-        )
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_csv_to_s3_with_list_field(mock_upload):
+    """Test upload with a list field serialised as semicolon-delimited."""
+    mock_upload.return_value = _s3_result()
+
+    await upload_csv_to_s3({"files": ["a.txt", "b.txt"], "sample": "s1"})
+
+    mock_upload.assert_called_once()
+    file_content = mock_upload.call_args.kwargs["file_content"].read().decode()
+    assert "a.txt;b.txt" in file_content
 
 
 @pytest.mark.asyncio
-@respx.mock
-async def test_upload_interaction_screening_success():
-    """Test successful interaction screening dataset upload."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "version": {"datasetId": "ds-screening-1"},
-                "message": "Upload successful",
-            },
-        )
-    )
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_csv_to_s3_returns_s3_result(mock_upload):
+    """upload_csv_to_s3 passes the S3UploadResult through unchanged."""
+    expected = _s3_result(key="inputs/samplesheets/custom.csv")
+    mock_upload.return_value = expected
 
-    sequences = [
-        SequenceItem(id="seq_A", group="query"),
-        SequenceItem(id="seq_B", group="target"),
-    ]
+    result = await upload_csv_to_s3({"x": "y"})
 
-    result = await upload_interaction_screening_dataset("ds-screening-1", sequences, "run-abc")
+    assert result is expected
 
-    assert isinstance(result, DatasetUploadResult)
-    assert result.success is True
-    assert result.dataset_id == "ds-screening-1"
-    assert route.called
+
+# =============================================================================
+# Tests for upload_interaction_screening_csv_to_s3
+# =============================================================================
 
 
 @pytest.mark.asyncio
-@respx.mock
-async def test_upload_interaction_screening_csv_format():
-    """Verify query maps to g1 and target maps to g2 in the samplesheet."""
-    route = respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(200, json={})
-    )
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_interaction_screening_success(mock_upload):
+    """Test successful interaction screening samplesheet upload."""
+    mock_upload.return_value = _s3_result()
 
     sequences = [
         SequenceItem(id="q1", group="query"),
         SequenceItem(id="t1", group="target"),
     ]
+    result, split_output_dir = await upload_interaction_screening_csv_to_s3(sequences, "run-abc")
 
-    await upload_interaction_screening_dataset("ds-1", sequences, "my-run")
-
-    assert route.called
-    request_body = route.calls.last.request.content.decode()
-    assert "g1" in request_body
-    assert "g2" in request_body
-    assert "q1" in request_body
-    assert "t1" in request_body
-    assert "protein" in request_body
+    assert result.success is True
+    assert "run-abc" in split_output_dir or "interaction_screening" in split_output_dir
+    mock_upload.assert_called_once()
 
 
 @pytest.mark.asyncio
-@respx.mock
-async def test_upload_interaction_screening_api_error():
-    """Test that API errors raise SeqeraExecutorError."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(500, text="Internal error")
-    )
-
-    sequences = [SequenceItem(id="s1", group="query")]
-
-    with pytest.raises(SeqeraExecutorError, match="500"):
-        await upload_interaction_screening_dataset("ds-1", sequences, "run-1")
+async def test_upload_interaction_screening_empty_sequences_raises():
+    """Empty sequences list raises ValueError."""
+    with pytest.raises(ValueError, match="sequences cannot be empty"):
+        await upload_interaction_screening_csv_to_s3([], "run-1")
 
 
 @pytest.mark.asyncio
-@respx.mock
-async def test_upload_interaction_screening_fallback_dataset_id():
-    """Test that dataset_id from input is used when response lacks version.datasetId."""
-    respx.post(url__regex=r".*/workspaces/.*/datasets/.*/upload").mock(
-        return_value=httpx.Response(200, json={"message": "ok"})
-    )
+async def test_upload_interaction_screening_empty_run_id_raises():
+    """Empty run_id raises ValueError."""
+    with pytest.raises(ValueError, match="run_id is required"):
+        await upload_interaction_screening_csv_to_s3([SequenceItem(id="s1", group="query")], "")
+
+
+@pytest.mark.asyncio
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_interaction_screening_csv_format(mock_upload):
+    """query → g1, target → g2 in the generated CSV."""
+    mock_upload.return_value = _s3_result()
+
+    sequences = [
+        SequenceItem(id="q1", group="query"),
+        SequenceItem(id="t1", group="target"),
+    ]
+    await upload_interaction_screening_csv_to_s3(sequences, "my-run")
+
+    file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
+    assert "g1" in file_bytes
+    assert "g2" in file_bytes
+    assert "q1" in file_bytes
+    assert "t1" in file_bytes
+    assert "protein" in file_bytes
+
+
+@pytest.mark.asyncio
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_interaction_screening_split_output_dir_matches_run_path(mock_upload):
+    """split_output_dir is derived from the same unique slug as the FASTA paths."""
+    mock_upload.return_value = _s3_result()
 
     sequences = [SequenceItem(id="s1", group="query")]
-    result = await upload_interaction_screening_dataset("fallback-ds", sequences, "run-1")
+    _, split_output_dir = await upload_interaction_screening_csv_to_s3(sequences, "test-run")
 
-    assert result.dataset_id == "fallback-ds"
+    file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
+    unique_slug = split_output_dir.split("/")[-1]
+    assert unique_slug in file_bytes

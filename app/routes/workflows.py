@@ -16,16 +16,17 @@ from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 from unidecode import unidecode
 
-from ..db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
+from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
-    DatasetUploadResponse,
     InteractionScreeningDatasetUploadRequest,
-    InteractionScreeningDatasetUploadResponse,
     InteractionScreeningFormData,
+    InteractionScreeningS3UploadResponse,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
+    RunInputPresignedUrlResponse,
+    S3DatasetUploadResponse,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
@@ -38,13 +39,13 @@ from ..services.credits import (
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
-    create_seqera_dataset,
-    upload_dataset_to_seqera,
-    upload_interaction_screening_dataset,
+    upload_csv_to_s3,
+    upload_interaction_screening_csv_to_s3,
 )
 from ..services.proteinfold_executor import launch_proteinfold_workflow
+from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
 from ..services.seqera import WorkflowExecutorError, WorkflowLaunchResult
-from ..services.seqera_errors import SeqeraConfigurationError, SeqeraExecutorError
+from ..services.seqera_errors import SeqeraConfigurationError
 from ..services.wisps_executor import launch_wisps_workflow
 from .dependencies import (
     get_client_ip,
@@ -184,11 +185,11 @@ async def launch_workflow(
     """Launch a workflow on the Seqera Platform."""
     requested_workflow = payload.launch.workflow.strip().lower()
 
-    dataset_id = payload.datasetId.strip()
-    if not dataset_id:
+    s3_input_key = payload.s3InputKey.strip()
+    if not s3_input_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="datasetId is required and must not be empty.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="s3InputKey is required and must not be empty.",
         )
 
     sample_id = _extract_sample_id(payload.formData)
@@ -276,7 +277,6 @@ async def launch_workflow(
         id=run_id,
         workflow_id=workflow.id,
         owner_user_id=current_user_id,
-        seqera_dataset_id=payload.datasetId,
         seqera_run_id=str(run_id),
         binder_name=binder_name,
         sample_id=sample_id,
@@ -291,6 +291,12 @@ async def launch_workflow(
     db_session.add(workflow_run)
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
+
+    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
+    if db_session.get(S3Object, s3_input_key) is None:
+        db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
+    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key))
     db_session.commit()
 
     workflow_name = workflow.name.lower()
@@ -329,7 +335,7 @@ async def launch_workflow(
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_proteinfold_workflow(
                 proteinfold_launch_form,
-                dataset_id,
+                s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -351,7 +357,7 @@ async def launch_workflow(
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_bindflow_workflow(
                 bindcraft_launch_form,
-                dataset_id,
+                s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -371,7 +377,7 @@ async def launch_workflow(
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_wisps_workflow(
                 wisps_launch_form,
-                dataset_id,
+                s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -507,90 +513,122 @@ async def get_details(run_id: str) -> LaunchDetails:
 
 @router.post(
     "/datasets/upload",
-    response_model=DatasetUploadResponse,
+    response_model=S3DatasetUploadResponse,
 )
 async def upload_dataset(
     payload: DatasetUploadRequest,
-) -> DatasetUploadResponse:
-    """Create a Seqera dataset and upload form data as CSV content."""
+) -> S3DatasetUploadResponse:
+    """Generate a CSV from form data and upload directly to S3."""
     try:
-        dataset = await create_seqera_dataset(name="dataset")
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Dataset creation failed: {exc}",
-        ) from exc
-    except SeqeraExecutorError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dataset creation failed: {exc}",
-        ) from exc
-
-    try:
-        upload_result = await upload_dataset_to_seqera(dataset.dataset_id, payload.formData)
+        result = await upload_csv_to_s3(payload.formData)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except SeqeraConfigurationError as exc:
+    except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Dataset upload failed: {exc}",
+            detail=f"S3 configuration error: {exc}",
         ) from exc
-    except SeqeraExecutorError as exc:
+    except S3ServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dataset upload failed: {exc}",
+            detail=f"S3 upload failed: {exc}",
         ) from exc
 
-    return DatasetUploadResponse(
-        message="Dataset created and uploaded successfully",
-        datasetId=upload_result.dataset_id,
-        success=upload_result.success,
-        details=upload_result.raw_response,
+    return S3DatasetUploadResponse(
+        message="CSV samplesheet uploaded to S3 successfully",
+        s3Key=result.file_key,
+        s3Uri=result.file_url or f"s3://{result.bucket}/{result.file_key}",
+        success=result.success,
     )
 
 
 @router.post(
     "/datasets/interaction-screening/upload",
-    response_model=InteractionScreeningDatasetUploadResponse,
+    response_model=InteractionScreeningS3UploadResponse,
 )
 async def upload_interaction_screening_dataset_endpoint(
     payload: InteractionScreeningDatasetUploadRequest,
-) -> InteractionScreeningDatasetUploadResponse:
-    """Create a Seqera dataset and upload an interaction screening samplesheet."""
+) -> InteractionScreeningS3UploadResponse:
+    """Build and upload an interaction screening samplesheet directly to S3."""
     try:
-        dataset = await create_seqera_dataset(name=payload.runId)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Dataset creation failed: {exc}",
-        ) from exc
-    except SeqeraExecutorError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dataset creation failed: {exc}",
-        ) from exc
-
-    try:
-        upload_result = await upload_interaction_screening_dataset(
-            dataset.dataset_id, payload.sequences, payload.runId
+        result, split_output_dir = await upload_interaction_screening_csv_to_s3(
+            payload.sequences, payload.runId
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except SeqeraConfigurationError as exc:
+    except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Dataset upload failed: {exc}",
+            detail=f"S3 configuration error: {exc}",
         ) from exc
-    except SeqeraExecutorError as exc:
+    except S3ServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dataset upload failed: {exc}",
+            detail=f"S3 upload failed: {exc}",
         ) from exc
 
-    return InteractionScreeningDatasetUploadResponse(
-        message="Dataset created and uploaded successfully",
-        datasetId=upload_result.dataset_id,
-        success=upload_result.success,
-        splitOutputDir=upload_result.split_output_dir or "",
-        details=upload_result.raw_response,
+    return InteractionScreeningS3UploadResponse(
+        message="Interaction screening samplesheet uploaded to S3 successfully",
+        s3Key=result.file_key,
+        s3Uri=result.file_url or f"s3://{result.bucket}/{result.file_key}",
+        success=result.success,
+        splitOutputDir=split_output_dir,
+    )
+
+
+@router.get(
+    "/runs/{run_id}/input-samplesheet",
+    response_model=RunInputPresignedUrlResponse,
+)
+async def get_run_input_samplesheet(
+    run_id: str,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db_session: Session = Depends(get_db),
+) -> RunInputPresignedUrlResponse:
+    """Return a pre-signed URL to download the input samplesheet for a workflow run.
+
+    Access is restricted to the owning user.
+    """
+    workflow_run = db_session.scalar(
+        select(WorkflowRun).where(
+            WorkflowRun.seqera_run_id == run_id,
+            WorkflowRun.owner_user_id == current_user_id,
+        )
+    )
+    if workflow_run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow run not found or access denied.",
+        )
+
+    run_input = next(iter(workflow_run.inputs), None)
+    if run_input is None or run_input.s3_object is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No input samplesheet found for this workflow run.",
+        )
+
+    s3_key = run_input.s3_object.object_key
+    try:
+        presigned_url = await generate_presigned_url(
+            s3_key,
+            expiration=3600,
+            response_content_type="text/csv",
+            response_content_disposition="attachment",
+        )
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to generate download URL: {exc}",
+        ) from exc
+
+    return RunInputPresignedUrlResponse(
+        runId=run_id,
+        s3Key=s3_key,
+        presignedUrl=presigned_url,
     )

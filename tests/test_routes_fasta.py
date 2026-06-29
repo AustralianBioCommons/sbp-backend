@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from io import BytesIO
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.routes.fasta_upload import MAX_FILE_SIZE, _human_readable_size, upload_fasta_file
 from app.services.s3 import S3UploadResult
 
 
@@ -150,3 +151,52 @@ def test_upload_fasta_generic_exception(client):
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Unexpected error" in response.json()["detail"]
+
+
+# =============================================================================
+# Unit tests for _human_readable_size and route function edge cases
+# =============================================================================
+
+
+def test_human_readable_size_bytes():
+    assert _human_readable_size(0) == "0B"
+    assert _human_readable_size(512) == "512B"
+
+
+def test_human_readable_size_kilobytes():
+    assert _human_readable_size(1024) == "1KB"
+
+
+def test_human_readable_size_megabytes():
+    assert _human_readable_size(1024 * 1024) == "1MB"
+
+
+def test_human_readable_size_terabytes():
+    assert _human_readable_size(1024**4).endswith("TB")
+
+
+@pytest.mark.asyncio
+async def test_upload_fasta_rejects_no_filename():
+    """Route raises 400 when UploadFile has no filename."""
+    file = MagicMock()
+    file.filename = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_fasta_file(file=file, folder="input", _current_user_id=None)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "No file provided" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_upload_fasta_rejects_oversized_file():
+    """Route raises 400 when file.size exceeds the limit."""
+    file = MagicMock()
+    file.filename = "big.fasta"
+    file.size = MAX_FILE_SIZE + 1
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_fasta_file(file=file, folder="input", _current_user_id=None)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "exceeds" in exc_info.value.detail

@@ -113,7 +113,6 @@ def test_workflow_run_model():
     assert "id" in column_names
     assert "workflow_id" in column_names
     assert "owner_user_id" in column_names
-    assert "seqera_dataset_id" in column_names
     assert "seqera_run_id" in column_names
     assert "binder_name" in column_names
     assert "sample_id" in column_names

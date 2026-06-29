@@ -106,13 +106,13 @@ class WorkflowLaunchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     launch: WorkflowLaunchForm
-    datasetId: str = Field(
+    s3InputKey: str = Field(
         ...,
-        description="Seqera dataset ID to attach to the workflow",
+        description="S3 object key for the workflow input CSV samplesheet",
     )
     formData: WorkflowFormData = Field(
         ...,
-        description="Optional form data to convert to CSV and upload as a dataset",
+        description="Form data submitted for the workflow run",
     )
 
 
@@ -207,6 +207,26 @@ class InteractionScreeningDatasetUploadResponse(DatasetUploadResponse):
     """Dataset upload response for interaction-screening — splitOutputDir is always present."""
 
     splitOutputDir: str
+
+
+class S3DatasetUploadResponse(BaseModel):
+    message: str
+    s3Key: str
+    s3Uri: str
+    success: bool
+    splitOutputDir: str | None = None
+
+
+class InteractionScreeningS3UploadResponse(S3DatasetUploadResponse):
+    """S3 upload response for interaction-screening — splitOutputDir is always present."""
+
+    splitOutputDir: str
+
+
+class RunInputPresignedUrlResponse(BaseModel):
+    runId: str
+    s3Key: str
+    presignedUrl: str
 
 
 class SequenceItem(BaseModel):

@@ -57,6 +57,58 @@ def test_parse_submit_datetime_invalid_returns_none():
     assert job_utils.parse_submit_datetime({"workflow": {"submit": "bad"}}) is None
 
 
+def test_format_tool_name_empty_string():
+    assert job_utils.format_tool_name("") == ""
+
+
+def test_get_tool_by_seqera_run_id(test_db):
+    user = AppUser(auth0_user_id="auth0|tool-u", name="Tool U", email="tool@example.com")
+    test_db.add(user)
+    test_db.commit()
+
+    run_direct = WorkflowRun(
+        owner_user_id=user.id, seqera_run_id="tool-run-1", tool="bindcraft", work_dir="wd-t1"
+    )
+    run_form_mode = WorkflowRun(
+        owner_user_id=user.id,
+        seqera_run_id="tool-run-2",
+        tool=None,
+        submitted_form_data={"mode": "colabfold"},
+        work_dir="wd-t2",
+    )
+    run_form_tool = WorkflowRun(
+        owner_user_id=user.id,
+        seqera_run_id="tool-run-3",
+        tool=None,
+        submitted_form_data={"tool": "wisps"},
+        work_dir="wd-t3",
+    )
+    run_no_tool = WorkflowRun(
+        owner_user_id=user.id,
+        seqera_run_id="tool-run-4",
+        tool=None,
+        submitted_form_data={},
+        work_dir="wd-t4",
+    )
+    test_db.add_all([run_direct, run_form_mode, run_form_tool, run_no_tool])
+    test_db.commit()
+
+    result = job_utils.get_tool_by_seqera_run_id(test_db, user.id)
+
+    assert result["tool-run-1"] == "Bindcraft"
+    assert result["tool-run-2"] == "Colabfold"
+    assert result["tool-run-3"] == "Wisps"
+    assert result["tool-run-4"] == "Unknown"
+
+
+def test_get_sample_id_for_score_delegates():
+    run = SimpleNamespace(id="rid", sample_id="s1")
+    with patch("app.services.job_utils.get_sample_id_for_result", return_value="s1") as mock:
+        result = job_utils._get_sample_id_for_score(run)
+    assert result == "s1"
+    mock.assert_called_once_with(run)
+
+
 def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
     """Test that get_owned_run_ids returns only runs owned by the specified user."""
     # Create two users
@@ -229,6 +281,26 @@ def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_
     user2_types = job_utils.get_workflow_type_by_seqera_run_id(test_db, user2.id)
     assert user2_types == {"run-user2-1": "Otherworkflow"}
     assert "run-user1-1" not in user2_types
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_updates_existing_when_score_was_none():
+    """When existing metric exists but max_score is None, update it in place."""
+    run = SimpleNamespace(id="rid", seqera_run_id="wf-x", tool="bindcraft")
+    existing_metric = SimpleNamespace(max_score=None)
+    db = _DB(scalar=existing_metric)
+
+    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.75))
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        score = await job_utils.ensure_completed_run_score(db, run, "Completed")
+
+    assert score == 0.75
+    assert existing_metric.max_score == 0.75
+    assert db.committed is True
+    assert db.added is None
 
 
 @pytest.mark.asyncio

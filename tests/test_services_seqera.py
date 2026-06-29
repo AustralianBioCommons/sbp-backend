@@ -80,7 +80,7 @@ async def test_launch_success_minimal():
     with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
         result = await launch_bindflow_workflow(
             form,
-            dataset_id="dataset_min_001",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -143,7 +143,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     ):
         launch_payload = await prepare_bindflow_workflow(
             form=form,
-            dataset_id="dataset_abc",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -174,14 +174,13 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["workDir"] == "/work/dir"
     assert queued_job.launch_payload["workspaceId"] == "ws_123"
     assert queued_job.launch_payload["revision"] == "main"
-    assert queued_job.launch_payload["datasetIds"] == ["dataset_abc"]
     assert queued_job.launch_payload["configProfiles"] == ["gadi"]
     assert queued_job.launch_payload["configText"] == "config_text"
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: https://api.seqera.test/workspaces/ws_123/datasets/dataset_abc/v/1/n/samplesheet.csv"
+        "input: s3://my-bucket/inputs/samplesheets/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode: bindcraft" in queued_job.launch_payload["paramsText"]
@@ -217,7 +216,7 @@ async def test_launch_success_with_all_params():
     ):
         result = await launch_bindflow_workflow(
             form,
-            dataset_id="dataset_789",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -237,8 +236,9 @@ async def test_launch_success_with_all_params():
     assert route.called
     request = route.calls.last.request
     payload = json.loads(request.content)
-    assert "datasetIds" in payload["launch"]
-    assert "dataset_789" in payload["launch"]["datasetIds"]
+    assert (
+        "input: s3://test-s3-bucket/inputs/samplesheets/test.csv" in payload["launch"]["paramsText"]
+    )
     assert payload["launch"]["preRunScript"] == "prerun_body"
     assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
 
@@ -258,7 +258,7 @@ async def test_launch_includes_default_params():
     with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
         await launch_bindflow_workflow(
             form,
-            dataset_id="dataset_defaults_001",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -296,7 +296,7 @@ async def test_launch_with_dataset_adds_input_url():
     with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
         await launch_bindflow_workflow(
             form,
-            dataset_id="ds_abc",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -314,9 +314,7 @@ async def test_launch_with_dataset_adds_input_url():
     payload = json.loads(request.content)
     params_text = payload["launch"]["paramsText"]
 
-    assert "input:" in params_text
-    assert "ds_abc" in params_text
-    assert "samplesheet.csv" in params_text
+    assert "input: s3://test-s3-bucket/inputs/samplesheets/test.csv" in params_text
 
 
 @pytest.mark.asyncio
@@ -335,7 +333,7 @@ async def test_launch_api_error_response():
         with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
             await launch_bindflow_workflow(
                 form,
-                dataset_id="dataset_error_001",
+                s3_input_key="inputs/samplesheets/test.csv",
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline="https://github.com/test/repo",
@@ -366,7 +364,7 @@ async def test_launch_missing_workflow_id_in_response():
         with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
             await launch_bindflow_workflow(
                 form,
-                dataset_id="dataset_error_002",
+                s3_input_key="inputs/samplesheets/test.csv",
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline="https://github.com/test/repo",
@@ -397,7 +395,7 @@ def test_launch_missing_env_vars():
                 asyncio.run(
                     launch_bindflow_workflow(
                         form,
-                        dataset_id="dataset_env_001",
+                        s3_input_key="inputs/samplesheets/test.csv",
                         db_session=db_session,
                         workflow_run=workflow_run,
                         pipeline="https://github.com/test/repo",
@@ -431,7 +429,7 @@ async def test_launch_with_custom_params_text():
     with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
         await launch_bindflow_workflow(
             form,
-            dataset_id="dataset_params_001",
+            s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",

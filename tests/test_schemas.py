@@ -80,27 +80,27 @@ def test_extra_fields_forbidden():
 
 
 def test_valid_payload_minimal():
-    """Test payload with required launch, formData, and dataset ID."""
+    """Test payload with required launch, formData, and s3InputKey."""
     payload = WorkflowLaunchPayload(
         launch={"workflow": "de-novo-design", "tool": "bindcraft"},
         formData={"workflow": "de-novo-design", "tool": "bindcraft"},
-        datasetId="dataset_123",
+        s3InputKey="inputs/samplesheets/test.csv",
     )
 
     assert payload.launch.workflow == "de-novo-design"
     assert payload.launch.tool == "bindcraft"
-    assert payload.datasetId == "dataset_123"
+    assert payload.s3InputKey == "inputs/samplesheets/test.csv"
 
 
-def test_valid_payload_with_dataset_id():
-    """Test payload with dataset ID."""
+def test_valid_payload_with_s3_input_key():
+    """Test payload with s3InputKey."""
     payload = WorkflowLaunchPayload(
         launch={"workflow": "de-novo-design", "tool": "bindcraft"},
         formData={"workflow": "de-novo-design", "tool": "bindcraft"},
-        datasetId="dataset_123",
+        s3InputKey="inputs/samplesheets/test.csv",
     )
 
-    assert payload.datasetId == "dataset_123"
+    assert payload.s3InputKey == "inputs/samplesheets/test.csv"
 
 
 def test_valid_payload_with_form_data():
@@ -114,7 +114,7 @@ def test_valid_payload_with_form_data():
             "input": "/path/to/file",
             "param": 42,
         },
-        datasetId="dataset_123",
+        s3InputKey="inputs/samplesheets/test.csv",
     )
 
     assert payload.formData.tool == "bindcraft"
@@ -127,12 +127,12 @@ def test_payload_extra_fields_forbidden():
         WorkflowLaunchPayload(
             launch={"workflow": "de-novo-design", "tool": "bindcraft"},
             formData={"workflow": "de-novo-design", "tool": "bindcraft"},
-            datasetId="dataset_123",
+            s3InputKey="inputs/samplesheets/test.csv",
             unknownField="value",
         )
 
 
-def test_payload_requires_dataset_id():
+def test_payload_requires_s3_input_key():
     with pytest.raises(ValidationError):
         WorkflowLaunchPayload(
             launch={"workflow": "de-novo-design", "tool": "bindcraft"},

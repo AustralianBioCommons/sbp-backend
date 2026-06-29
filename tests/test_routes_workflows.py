@@ -84,7 +84,7 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
@@ -111,7 +111,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
         created_run = db.execute(
             select(
                 WorkflowRun.id,
-                WorkflowRun.seqera_dataset_id,
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
                 WorkflowRun.sample_id,
@@ -120,7 +119,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             ).where(WorkflowRun.seqera_run_id == "wf_123")
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_123"
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "s1"
@@ -136,42 +134,6 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 
 
 @patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_success_with_dataset_id(mock_launch, client: TestClient, test_engine):
-    """Test successful workflow launch with pre-created dataset ID."""
-    mock_launch.return_value = WorkflowLaunchResult(
-        workflow_id="wf_789",
-        status="submitted",
-    )
-
-    payload = {
-        "launch": {
-            "workflow": "de-novo-design",
-            "tool": "bindcraft",
-            "runName": "test-with-data",
-        },
-        "datasetId": "dataset_456",  # Use existing dataset
-        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
-    }
-
-    response = client.post("/api/workflows/launch", json=payload)
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["runId"] == "wf_789"
-
-    mock_launch.assert_called_once()
-    call_args = mock_launch.call_args
-    assert call_args[0][1] == "dataset_456"
-
-    with Session(test_engine) as db:
-        created_run = db.execute(
-            select(WorkflowRun.seqera_dataset_id).where(WorkflowRun.seqera_run_id == "wf_789")
-        ).first()
-        assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_456"
-
-
-@patch("app.routes.workflows.launch_bindflow_workflow")
 def test_launch_configuration_error(mock_launch, client: TestClient, test_engine):
     """Test launch with configuration error."""
     mock_launch.side_effect = SeqeraConfigurationError("Missing API token")
@@ -182,7 +144,7 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
@@ -208,7 +170,7 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
@@ -235,22 +197,20 @@ def test_launch_invalid_payload(client: TestClient):
     assert response.status_code == 422  # Validation error
 
 
-def test_launch_rejects_blank_dataset_id(client: TestClient):
-    """datasetId must be non-empty after trimming."""
+def test_launch_rejects_missing_s3_input_key(client: TestClient):
+    """s3InputKey is required; omitting it must return 422."""
     payload = {
         "launch": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "datasetId": "   ",
         "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
     }
 
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 422
-    assert "datasetId is required" in response.json()["detail"]
 
 
 def test_cancel_workflow_endpoint_removed(client: TestClient):
@@ -267,7 +227,7 @@ def test_launch_rejects_workflow_not_in_db(client: TestClient):
             "tool": "boltz",
             "runName": "test-run",
         },
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "interaction-screening", "tool": "boltz"},
     }
 
@@ -284,7 +244,7 @@ def test_launch_rejects_invalid_workflow_schema(client: TestClient):
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "unknown-workflow", "tool": "bindcraft"},
     }
 
@@ -521,7 +481,7 @@ def test_launch_missing_repo_url(client: TestClient, app, test_engine):
 
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
     response = client.post("/api/workflows/launch", json=payload)
@@ -545,7 +505,7 @@ def test_launch_missing_default_revision(client: TestClient, app, test_engine):
 
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
     response = client.post("/api/workflows/launch", json=payload)
@@ -589,7 +549,7 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
 
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-1"},
-        "datasetId": "dataset_pf",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
@@ -615,7 +575,7 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
             "tool": "colabfold",
             "runName": "pf-run-cfg-err",
         },
-        "datasetId": "dataset_pf",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
@@ -636,7 +596,7 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
             "tool": "colabfold",
             "runName": "pf-run-exec-err",
         },
-        "datasetId": "dataset_pf",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {"workflow": "single-prediction", "tool": "colabfold"},
     }
 
@@ -652,7 +612,7 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
 
 _LAUNCH_PAYLOAD = {
     "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "role-test-run"},
-    "datasetId": "dataset_role",
+    "s3InputKey": "inputs/samplesheets/test.csv",
     "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
 }
 
@@ -856,7 +816,7 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
             "tool": "boltz",
             "runName": "wisps-run",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -879,14 +839,12 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
     with Session(test_engine) as db:
         created_run = db.execute(
             select(
-                WorkflowRun.seqera_dataset_id,
                 WorkflowRun.run_name,
                 WorkflowRun.submitted_form_data,
                 WorkflowRun.submission_timestamp,
             ).where(WorkflowRun.seqera_run_id == "wisps_wf_001")
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_wisps"
         assert created_run.run_name == "wisps-run"
         assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
         assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
@@ -900,7 +858,7 @@ def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
             "workflow": "interaction-screening",
             "tool": "boltz",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -921,7 +879,7 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
             "workflow": "interaction-screening",
             "tool": "boltz",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -948,7 +906,7 @@ def test_launch_interaction_screening_config_error(
             "tool": "boltz",
             "runName": "wisps-run-cfg-err",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -983,7 +941,7 @@ def test_launch_interaction_screening_executor_error(
             "tool": "boltz",
             "runName": "wisps-run-exec-err",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -1013,7 +971,7 @@ def test_launch_interaction_screening_missing_config_path(wisps_no_config_client
             "tool": "boltz",
             "runName": "wisps-run-no-cfg",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -1042,7 +1000,7 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
             "tool": "boltz",
             "runName": "wisps-run-workflow-field",
         },
-        "datasetId": "dataset_wisps",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "interaction-screening",
             "tool": "boltz",
@@ -1058,12 +1016,9 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
 
     with Session(test_engine) as db:
         created_run = db.execute(
-            select(WorkflowRun.seqera_dataset_id, WorkflowRun.run_name).where(
-                WorkflowRun.seqera_run_id == "wisps_wf_002"
-            )
+            select(WorkflowRun.run_name).where(WorkflowRun.seqera_run_id == "wisps_wf_002")
         ).first()
         assert created_run is not None
-        assert created_run.seqera_dataset_id == "dataset_wisps"
         assert created_run.run_name == "wisps-run-workflow-field"
 
 
@@ -1128,7 +1083,7 @@ def test_launch_deducts_credits_when_enabled(mock_launch, client, test_engine, m
 
     payload = {
         "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "credit-run"},
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
@@ -1154,7 +1109,7 @@ def test_launch_rejected_when_insufficient_credits(mock_launch, client, test_eng
 
     payload = {
         "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "credit-run"},
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
@@ -1184,7 +1139,7 @@ def test_launch_does_not_deduct_when_credits_disabled(
 
     payload = {
         "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "nocredit-run"},
-        "datasetId": "dataset_123",
+        "s3InputKey": "inputs/samplesheets/test.csv",
         "formData": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",

@@ -20,7 +20,6 @@ from .launch_payloads import get_executor_script, inject_prerun_script, without_
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
-    _samplesheet_url,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    dataset_id: str,
+    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -47,7 +46,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     ip_address: str,
 ) -> dict[str, Any]:
     """Build and queue a bindflow launch payload."""
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
@@ -64,7 +62,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-    dataset_url = _samplesheet_url(seqera_api_url, workspace_id, dataset_id)
+    dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
     default_params["job_id"] = run_name
@@ -103,7 +101,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
             ip_address=ip_address,
         ),
         "resume": False,
-        "datasetIds": [dataset_id],
     }
 
     queued_job = QueuedJob(
@@ -121,7 +118,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 
 async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    dataset_id: str,
+    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -140,7 +137,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     """Launch a bindflow workflow on the Seqera Platform."""
     launch_payload = await prepare_bindflow_workflow(
         form,
-        dataset_id,
+        s3_input_key,
         db_session=db_session,
         workflow_run=workflow_run,
         pipeline=pipeline,
