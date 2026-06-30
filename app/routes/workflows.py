@@ -19,13 +19,13 @@ from unidecode import unidecode
 from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
-    WispsFormData,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
     WispsDatasetUploadRequest,
+    WispsFormData,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
@@ -313,9 +313,7 @@ async def launch_workflow(
     wisps_form_data: WispsFormData | None = None
     if workflow_name in ("interaction-screening", "bulk-prediction"):
         try:
-            wisps_form_data = WispsFormData.model_validate(
-                payload.formData.model_dump()
-            )
+            wisps_form_data = WispsFormData.model_validate(payload.formData.model_dump())
         except ValidationError as exc:
             missing = next(
                 (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),

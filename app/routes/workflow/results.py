@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...db.models import QueuedJob
 from ...schemas.workflows import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
@@ -18,7 +19,6 @@ from ...schemas.workflows import (
     ResultReportResponse,
     ResultSnapshotsResponse,
 )
-from ...db.models import QueuedJob
 from ...services.job_utils import get_owned_run
 from ...services.results_utils import (
     _format_attachment_content_disposition,
@@ -55,9 +55,7 @@ async def get_result_setting_params(
 
     form_data: dict[str, Any] = await resolve_run_form_data(owned_run) or {}
 
-    queued_job = db.scalar(
-        select(QueuedJob).where(QueuedJob.workflow_run_id == owned_run.id)
-    )
+    queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == owned_run.id))
     if queued_job:
         payload = queued_job.launch_payload or {}
         raw_params = payload.get("paramsText")

@@ -238,7 +238,9 @@ async def test_upload_interaction_screening_success(mock_upload):
 async def test_upload_interaction_screening_empty_sequences_raises():
     """Empty sequences list raises ValueError."""
     with pytest.raises(ValueError, match="sequences cannot be empty"):
-        await upload_wisps_samplesheet_to_s3([], "run-1", INTERACTION_SCREENING_BASE_PATH, "interaction-screening")
+        await upload_wisps_samplesheet_to_s3(
+            [], "run-1", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+        )
 
 
 @pytest.mark.asyncio
@@ -246,7 +248,10 @@ async def test_upload_interaction_screening_empty_run_id_raises():
     """Empty run_id raises ValueError."""
     with pytest.raises(ValueError, match="run_id is required"):
         await upload_wisps_samplesheet_to_s3(
-            [WispsSequenceItem(id="s1", group="query")], "", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+            [WispsSequenceItem(id="s1", group="query")],
+            "",
+            INTERACTION_SCREENING_BASE_PATH,
+            "interaction-screening",
         )
 
 

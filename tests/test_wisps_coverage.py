@@ -74,7 +74,10 @@ def test_get_wisps_default_params_no_tool():
 
 def test_get_wisps_default_params_with_tool():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="manual", tool="boltz"
+        out_dir="s3://bucket/out",
+        samplesheet_url="https://api/sheet.csv",
+        mode="manual",
+        tool="boltz",
     )
     assert params["tools"] == "boltz"
 
