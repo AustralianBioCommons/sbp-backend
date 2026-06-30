@@ -90,8 +90,8 @@ async def upload_wisps_samplesheet_to_s3(
 ) -> tuple[S3UploadResult, str]:
     """Build and upload a WISPS samplesheet to S3, returning (result, split_output_dir).
 
-    CSV columns: id, sequence, group, type.
-    group is "g2" for target sequences, "g1" for all others (including when absent).
+    Interaction-screening sequences carry a group field → CSV includes id, sequence, group, type.
+    Bulk-prediction sequences have no group → CSV includes id, sequence, type only.
     """
     if not sequences:
         raise ValueError("sequences cannot be empty")
@@ -101,16 +101,28 @@ async def upload_wisps_samplesheet_to_s3(
     unique_run_path = build_unique_dataset_name(run_id)
     split_output_dir = f"{base_path}/{unique_run_path}"
 
-    fieldnames = ["id", "sequence", "group", "type"]
-    rows: list[dict[str, str]] = [
-        {
-            "id": s.id,
-            "sequence": f"{base_path}/{unique_run_path}/{s.id}.fasta",
-            "group": "g2" if s.group == "target" else "g1",
-            "type": "protein",
-        }
-        for s in sequences
-    ]
+    has_group = sequences[0].group is not None
+    if has_group:
+        fieldnames = ["id", "sequence", "group", "type"]
+        rows: list[dict[str, str]] = [
+            {
+                "id": s.id,
+                "sequence": f"{base_path}/{unique_run_path}/{s.id}.fasta",
+                "group": "g1" if s.group == "query" else "g2",
+                "type": "protein",
+            }
+            for s in sequences
+        ]
+    else:
+        fieldnames = ["id", "sequence", "type"]
+        rows = [
+            {
+                "id": s.id,
+                "sequence": f"{base_path}/{unique_run_path}/{s.id}.fasta",
+                "type": "protein",
+            }
+            for s in sequences
+        ]
 
     with io.StringIO() as output:
         writer = csv.DictWriter(output, fieldnames=fieldnames)
