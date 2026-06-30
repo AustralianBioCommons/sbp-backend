@@ -13,6 +13,7 @@ from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 class SeqeraClient:
     """Async HTTP client wrapper for Seqera API calls."""
+    api_url: str
 
     def __init__(
         self,
@@ -24,10 +25,14 @@ class SeqeraClient:
             "Accept": "application/json",
         }
         self.timeout = timeout
+        self.api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
+
+    def get_url(self, path: str) -> str:
+        return f"{self.api_url}/{path.lstrip('/')}"
 
     async def post(
         self,
-        url: str,
+        path: str,
         payload: Mapping[str, Any],
         headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
@@ -36,16 +41,18 @@ class SeqeraClient:
             "Content-Type": "application/json",
             **dict(headers or {}),
         }
+        url = self.get_url(path)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.post(url, headers=request_headers, json=dict(payload))
 
     async def get(
         self,
-        url: str,
+        path: str,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         request_headers = {**self.default_headers, **dict(headers or {})}
+        url = self.get_url(path)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.get(url, params=params, headers=request_headers)
 

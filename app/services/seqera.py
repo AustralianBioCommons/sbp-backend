@@ -37,14 +37,15 @@ def params_to_yaml_text(params: dict[str, Any]) -> str:
 
 
 async def post_seqera_launch(
-    url: str,
     payload: dict[str, Any],
     *,
     workflow_label: str,
 ) -> WorkflowLaunchResult:
     """Post a workflow launch payload to Seqera and return the launch result."""
     seqera_client = SeqeraClient()
-    response = await seqera_client.post(url, payload)
+    workspace_id = _get_required_env("WORK_SPACE")
+    path = f"/workflow/launch?workspaceId={workspace_id}"
+    response = await seqera_client.post(path, payload)
 
     if response.is_error:
         body = response.text

@@ -174,3 +174,35 @@ async def launch_wisps_workflow(
     )
 
     return await post_seqera_launch(launch_url, {"launch": runtime_payload}, workflow_label="WISPS")
+
+
+async def launch_wisps_workflow_new(
+        *,
+        queued_job: QueuedJob,
+        dry_run: bool = False,
+) -> WorkflowLaunchResult | None:
+    """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
+    if not queued_job.workflow_run.submitted_form_data:
+        raise ValueError("No submitted form data found for queued job")
+    form_data = WorkflowFormData(**queued_job.workflow_run.submitted_form_data)
+
+    fasta_s3_uri = form_data.extra_fields.get("fastaS3Uri", "").strip()
+    split_output_dir = form_data.extra_fields.get("splitOutputDir", "").strip()
+    prerun_script = get_executor_script(
+        prerun_script_path=queued_job.workflow.prerun_script_path,
+        env={
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
+            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
+            "D": split_output_dir,
+        },
+    )
+    runtime_payload = inject_prerun_script(
+        launch_payload=queued_job.launch_payload, prerun_script=prerun_script
+    )
+
+    if dry_run:
+        logger.info("Dry run - not launching WISPS workflow")
+        return None
+    return await post_seqera_launch(payload={"launch": runtime_payload}, workflow_label="WISPS")
