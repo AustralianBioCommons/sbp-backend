@@ -91,8 +91,8 @@ class WorkflowFormData(BaseModel):
     sample_id: str | None = Field(default=None, description="Sample ID for the workflow run")
 
 
-class InteractionScreeningFormData(WorkflowFormData):
-    """Form data for the interaction-screening (WISPS) workflow."""
+class WispsFormData(WorkflowFormData):
+    """Form data for WISPS workflows (interaction-screening, bulk-prediction)."""
 
     fastaS3Uri: str = Field(
         ..., description="S3 URI of the combined FASTA file to split and screen"
@@ -229,17 +229,18 @@ class RunInputPresignedUrlResponse(BaseModel):
     presignedUrl: str
 
 
-class SequenceItem(BaseModel):
+class WispsSequenceItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    group: Literal["query", "target"]
+    sequence: str | None = None
+    group: Literal["query", "target"] | None = None
 
 
-class InteractionScreeningDatasetUploadRequest(BaseModel):
+class WispsDatasetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sequences: list[SequenceItem]
+    sequences: list[WispsSequenceItem]
     runId: str
 
 

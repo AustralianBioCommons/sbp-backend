@@ -20,6 +20,7 @@ from .seqera import (
 )
 from .seqera_errors import SeqeraConfigurationError
 from .wisps_config import (
+    WISPS_WORKFLOW_MODES,
     get_wisps_config_profiles,
     get_wisps_config_text,
     get_wisps_default_params,
@@ -60,9 +61,15 @@ async def prepare_wisps_workflow(
     if not job_id:
         raise SeqeraConfigurationError("Missing run name for workflow launch")
 
+    mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
     sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
     params_text = params_to_yaml_text(
-        get_wisps_default_params(out_dir=out_dir, samplesheet_url=sheet_url, tool=tool)
+        get_wisps_default_params(
+            out_dir=out_dir,
+            samplesheet_url=sheet_url,
+            mode=mode,
+            tool=tool,
+        )
     )
 
     config_text = get_wisps_config_text(

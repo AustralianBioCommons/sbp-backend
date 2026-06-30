@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...schemas.workflows import (
@@ -16,6 +18,7 @@ from ...schemas.workflows import (
     ResultReportResponse,
     ResultSnapshotsResponse,
 )
+from ...db.models import QueuedJob
 from ...services.job_utils import get_owned_run
 from ...services.results_utils import (
     _format_attachment_content_disposition,
@@ -40,16 +43,35 @@ async def get_result_setting_params(
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> JobSettingParamsResponse:
-    """Return the submitted form settings for a workflow result view."""
+    """Return the submitted form settings for a workflow result view.
+
+    Base fields come from workflow_runs.submitted_form_data; paramsText and
+    configProfiles are overlaid from queued_jobs.launch_payload so the result
+    page always shows the exact values that were sent to Seqera.
+    """
     owned_run = get_owned_run(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    form_data = await resolve_run_form_data(owned_run)
+    form_data: dict[str, Any] = await resolve_run_form_data(owned_run) or {}
+
+    queued_job = db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == owned_run.id)
+    )
+    if queued_job:
+        payload = queued_job.launch_payload or {}
+        raw_params = payload.get("paramsText")
+        if raw_params:
+            try:
+                form_data["paramsText"] = yaml.safe_load(raw_params) or {}
+            except yaml.YAMLError:
+                form_data["paramsText"] = raw_params
+        if "configProfiles" in payload:
+            form_data["configProfiles"] = payload["configProfiles"]
 
     return JobSettingParamsResponse(
         runId=run_id,
-        settingParams=form_data,
+        settingParams=form_data or None,
     )
 
 

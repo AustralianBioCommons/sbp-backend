@@ -7,7 +7,7 @@ import random
 import re
 import string
 from datetime import UTC, datetime
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,14 +19,13 @@ from unidecode import unidecode
 from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
-    InteractionScreeningDatasetUploadRequest,
-    InteractionScreeningFormData,
-    InteractionScreeningS3UploadResponse,
+    WispsFormData,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
+    WispsDatasetUploadRequest,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
@@ -39,8 +38,10 @@ from ..services.credits import (
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
+    BULK_PREDICTION_BASE_PATH,
+    INTERACTION_SCREENING_BASE_PATH,
     upload_csv_to_s3,
-    upload_interaction_screening_csv_to_s3,
+    upload_wisps_samplesheet_to_s3,
 )
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
@@ -309,10 +310,10 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
         )
 
-    wisps_form_data: InteractionScreeningFormData | None = None
-    if workflow_name == "interaction-screening":
+    wisps_form_data: WispsFormData | None = None
+    if workflow_name in ("interaction-screening", "bulk-prediction"):
         try:
-            wisps_form_data = InteractionScreeningFormData.model_validate(
+            wisps_form_data = WispsFormData.model_validate(
                 payload.formData.model_dump()
             )
         except ValidationError as exc:
@@ -322,7 +323,7 @@ async def launch_workflow(
             )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"'{missing}' is required in formData for interaction-screening.",
+                detail=f"'{missing}' is required in formData for {workflow_name}.",
             ) from exc
 
     try:
@@ -372,11 +373,11 @@ async def launch_workflow(
                 institute=institute,
                 ip_address=ip_address,
             )
-        elif workflow_name == "interaction-screening":
+        elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
-            wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             result = await launch_wisps_workflow(
-                wisps_launch_form,
+                launch_form,
                 s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
@@ -542,17 +543,25 @@ async def upload_dataset(
     )
 
 
+_WISPS_BASE_PATHS: dict[str, str] = {
+    "interaction-screening": INTERACTION_SCREENING_BASE_PATH,
+    "bulk-prediction": BULK_PREDICTION_BASE_PATH,
+}
+
+
 @router.post(
-    "/datasets/interaction-screening/upload",
-    response_model=InteractionScreeningS3UploadResponse,
+    "/datasets/{workflow_name}/upload",
+    response_model=S3DatasetUploadResponse,
 )
-async def upload_interaction_screening_dataset_endpoint(
-    payload: InteractionScreeningDatasetUploadRequest,
-) -> InteractionScreeningS3UploadResponse:
-    """Build and upload an interaction screening samplesheet directly to S3."""
+async def upload_wisps_dataset_endpoint(
+    workflow_name: Literal["interaction-screening", "bulk-prediction"],
+    payload: WispsDatasetUploadRequest,
+) -> S3DatasetUploadResponse:
+    """Build and upload a WISPS samplesheet directly to S3."""
+    base_path = _WISPS_BASE_PATHS[workflow_name]
     try:
-        result, split_output_dir = await upload_interaction_screening_csv_to_s3(
-            payload.sequences, payload.runId
+        result, split_output_dir = await upload_wisps_samplesheet_to_s3(
+            payload.sequences, payload.runId, base_path, workflow_name
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -567,8 +576,8 @@ async def upload_interaction_screening_dataset_endpoint(
             detail=f"S3 upload failed: {exc}",
         ) from exc
 
-    return InteractionScreeningS3UploadResponse(
-        message="Interaction screening samplesheet uploaded to S3 successfully",
+    return S3DatasetUploadResponse(
+        message=f"{workflow_name} samplesheet uploaded to S3 successfully",
         s3Key=result.file_key,
         s3Uri=result.file_url or f"s3://{result.bucket}/{result.file_key}",
         success=result.success,
