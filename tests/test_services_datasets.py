@@ -7,13 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app.schemas.workflows import SequenceItem
+from app.schemas.workflows import WispsSequenceItem
 from app.services.datasets import (
+    INTERACTION_SCREENING_BASE_PATH,
     _stringify_field,
     build_unique_dataset_name,
     convert_form_data_to_csv,
     upload_csv_to_s3,
-    upload_interaction_screening_csv_to_s3,
+    upload_wisps_samplesheet_to_s3,
 )
 from app.services.s3 import S3UploadResult
 
@@ -221,10 +222,12 @@ async def test_upload_interaction_screening_success(mock_upload):
     mock_upload.return_value = _s3_result()
 
     sequences = [
-        SequenceItem(id="q1", group="query"),
-        SequenceItem(id="t1", group="target"),
+        WispsSequenceItem(id="q1", group="query"),
+        WispsSequenceItem(id="t1", group="target"),
     ]
-    result, split_output_dir = await upload_interaction_screening_csv_to_s3(sequences, "run-abc")
+    result, split_output_dir = await upload_wisps_samplesheet_to_s3(
+        sequences, "run-abc", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+    )
 
     assert result.success is True
     assert "run-abc" in split_output_dir or "interaction_screening" in split_output_dir
@@ -235,14 +238,16 @@ async def test_upload_interaction_screening_success(mock_upload):
 async def test_upload_interaction_screening_empty_sequences_raises():
     """Empty sequences list raises ValueError."""
     with pytest.raises(ValueError, match="sequences cannot be empty"):
-        await upload_interaction_screening_csv_to_s3([], "run-1")
+        await upload_wisps_samplesheet_to_s3([], "run-1", INTERACTION_SCREENING_BASE_PATH, "interaction-screening")
 
 
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_run_id_raises():
     """Empty run_id raises ValueError."""
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_interaction_screening_csv_to_s3([SequenceItem(id="s1", group="query")], "")
+        await upload_wisps_samplesheet_to_s3(
+            [WispsSequenceItem(id="s1", group="query")], "", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+        )
 
 
 @pytest.mark.asyncio
@@ -252,10 +257,12 @@ async def test_upload_interaction_screening_csv_format(mock_upload):
     mock_upload.return_value = _s3_result()
 
     sequences = [
-        SequenceItem(id="q1", group="query"),
-        SequenceItem(id="t1", group="target"),
+        WispsSequenceItem(id="q1", group="query"),
+        WispsSequenceItem(id="t1", group="target"),
     ]
-    await upload_interaction_screening_csv_to_s3(sequences, "my-run")
+    await upload_wisps_samplesheet_to_s3(
+        sequences, "my-run", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+    )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
     assert "g1" in file_bytes
@@ -271,8 +278,10 @@ async def test_upload_interaction_screening_split_output_dir_matches_run_path(mo
     """split_output_dir is derived from the same unique slug as the FASTA paths."""
     mock_upload.return_value = _s3_result()
 
-    sequences = [SequenceItem(id="s1", group="query")]
-    _, split_output_dir = await upload_interaction_screening_csv_to_s3(sequences, "test-run")
+    sequences = [WispsSequenceItem(id="s1", group="query")]
+    _, split_output_dir = await upload_wisps_samplesheet_to_s3(
+        sequences, "test-run", INTERACTION_SCREENING_BASE_PATH, "interaction-screening"
+    )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
     unique_slug = split_output_dir.split("/")[-1]

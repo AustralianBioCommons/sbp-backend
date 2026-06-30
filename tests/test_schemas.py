@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.schemas.workflows import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
-    InteractionScreeningDatasetUploadRequest,
+    WispsDatasetUploadRequest,
     JobListItem,
     JobListResponse,
     LaunchDetails,
@@ -18,7 +18,7 @@ from app.schemas.workflows import (
     ListRunsResponse,
     PipelineStatus,
     RunInfo,
-    SequenceItem,
+    WispsSequenceItem,
     UIStatus,
     WorkflowLaunchForm,
     WorkflowLaunchPayload,
@@ -410,33 +410,33 @@ def test_job_list_response_empty():
 
 
 # ============================================================================
-# Tests for SequenceItem and InteractionScreeningDatasetUploadRequest
+# Tests for WispsSequenceItem and WispsDatasetUploadRequest
 # ============================================================================
 
 
 def test_sequence_item_query():
-    item = SequenceItem(id="seq-1", group="query")
+    item = WispsSequenceItem(id="seq-1", group="query")
     assert item.id == "seq-1"
     assert item.group == "query"
 
 
 def test_sequence_item_target():
-    item = SequenceItem(id="seq-2", group="target")
+    item = WispsSequenceItem(id="seq-2", group="target")
     assert item.group == "target"
 
 
 def test_sequence_item_invalid_group():
     with pytest.raises(ValidationError):
-        SequenceItem(id="seq-3", group="invalid")
+        WispsSequenceItem(id="seq-3", group="invalid")
 
 
 def test_sequence_item_extra_fields_forbidden():
     with pytest.raises(ValidationError):
-        SequenceItem(id="seq-4", group="query", extra="nope")
+        WispsSequenceItem(id="seq-4", group="query", extra="nope")
 
 
 def test_interaction_screening_request_valid():
-    req = InteractionScreeningDatasetUploadRequest(
+    req = WispsDatasetUploadRequest(
         sequences=[
             {"id": "q1", "group": "query"},
             {"id": "t1", "group": "target"},
@@ -451,13 +451,13 @@ def test_interaction_screening_request_valid():
 
 def test_interaction_screening_request_empty_sequences():
     # Empty sequences list is accepted by the schema; enforcement is in the service layer
-    req = InteractionScreeningDatasetUploadRequest(sequences=[], runId="run-1")
+    req = WispsDatasetUploadRequest(sequences=[], runId="run-1")
     assert req.sequences == []
 
 
 def test_interaction_screening_request_extra_fields_forbidden():
     with pytest.raises(ValidationError):
-        InteractionScreeningDatasetUploadRequest(
+        WispsDatasetUploadRequest(
             sequences=[{"id": "q1", "group": "query"}],
             runId="run-1",
             extra="bad",

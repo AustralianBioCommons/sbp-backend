@@ -58,7 +58,7 @@ def _mock_wisps_db_context():
 
 def test_get_wisps_default_params_required_keys():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv"
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="g1-g2"
     )
     assert "outdir" in params
     assert "input" in params
@@ -67,14 +67,14 @@ def test_get_wisps_default_params_required_keys():
 
 def test_get_wisps_default_params_no_tool():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool=None
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="g1-g2", tool=None
     )
     assert "tools" not in params
 
 
 def test_get_wisps_default_params_with_tool():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool="boltz"
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="manual", tool="boltz"
     )
     assert params["tools"] == "boltz"
 
