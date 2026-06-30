@@ -87,11 +87,13 @@ async def upload_wisps_samplesheet_to_s3(
     run_id: str,
     base_path: str,
     label: str,
+    *,
+    include_group: bool,
 ) -> tuple[S3UploadResult, str]:
     """Build and upload a WISPS samplesheet to S3, returning (result, split_output_dir).
 
-    Interaction-screening sequences carry a group field → CSV includes id, sequence, group, type.
-    Bulk-prediction sequences have no group → CSV includes id, sequence, type only.
+    Set include_group=True for interaction-screening (adds a group column, query→g1, target→g2).
+    Set include_group=False for bulk-prediction (id, sequence, type only).
     """
     if not sequences:
         raise ValueError("sequences cannot be empty")
@@ -101,8 +103,7 @@ async def upload_wisps_samplesheet_to_s3(
     unique_run_path = build_unique_dataset_name(run_id)
     split_output_dir = f"{base_path}/{unique_run_path}"
 
-    has_group = sequences[0].group is not None
-    if has_group:
+    if include_group:
         fieldnames = ["id", "sequence", "group", "type"]
         rows: list[dict[str, str]] = [
             {

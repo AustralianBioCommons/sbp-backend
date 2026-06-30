@@ -559,7 +559,11 @@ async def upload_wisps_dataset_endpoint(
     base_path = _WISPS_BASE_PATHS[workflow_name]
     try:
         result, split_output_dir = await upload_wisps_samplesheet_to_s3(
-            payload.sequences, payload.runId, base_path, workflow_name
+            payload.sequences,
+            payload.runId,
+            base_path,
+            workflow_name,
+            include_group=workflow_name == "interaction-screening",
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

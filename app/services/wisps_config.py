@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from .workflow_config_fetcher import fetch_workflow_config
 
-WISPS_WORKFLOW_MODES: dict[str, str] = {
+WispsMode = Literal["g1-g2", "manual"]
+
+WISPS_WORKFLOW_MODES: dict[str, WispsMode] = {
     "interaction-screening": "g1-g2",
     "bulk-prediction": "manual",
 }
@@ -15,7 +17,7 @@ WISPS_WORKFLOW_MODES: dict[str, str] = {
 def get_wisps_default_params(
     out_dir: str,
     samplesheet_url: str,
-    mode: str,
+    mode: WispsMode,
     tool: str | None = None,
 ) -> dict[str, Any]:
     """Params passed as YAML paramsText."""
