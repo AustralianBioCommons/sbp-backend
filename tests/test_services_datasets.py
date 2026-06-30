@@ -227,7 +227,11 @@ async def test_upload_interaction_screening_success(mock_upload):
         WispsSequenceItem(id="t1", group="target"),
     ]
     result, split_output_dir = await upload_wisps_samplesheet_to_s3(
-        sequences, "run-abc", INTERACTION_SCREENING_BASE_PATH, "interaction-screening", include_group=True
+        sequences,
+        "run-abc",
+        INTERACTION_SCREENING_BASE_PATH,
+        "interaction-screening",
+        include_group=True,
     )
 
     assert result.success is True
@@ -240,7 +244,11 @@ async def test_upload_interaction_screening_empty_sequences_raises():
     """Empty sequences list raises ValueError."""
     with pytest.raises(ValueError, match="sequences cannot be empty"):
         await upload_wisps_samplesheet_to_s3(
-            [], "run-1", INTERACTION_SCREENING_BASE_PATH, "interaction-screening", include_group=True
+            [],
+            "run-1",
+            INTERACTION_SCREENING_BASE_PATH,
+            "interaction-screening",
+            include_group=True,
         )
 
 
@@ -268,7 +276,11 @@ async def test_upload_interaction_screening_csv_format(mock_upload):
         WispsSequenceItem(id="t1", group="target"),
     ]
     await upload_wisps_samplesheet_to_s3(
-        sequences, "my-run", INTERACTION_SCREENING_BASE_PATH, "interaction-screening", include_group=True
+        sequences,
+        "my-run",
+        INTERACTION_SCREENING_BASE_PATH,
+        "interaction-screening",
+        include_group=True,
     )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
@@ -287,7 +299,11 @@ async def test_upload_interaction_screening_split_output_dir_matches_run_path(mo
 
     sequences = [WispsSequenceItem(id="s1", group="query")]
     _, split_output_dir = await upload_wisps_samplesheet_to_s3(
-        sequences, "test-run", INTERACTION_SCREENING_BASE_PATH, "interaction-screening", include_group=True
+        sequences,
+        "test-run",
+        INTERACTION_SCREENING_BASE_PATH,
+        "interaction-screening",
+        include_group=True,
     )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
@@ -301,7 +317,10 @@ async def test_upload_bulk_prediction_csv_format(mock_upload):
     """Bulk-prediction CSV has no group column."""
     mock_upload.return_value = _s3_result()
 
-    sequences = [WispsSequenceItem(id="s1", sequence="MAGT"), WispsSequenceItem(id="s2", sequence="ACDE")]
+    sequences = [
+        WispsSequenceItem(id="s1", sequence="MAGT"),
+        WispsSequenceItem(id="s2", sequence="ACDE"),
+    ]
     _, _ = await upload_wisps_samplesheet_to_s3(
         sequences, "bulk-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction", include_group=False
     )
