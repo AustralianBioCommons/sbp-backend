@@ -12,7 +12,7 @@ import string
 from datetime import UTC, datetime
 from typing import Any
 
-from ..schemas.workflows import SequenceItem
+from ..schemas.workflows import WispsSequenceItem
 from .s3 import S3UploadResult, upload_file_to_s3
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
 
 
 INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_screening"
+BULK_PREDICTION_BASE_PATH = "/g/data/yz52/sbp-service/input/bulk_prediction"
 
 
 async def upload_csv_to_s3(
@@ -81,40 +82,58 @@ async def upload_csv_to_s3(
     return result
 
 
-async def upload_interaction_screening_csv_to_s3(
-    sequences: list[SequenceItem],
+async def upload_wisps_samplesheet_to_s3(
+    sequences: list[WispsSequenceItem],
     run_id: str,
+    base_path: str,
+    label: str,
+    *,
+    include_group: bool,
 ) -> tuple[S3UploadResult, str]:
-    """Build and upload an interaction screening samplesheet directly to S3."""
+    """Build and upload a WISPS samplesheet to S3, returning (result, split_output_dir).
+
+    Set include_group=True for interaction-screening (adds a group column, query→g1, target→g2).
+    Set include_group=False for bulk-prediction (id, sequence, type only).
+    """
     if not sequences:
         raise ValueError("sequences cannot be empty")
     if not run_id:
         raise ValueError("run_id is required")
 
     unique_run_path = build_unique_dataset_name(run_id)
-    rows = [
-        {
-            "id": s.id,
-            "sequence": f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}/{s.id}.fasta",
-            "group": "g1" if s.group == "query" else "g2",
-            "type": "protein",
-        }
-        for s in sequences
-    ]
+    split_output_dir = f"{base_path}/{unique_run_path}"
+
+    if include_group:
+        fieldnames = ["id", "sequence", "group", "type"]
+        rows: list[dict[str, str]] = [
+            {
+                "id": s.id,
+                "sequence": f"{base_path}/{unique_run_path}/{s.id}.fasta",
+                "group": "g1" if s.group == "query" else "g2",
+                "type": "protein",
+            }
+            for s in sequences
+        ]
+    else:
+        fieldnames = ["id", "sequence", "type"]
+        rows = [
+            {
+                "id": s.id,
+                "sequence": f"{base_path}/{unique_run_path}/{s.id}.fasta",
+                "type": "protein",
+            }
+            for s in sequences
+        ]
 
     with io.StringIO() as output:
-        writer = csv.DictWriter(output, fieldnames=["id", "sequence", "group", "type"])
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
         csv_content = output.getvalue()
 
     file_bytes = io.BytesIO(csv_content.encode("utf-8"))
-    split_output_dir = f"{INTERACTION_SCREENING_BASE_PATH}/{unique_run_path}"
 
-    logger.info(
-        "Uploading interaction screening samplesheet to S3",
-        extra={"runId": run_id},
-    )
+    logger.info("Uploading %s samplesheet to S3", label, extra={"runId": run_id})
 
     result = await upload_file_to_s3(
         file_content=file_bytes,
@@ -124,7 +143,8 @@ async def upload_interaction_screening_csv_to_s3(
     )
 
     logger.info(
-        "Interaction screening samplesheet uploaded to S3",
+        "%s samplesheet uploaded to S3",
+        label,
         extra={"s3Key": result.file_key, "splitOutputDir": split_output_dir},
     )
 
