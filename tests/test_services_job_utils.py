@@ -109,61 +109,30 @@ def test_get_sample_id_for_score_delegates():
     mock.assert_called_once_with(run)
 
 
-def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
-    """Test that get_owned_run_ids returns only runs owned by the specified user."""
-    # Create two users
-    user1 = AppUser(
-        auth0_user_id="auth0|user1",
-        name="User One",
-        email="user1@example.com",
-    )
-    user2 = AppUser(
-        auth0_user_id="auth0|user2",
-        name="User Two",
-        email="user2@example.com",
-    )
+def test_get_owned_runs_by_run_id_returns_only_current_user_runs(test_db):
+    """Test that get_owned_runs_by_run_id returns only runs owned by the specified user."""
+    user1 = AppUser(auth0_user_id="auth0|user1", name="User One", email="user1@example.com")
+    user2 = AppUser(auth0_user_id="auth0|user2", name="User Two", email="user2@example.com")
     test_db.add(user1)
     test_db.add(user2)
     test_db.commit()
 
-    # Create runs for user1
-    run1_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-1",
-        work_dir="workdir-1001",
-    )
-    run2_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-2",
-        work_dir="workdir-1002",
-    )
-
-    # Create runs for user2
-    run1_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        seqera_run_id="run-user2-1",
-        work_dir="workdir-2001",
-    )
-    run2_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        seqera_run_id="run-user2-2",
-        work_dir="workdir-2002",
-    )
-
-    test_db.add_all([run1_user1, run2_user1, run1_user2, run2_user2])
+    test_db.add_all([
+        WorkflowRun(owner_user_id=user1.id, seqera_run_id="run-user1-1", work_dir="workdir-1001"),
+        WorkflowRun(owner_user_id=user1.id, seqera_run_id="run-user1-2", work_dir="workdir-1002"),
+        WorkflowRun(owner_user_id=user2.id, seqera_run_id="run-user2-1", work_dir="workdir-2001"),
+        WorkflowRun(owner_user_id=user2.id, seqera_run_id="run-user2-2", work_dir="workdir-2002"),
+    ])
     test_db.commit()
 
-    # Get run IDs for user1 - should only return user1's runs
-    user1_runs = job_utils.get_owned_run_ids(test_db, user1.id)
-    assert user1_runs == {"run-user1-1", "run-user1-2"}
+    user1_runs = job_utils.get_owned_runs_by_run_id(test_db, user1.id)
+    assert set(user1_runs.keys()) == {"run-user1-1", "run-user1-2"}
+    assert all(isinstance(v, WorkflowRun) for v in user1_runs.values())
     assert "run-user2-1" not in user1_runs
-    assert "run-user2-2" not in user1_runs
 
-    # Get run IDs for user2 - should only return user2's runs
-    user2_runs = job_utils.get_owned_run_ids(test_db, user2.id)
-    assert user2_runs == {"run-user2-1", "run-user2-2"}
+    user2_runs = job_utils.get_owned_runs_by_run_id(test_db, user2.id)
+    assert set(user2_runs.keys()) == {"run-user2-1", "run-user2-2"}
     assert "run-user1-1" not in user2_runs
-    assert "run-user1-2" not in user2_runs
 
 
 def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):

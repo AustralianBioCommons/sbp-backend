@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -37,9 +37,13 @@ def mock_user_id():
 async def test_list_jobs_success(mock_db, mock_user_id):
     """Test successful job listing."""
     run_id = "wf-123"
+    owned_run = MagicMock(submission_timestamp=None, metrics=None)
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={run_id: owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id",
@@ -61,7 +65,11 @@ async def test_list_jobs_success(mock_db, mock_user_id):
                 }
             },
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         response = await list_jobs(
             search=None,
@@ -84,9 +92,13 @@ async def test_list_jobs_success(mock_db, mock_user_id):
 async def test_list_jobs_with_search(mock_db, mock_user_id):
     """Test job listing with search query."""
     run_id = "wf-456"
+    owned_run = MagicMock(submission_timestamp=None, metrics=None)
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={run_id: owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch(
             "app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id",
@@ -103,7 +115,6 @@ async def test_list_jobs_with_search(mock_db, mock_user_id):
                 }
             },
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
     ):
         response = await list_jobs(
             search="matching",
@@ -122,9 +133,13 @@ async def test_list_jobs_with_search(mock_db, mock_user_id):
 async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
     """Test job listing with status filter."""
     run_id = "wf-789"
+    owned_run = MagicMock(submission_timestamp=None, metrics=None)
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={run_id: owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
@@ -133,7 +148,11 @@ async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "SUCCEEDED"}},
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         response = await list_jobs(
             search=None,
@@ -151,9 +170,13 @@ async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
 async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
     """Test that jobs with non-matching status are filtered out."""
     run_id = "wf-999"
+    owned_run = MagicMock(submission_timestamp=None, metrics=None)
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={run_id: owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
@@ -162,7 +185,6 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "RUNNING"}},
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
     ):
         response = await list_jobs(
             search=None,
@@ -180,9 +202,10 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
 async def test_list_jobs_with_pagination(mock_db, mock_user_id):
     """Test job listing with pagination."""
     run_ids = [f"wf-{i}" for i in range(10)]
+    owned_runs = {rid: MagicMock(submission_timestamp=None, metrics=None) for rid in run_ids}
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=run_ids),
+        patch("app.routes.workflow.jobs.get_owned_runs_by_run_id", return_value=owned_runs),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
@@ -191,7 +214,11 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "SUCCEEDED"}},
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         response = await list_jobs(
             search=None,
@@ -220,11 +247,13 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id, mocke
     owned_run.metrics = None
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={"wf-1": owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -251,14 +280,14 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
     """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""
     from app.services.seqera_errors import SeqeraAPIError
 
-    mock_db.scalar.return_value = None  # get_owned_run returns None
-
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={"wf-1": MagicMock(submission_timestamp=None, metrics=None)},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=None),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -289,11 +318,13 @@ async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id, mocker):
     owned_run.metrics = None
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=["wf-1"]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={"wf-1": owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -437,7 +468,10 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mocker):
     owned_run.submission_timestamp = None
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run_ids", return_value=[run_id]),
+        patch(
+            "app.routes.workflow.jobs.get_owned_runs_by_run_id",
+            return_value={run_id: owned_run},
+        ),
         patch("app.routes.workflow.jobs.get_score_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_workflow_type_by_seqera_run_id", return_value={}),
         patch("app.routes.workflow.jobs.get_tool_by_seqera_run_id", return_value={}),
@@ -446,7 +480,6 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mocker):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "SUCCEEDED"}},
         ),
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.ensure_completed_run_score",
             new_callable=AsyncMock,
