@@ -111,8 +111,10 @@ async def list_jobs(
         # Attempt live status from Seqera; fall back to DB-only data if unreachable.
         seqera_payload: dict[str, object] = {}
         ui_status = "N/A"
-        if user_run.is_pending:
+        if user_run.queued_status == "pending":
             ui_status = "Pending"
+        elif user_run.queued_status == "failed":
+            ui_status = "Failed"
         elif seqera_run_id:
             try:
                 seqera_payload = await describe_workflow(seqera_run_id)

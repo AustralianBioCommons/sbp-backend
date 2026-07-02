@@ -14,7 +14,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models.core import RunMetric, WorkflowRun
-from ..db.models.job_queue import QueuedJob
+from ..db.models.job_queue import JobStatus, QueuedJob
 from .results_utils import (
     get_output_spec,
     get_sample_id_for_result,
@@ -59,20 +59,25 @@ class UserJobListRow:
     tool: str
     score: float | None
     final_design_count: int | None
-    is_pending: bool
+    queued_status: JobStatus | None
+
+    @property
+    def is_pending(self) -> bool:
+        return self.queued_status == "pending"
 
 
-def get_user_job_list_rows_select(user_id: UUID) -> Select[tuple[WorkflowRun, bool]]:
-    pending_queued_job_exists = (
-        select(QueuedJob.id)
+def get_user_job_list_rows_select(user_id: UUID) -> Select[tuple[WorkflowRun, JobStatus | None]]:
+    queued_job_status = (
+        select(QueuedJob.status)
         .where(
             QueuedJob.workflow_run_id == WorkflowRun.id,
-            QueuedJob.status == "pending",
         )
-        .exists()
+        .order_by(QueuedJob.queued_at.desc())
+        .limit(1)
+        .scalar_subquery()
     )
     return (
-        select(WorkflowRun, pending_queued_job_exists)
+        select(WorkflowRun, queued_job_status)
         .options(
             joinedload(WorkflowRun.workflow),
             joinedload(WorkflowRun.metrics),
@@ -92,9 +97,9 @@ def get_user_job_list_rows(db: Session, user_id: UUID) -> list[UserJobListRow]:
             tool=_get_tool(run),
             score=_round_score(run.metrics.max_score) if run.metrics else None,
             final_design_count=_get_final_design_count(run),
-            is_pending=is_pending,
+            queued_status=queued_status,
         )
-        for run, is_pending in rows
+        for run, queued_status in rows
     ]
 
 
