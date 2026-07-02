@@ -89,10 +89,12 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     except Exception as e:
         logger.error(f"Error launching workflow: {e}")
         if not dry_run:
+            job.attempts += 1
             job.error = str(e)
             job.last_attempt_at = now
             if job.attempts >= LAUNCH_MAX_ATTEMPTS:
                 job.status = "failed"
+                job.next_attempt_at = None
             else:
                 job.status = "pending"
                 delay = get_retry_delay(job)
