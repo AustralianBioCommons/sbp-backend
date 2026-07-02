@@ -279,12 +279,11 @@ async def launch_workflow(
     submission_timestamp = datetime.now(UTC)
 
     # Reserve DB row first so a queued workflow always has a DB entry.
-    # Use local run UUID as a temporary seqera_run_id placeholder.
     workflow_run = WorkflowRun(
         id=run_id,
         workflow_id=workflow.id,
         owner_user_id=current_user_id,
-        seqera_run_id=str(run_id),
+        seqera_run_id=None,
         binder_name=binder_name,
         sample_id=sample_id,
         run_name=payload.launch.runName,
