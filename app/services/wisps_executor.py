@@ -43,7 +43,7 @@ async def prepare_wisps_workflow(
     full_name: str,
     institute: str,
     ip_address: str,
-):
+) -> QueuedJob:
     tool: str | None = form_data.tool or None
 
     workspace_id = _get_required_env("WORK_SPACE")
@@ -92,94 +92,18 @@ async def prepare_wisps_workflow(
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
         launch_payload=without_prerun_script(launch_payload),
-        # TODO: set as submitted for now, we are still launching jobs immediately
-        status="submitted",
+        status="pending",
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
     db_session.commit()
-    return launch_payload
+    return queued_job
 
 
 async def launch_wisps_workflow(
-    form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
-    db_session: Session,
-    workflow_run: WorkflowRun,
-    pipeline: str,
-    config_path: str,
-    form_data: WorkflowFormData,
-    revision: str | None = None,
-    output_id: str | None = None,
-    prerun_script_path: str | None = None,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
-) -> WorkflowLaunchResult:
-    """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
-    launch_payload = await prepare_wisps_workflow(
-        form,
-        s3_input_key,
-        db_session=db_session,
-        workflow_run=workflow_run,
-        pipeline=pipeline,
-        config_path=config_path,
-        form_data=form_data,
-        revision=revision,
-        output_id=output_id,
-        user_email=user_email,
-        full_name=full_name,
-        institute=institute,
-        ip_address=ip_address,
-    )
-
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    launch_url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
-    logger.info("WISPS launch paramsText", extra={"paramsText": launch_payload["paramsText"]})
-    logger.info(
-        "Launching WISPS workflow via Seqera API",
-        extra={
-            "url": launch_url,
-            "workspaceId": workspace_id,
-            "computeEnvId": compute_env_id,
-            "pipeline": pipeline,
-            "runName": form.runName,
-        },
-    )
-
-    fasta_s3_uri = str(
-        getattr(form_data, "fastaS3Uri", None) or form_data.extra_fields.get("fastaS3Uri") or ""
-    ).strip()
-    split_output_dir = str(
-        getattr(form_data, "splitOutputDir", None)
-        or form_data.extra_fields.get("splitOutputDir")
-        or ""
-    ).strip()
-    prerun_script = get_executor_script(
-        prerun_script_path=prerun_script_path,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
-            "D": split_output_dir,
-        },
-    )
-    runtime_payload = inject_prerun_script(
-        launch_payload=launch_payload, prerun_script=prerun_script
-    )
-
-    return await post_seqera_launch(launch_url, {"launch": runtime_payload}, workflow_label="WISPS")
-
-
-async def launch_wisps_workflow_new(
-        *,
-        queued_job: QueuedJob,
-        dry_run: bool = False,
+    queued_job: QueuedJob,
+    dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
     if not queued_job.workflow_run.submitted_form_data:
