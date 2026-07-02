@@ -41,6 +41,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     mode: str,
     form_data: WorkflowFormData,
     user_details: WorkflowUserDetails,
+    commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
@@ -105,7 +106,10 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
-    db_session.commit()
+    if commit:
+        db_session.commit()
+    else:
+        db_session.flush()
     return queued_job
 
 

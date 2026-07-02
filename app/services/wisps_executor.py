@@ -40,6 +40,7 @@ async def prepare_wisps_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     user_details: WorkflowUserDetails,
+    commit: bool = False,
 ) -> QueuedJob:
     tool: str | None = form_data.tool or None
 
@@ -90,7 +91,10 @@ async def prepare_wisps_workflow(
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
-    db_session.commit()
+    if commit:
+        db_session.commit()
+    else:
+        db_session.flush()
     return queued_job
 
 

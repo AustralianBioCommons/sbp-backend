@@ -77,6 +77,7 @@ async def prepare_proteinfold_workflow(
     mode: str = "alphafold2",
     form_data: WorkflowFormData | None = None,
     user_details: WorkflowUserDetails,
+    commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteinfold launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
@@ -133,7 +134,10 @@ async def prepare_proteinfold_workflow(
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
-    db_session.commit()
+    if commit:
+        db_session.commit()
+    else:
+        db_session.flush()
     return queued_job
 
 

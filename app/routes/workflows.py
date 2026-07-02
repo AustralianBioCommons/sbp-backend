@@ -281,7 +281,7 @@ async def launch_workflow(
     # Reserve DB row first so a queued workflow always has a DB entry.
     workflow_run = WorkflowRun(
         id=run_id,
-        workflow_id=workflow.id,
+        workflow=workflow,
         owner_user_id=current_user_id,
         seqera_run_id=None,
         binder_name=binder_name,
@@ -303,7 +303,7 @@ async def launch_workflow(
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
     db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key))
-    db_session.commit()
+    db_session.flush()
 
     workflow_name = workflow.name.lower()
 
@@ -413,11 +413,15 @@ async def launch_workflow(
             )
             if deducted.rowcount == 0:
                 logger.warning(
-                    "Queued run %s but could not deduct %s credits from user %s "
+                    "Could not queue run %s because %s credits could not be deducted from user %s "
                     "(balance changed since the pre-launch check)",
                     run_id,
                     run_credit_cost,
                     current_user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail="Insufficient credits to launch this workflow.",
                 )
         db_session.commit()
     except HTTPException:
