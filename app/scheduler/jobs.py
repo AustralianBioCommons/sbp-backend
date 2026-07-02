@@ -5,6 +5,7 @@ from uuid import UUID
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
@@ -23,10 +24,20 @@ def get_retry_delay(job: QueuedJob) -> timedelta:
     return timedelta(seconds=RETRY_DELAY_BASE * (2 ** job.attempts - 1))
 
 
+def is_seqera_available(db_session: Session) -> bool:
+    system_status = asyncio.run(health.get_system_status(db_session))
+    logger.info(f"System status is {system_status.overall_status}.")
+    return system_status.overall_status == "healthy"
+
+
 def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     logger.info(f"Launching job {job_id}...")
-    # TODO: need to check service status before launching
     db_session = next(get_db())
+
+    ok_to_launch = is_seqera_available(db_session)
+    if not ok_to_launch:
+        logger.warning("Skipping job launching while system status is unhealthy.")
+        return
     job = db_session.get(QueuedJob, job_id)
     if job is None:
         return
@@ -71,9 +82,8 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
 def submit_pending_jobs(dry_run: bool = False):
     logger.info("Checking for pending jobs...")
     db_session = next(get_db())
-    system_status = asyncio.run(health.get_system_status(db_session))
-    logger.info(f"System status is {system_status.overall_status}.")
-    if system_status.overall_status == "unhealthy":
+    ok_to_launch = is_seqera_available(db_session)
+    if not ok_to_launch:
         logger.warning("Skipping pending job submission while system status is unhealthy.")
         return
 
@@ -87,11 +97,16 @@ def submit_pending_jobs(dry_run: bool = False):
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
     for job in pending_jobs:
+        launch_id = f"launch_job_{job.id}"
+        # Ignore if already scheduled
+        if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:
+            continue
+
         SCHEDULER.add_job(
             launch_job,
             jobstore="memory",
             kwargs={"job_id": job.id, "dry_run": dry_run},
-            name=f"launch_job_{job.id}",
+            name=launch_id,
             max_instances=1,
             replace_existing=True,
         )
