@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
@@ -76,10 +76,7 @@ async def prepare_proteinfold_workflow(
     output_id: str | None = None,
     mode: str = "alphafold2",
     form_data: WorkflowFormData | None = None,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
+    user_details: WorkflowUserDetails,
 ) -> QueuedJob:
     """Build and queue a proteinfold launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
@@ -103,7 +100,11 @@ async def prepare_proteinfold_workflow(
         mode,
         form_data,
         form.paramsText,
-        extra_params={"job_id": job_id, "user_name": user_email, "timestamp": timestamp},
+        extra_params={
+            "job_id": job_id,
+            "user_name": user_details.user_email,
+            "timestamp": timestamp,
+        },
     )
 
     launch_payload: dict[str, Any] = {
@@ -118,11 +119,8 @@ async def prepare_proteinfold_workflow(
         "configText": get_proteinfold_config_text(
             config_path,
             job_id=job_id,
-            user_name=user_email,
+            user_details=user_details,
             timestamp=timestamp,
-            full_name=full_name,
-            institute=institute,
-            ip_address=ip_address,
         ),
         "resume": False,
     }

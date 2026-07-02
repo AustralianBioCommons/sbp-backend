@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..schemas.workflows import WorkflowUserDetails
 from .workflow_config_fetcher import fetch_workflow_config
 
 
@@ -31,11 +32,8 @@ def get_wisps_config_text(
     config_file_path: str,
     *,
     job_id: str,
-    username: str,
+    user_details: WorkflowUserDetails,
     timestamp: str,
-    full_name: str = "",
-    institute: str = "",
-    ip_address: str = "",
 ) -> str:
     """Read wisps config and append a process override block with runtime values.
 
@@ -45,9 +43,9 @@ def get_wisps_config_text(
     base = fetch_workflow_config(config_file_path)
 
     cluster_opts = (
-        f"-P yz52 -v JOB_ID={job_id},USER_NAME={username},"
-        f"TIMESTAMP={timestamp},FULL_NAME={full_name},"
-        f"INSTITUTE={institute},IP_ADDRESS={ip_address}"
+        f"-P yz52 -v JOB_ID={job_id},USER_NAME={user_details.user_email},"
+        f"TIMESTAMP={timestamp},FULL_NAME={user_details.full_name},"
+        f"INSTITUTE={user_details.institute},IP_ADDRESS={user_details.ip_address}"
     )
     override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
     return base + override

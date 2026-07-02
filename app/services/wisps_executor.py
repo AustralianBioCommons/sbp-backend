@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .seqera import (
     WorkflowLaunchResult,
@@ -39,10 +39,7 @@ async def prepare_wisps_workflow(
     form_data: WorkflowFormData,
     revision: str | None = None,
     output_id: str | None = None,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
+    user_details: WorkflowUserDetails,
 ) -> QueuedJob:
     tool: str | None = form_data.tool or None
 
@@ -68,11 +65,8 @@ async def prepare_wisps_workflow(
     config_text = get_wisps_config_text(
         config_path,
         job_id=job_id,
-        username=user_email,
+        user_details=user_details,
         timestamp=timestamp,
-        full_name=full_name,
-        institute=institute,
-        ip_address=ip_address,
     )
 
     launch_payload: dict[str, Any] = {

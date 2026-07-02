@@ -31,6 +31,7 @@ from ..schemas.workflows import (
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
+    WorkflowUserDetails,
 )
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
@@ -249,6 +250,12 @@ async def launch_workflow(
     full_name = _require_launch_var("full_name", full_name)
     institute = _require_launch_var("institute", institute)
     ip_address = _require_launch_var("ip_address", ip_address)
+    user_details = WorkflowUserDetails(
+        user_email=user_email,
+        full_name=full_name,
+        institute=institute,
+        ip_address=ip_address,
+    )
 
     # Authoritative credit cost (server-side, non-spoofable). Only charged for
     # workflows whose quantity is fully determined by the launch payload
@@ -344,10 +351,7 @@ async def launch_workflow(
                 output_id=str(run_id),
                 mode=tool_algo,
                 form_data=payload.formData,
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor.
@@ -365,10 +369,7 @@ async def launch_workflow(
                 output_id=str(run_id),
                 mode=tool_mode,
                 form_data=payload.formData,
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         elif workflow_name == "interaction-screening":
             assert wisps_form_data is not None
@@ -383,10 +384,7 @@ async def launch_workflow(
                 config_path=workflow.config_path,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         else:
             db_session.rollback()

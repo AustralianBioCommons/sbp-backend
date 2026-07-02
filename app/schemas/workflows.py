@@ -91,6 +91,16 @@ class WorkflowFormData(BaseModel):
     sample_id: str | None = Field(default=None, description="Sample ID for the workflow run")
 
 
+class WorkflowUserDetails(BaseModel):
+    """
+    Details recorded in workflow runs - required by compute providers
+    """
+    user_email: str = Field(..., description="Email address of the user")
+    full_name: str = Field(..., description="Full name of the user")
+    institute: str = Field(..., description="Institute of the user")
+    ip_address: str = Field(..., description="IP address of the user")
+
+
 class InteractionScreeningFormData(WorkflowFormData):
     """Form data for the interaction-screening (WISPS) workflow."""
 

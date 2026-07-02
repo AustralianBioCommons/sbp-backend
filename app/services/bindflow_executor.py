@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -40,10 +40,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     output_id: str | None = None,
     mode: str,
     form_data: WorkflowFormData,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
+    user_details: WorkflowUserDetails,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
@@ -66,7 +63,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
     default_params["job_id"] = run_name
-    default_params["user_name"] = user_email
+    default_params["user_name"] = user_details.user_email
     default_params["timestamp"] = timestamp
     default_params["mode"] = mode
 
@@ -94,11 +91,8 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "configText": get_bindflow_config_text(
             config_path,
             job_id=run_name,
-            username=user_email,
+            user_details=user_details,
             timestamp=timestamp,
-            full_name=full_name,
-            institute=institute,
-            ip_address=ip_address,
         ),
         "resume": False,
     }
