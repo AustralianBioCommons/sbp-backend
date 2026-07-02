@@ -1,6 +1,7 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 from uuid import UUID
 
 from loguru import logger
@@ -10,11 +11,28 @@ from sqlalchemy.orm import Session
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..services import health
-from ..services.wisps_executor import launch_wisps_workflow_new
+from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.proteinfold_executor import launch_proteinfold_workflow
+from ..services.seqera import WorkflowLaunchResult
+from ..services.wisps_executor import launch_wisps_workflow
 from . import SCHEDULER
 
 LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
+
+
+class LaunchFunction(Protocol):
+    """
+    Type annotation for workflow launch functions
+    """
+
+    def __call__(
+        self,
+        *,
+        queued_job: QueuedJob,
+        dry_run: bool = False,
+    ) -> Awaitable[WorkflowLaunchResult | None]:
+        ...
 
 
 def get_retry_delay(job: QueuedJob) -> timedelta:
@@ -43,17 +61,22 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
         return
 
     now = datetime.now(tz=UTC)
-    launch_func: Callable
+    launch_func: LaunchFunction
     if job.workflow.name == "interaction-screening":
-        launch_func = launch_wisps_workflow_new
-    # TODO: add launch functions for other workflows
+        launch_func = launch_wisps_workflow
+    elif job.workflow.name in ("single-prediction", "proteinfold"):
+        launch_func = launch_proteinfold_workflow
+    elif job.workflow.name in ("de-novo-design", "bindflow", "bindcraft"):
+        launch_func = launch_bindflow_workflow
     else:
         raise ValueError(f"Unsupported workflow: {job.workflow.name}")
     try:
-        asyncio.run(launch_func(queued_job=job, dry_run=dry_run))
+        result = asyncio.run(launch_func(queued_job=job, dry_run=dry_run))
         if dry_run:
             logger.info("Dry run - not updating job status")
         else:
+            if result is not None:
+                job.workflow_run.seqera_run_id = result.workflow_id
             job.attempts += 1
             job.status = "submitted"
             job.submitted_at = now
@@ -104,6 +127,7 @@ def submit_pending_jobs(dry_run: bool = False):
 
         SCHEDULER.add_job(
             launch_job,
+            id=launch_id,
             jobstore="memory",
             kwargs={"job_id": job.id, "dry_run": dry_run},
             name=launch_id,
