@@ -45,16 +45,6 @@ def parse_submit_datetime(payload: Mapping[str, Any]) -> datetime | None:
         return None
 
 
-def get_owned_run_ids(db: Session, user_id: UUID) -> set[str]:
-    rows = db.execute(
-        select(WorkflowRun.seqera_run_id).where(
-            WorkflowRun.owner_user_id == user_id,
-            WorkflowRun.seqera_run_id.is_not(None),
-        )
-    ).all()
-    return {row[0] for row in rows}
-
-
 def get_owned_run(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None:
     return db.execute(
         select(WorkflowRun).where(
@@ -62,6 +52,20 @@ def get_owned_run(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None
             WorkflowRun.seqera_run_id == run_id,
         )
     ).scalar_one_or_none()
+
+
+def get_owned_runs_by_run_id(db: Session, user_id: UUID) -> dict[str, WorkflowRun]:
+    rows = (
+        db.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.owner_user_id == user_id,
+                WorkflowRun.seqera_run_id.is_not(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {run.seqera_run_id: run for run in rows}
 
 
 def _round_score(value: float | Decimal | None) -> float | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -28,7 +29,7 @@ from ...services.job_utils import (
     format_tool_name,
     format_workflow_name,
     get_owned_run,
-    get_owned_run_ids,
+    get_owned_runs_by_run_id,
     get_score_by_seqera_run_id,
     get_tool_by_seqera_run_id,
     get_workflow_type_by_seqera_run_id,
@@ -100,34 +101,43 @@ async def list_jobs(
     db: Session = Depends(get_db),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
-    owned_run_ids = get_owned_run_ids(db, current_user_id)
+    owned_runs = get_owned_runs_by_run_id(db, current_user_id)
     score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
     workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
     tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
     search_text = (search or "").strip().lower()
     allowed_statuses = set(status_filter or [])
+
+    async def _fetch_seqera(run_id: str) -> tuple[str, dict[str, object] | None]:
+        """None signals a 4xx (skip); empty dict signals a 5xx/network error (DB fallback)."""
+        try:
+            return run_id, await describe_workflow(run_id)
+        except SeqeraAPIError as exc:
+            if exc.status_code is not None and exc.status_code < 500:
+                return run_id, None
+            logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
+            return run_id, {}
+        except Exception as exc:
+            logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
+            return run_id, {}
+
+    seqera_results = await asyncio.gather(*(_fetch_seqera(r) for r in owned_runs))
+
     jobs: list[JobListItem] = []
     seqera_unavailable = False
 
-    for run_id in owned_run_ids:
-        owned_run = get_owned_run(db, current_user_id, run_id)
+    for run_id, seqera_payload in seqera_results:
+        if seqera_payload is None:
+            # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+            continue
 
-        # Attempt live status from Seqera; fall back to DB-only data if unreachable.
-        seqera_payload: dict[str, object] = {}
-        ui_status = "N/A"
-        try:
-            seqera_payload = await describe_workflow(run_id)
+        owned_run = owned_runs[run_id]
+
+        if seqera_payload:
             pipeline_status = extract_pipeline_status(seqera_payload)
             ui_status = map_pipeline_status_to_ui(pipeline_status)
-        except SeqeraAPIError as exc:
-            if exc.status_code is not None and exc.status_code < 500:
-                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-                continue
-            logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
-            seqera_unavailable = True
-        except Exception as exc:
-            # Network errors, timeouts, or configuration issues — do not fail the list.
-            logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
+        else:
+            ui_status = "N/A"
             seqera_unavailable = True
 
         if allowed_statuses and ui_status not in allowed_statuses:
@@ -135,7 +145,7 @@ async def list_jobs(
 
         wf = coerce_workflow_payload(seqera_payload)
         submitted_at = parse_submit_datetime(seqera_payload)
-        if submitted_at is None and owned_run and owned_run.submission_timestamp:
+        if submitted_at is None and owned_run.submission_timestamp:
             submitted_at = owned_run.submission_timestamp
         if submitted_at is None:
             submitted_at = datetime.now(UTC)
@@ -159,7 +169,7 @@ async def list_jobs(
             ui_status = "Completed"
 
         score = db_score
-        if score is None and owned_run:
+        if score is None:
             score = await ensure_completed_run_score(db, owned_run, ui_status)
 
         jobs.append(
