@@ -15,10 +15,11 @@ approved users), since it is only meaningful to users who can run workflows.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from ..schemas.health import ComponentsHealthResponse
 from ..services import health
-from .dependencies import get_current_user_id, require_workflow_execution_role
+from .dependencies import get_current_user_id, get_db, require_workflow_execution_role
 
 router = APIRouter(
     tags=["health"],
@@ -27,16 +28,14 @@ router = APIRouter(
 
 
 @router.get("/components", response_model=ComponentsHealthResponse)
-async def get_components_health() -> ComponentsHealthResponse:
+async def get_components_health(db: Session = Depends(get_db)) -> ComponentsHealthResponse:
     """Return a coarse, user-facing health summary for SBP-bundle users.
 
     ``overallStatus`` is the worst status across all monitored components; when it
     is not ``healthy`` a generic ``message`` is included for display on the job
     details page.
 
-    Always served from the short-lived cache (with background refresh); there is
-    no caller-triggered force-refresh here. Forcing a live probe run is reserved
-    for the admin endpoint, since the Tower Agent probe can mutate Seqera state.
+    Always comes from the shared database cache
     """
-    status_obj = await health.get_system_status()
+    status_obj = await health.get_system_status(db)
     return ComponentsHealthResponse.model_validate(health.to_components_health_dict(status_obj))

@@ -13,10 +13,12 @@ external monitoring as long as the caller presents an admin token.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from ..db.admin import require_admin_access
 from ..schemas.health import SystemStatusAdminResponse
 from ..services import health
+from .dependencies import get_db
 
 router = APIRouter(
     tags=["system-status"],
@@ -28,9 +30,10 @@ router = APIRouter(
 async def get_admin_system_status(
     refresh: bool = Query(
         default=False,
-        description="Bypass the short-lived cache and re-run the probes now",
+        description="Bypass the shared database cache and re-run the probes now",
     ),
+    db: Session = Depends(get_db),
 ) -> SystemStatusAdminResponse:
     """Return verbose, admin-only runtime health of the submission components."""
-    status_obj = await health.get_system_status(force_refresh=refresh)
+    status_obj = await health.get_system_status(db, force_refresh=refresh)
     return SystemStatusAdminResponse.model_validate(health.to_admin_dict(status_obj))
