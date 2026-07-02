@@ -7,8 +7,8 @@ Two probes, both reached through the Seqera Platform API:
    Seqera reports the Tower Agent connection state via the compute-env ``status``
    field, which is the closest proxy we have for Gadi-side health.
 
-Results are cached for a short TTL so polling (admin dashboard + portal banner)
-stays cheap; ``asyncio.Lock`` provides stampede protection on cache misses.
+Results are cached in the database for a short TTL so polling (admin dashboard,
+portal banner, scheduler) stays cheap across processes.
 """
 
 from __future__ import annotations
@@ -18,19 +18,22 @@ import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from cachetools import TTLCache  # type: ignore[import-untyped]
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
+from ..db.models.system_status import SystemStatusCache
 from ..schemas.health import (
     COMPONENT_COMPUTE_ENV,
     COMPONENT_SEQERA_API,
     COMPONENT_TOWER_AGENT,
     HealthStatus,
+    ProbeResult,
+    SystemStatus,
 )
 from .seqera_errors import SeqeraConfigurationError
 
@@ -51,21 +54,12 @@ _AGENT_PROBE_POLL_INTERVAL_SECONDS = 2.0
 # Best-effort retries when deleting the throwaway env, so we don't leak resources.
 _AGENT_PROBE_DELETE_ATTEMPTS = 3
 
-# Cache the whole computed status. 30s TTL keeps repeated polls (admin every 30s,
-# portal every 60s) off the Seqera API while staying fresh enough to be useful.
+# Cache the whole computed status in the database. 30s TTL keeps repeated polls
+# (admin every 30s, portal every 60s, scheduler checks) off the Seqera API while
+# staying fresh enough to be useful across processes.
 _CACHE_TTL_SECONDS = float(os.getenv("HEALTH_CACHE_TTL_SECONDS", "30"))
 _CACHE_KEY = "system_status"
-_status_cache: TTLCache[str, SystemStatus] = TTLCache(maxsize=1, ttl=_CACHE_TTL_SECONDS)
-
-# Lazily created so the module imports cleanly outside a running event loop.
-_cache_lock: Any = None
-
-# Stale-while-revalidate state. ``_last_status`` retains the most recent result
-# beyond the TTL so an expired-cache read can be served instantly while a refresh
-# runs in the background — callers never block on the (~2s) probes except on a
-# cold start. ``_refresh_task`` guards against launching duplicate refreshes.
-_last_status: SystemStatus | None = None
-_refresh_task: Any = None
+_CACHE_LOCK_ID = hash(_CACHE_KEY)
 
 # Seqera compute-env state -> our normalized health bucket.
 _COMPUTE_ENV_STATE_MAP: dict[str, HealthStatus] = {
@@ -75,33 +69,6 @@ _COMPUTE_ENV_STATE_MAP: dict[str, HealthStatus] = {
     "OFFLINE": "unhealthy",
     "INVALID": "unhealthy",
 }
-
-
-@dataclass
-class ProbeResult:
-    """Outcome of probing a single component."""
-
-    name: str
-    status: HealthStatus
-    latency_ms: int | None
-    message: str | None
-    detail: dict[str, Any] | None
-
-
-@dataclass
-class SystemStatus:
-    """Aggregated status across all probed components."""
-
-    overall_status: HealthStatus
-    checked_at: datetime
-    components: list[ProbeResult]
-
-
-def _get_lock() -> Any:
-    global _cache_lock
-    if _cache_lock is None:
-        _cache_lock = asyncio.Lock()
-    return _cache_lock
 
 
 def _agent_probe_enabled() -> bool:
@@ -134,7 +101,7 @@ def _truncate(text: str, limit: int = 500) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-async def _probe_seqera_api() -> ProbeResult:
+async def probe_seqera_api() -> ProbeResult:
     """Probe Seqera Platform reachability *and* credential validity via /user-info.
 
     ``/user-info`` is an authenticated endpoint, so a 2xx confirms three things at
@@ -150,7 +117,9 @@ async def _probe_seqera_api() -> ProbeResult:
         api_url = _required_env("SEQERA_API_URL").rstrip("/")
         headers = _seqera_headers()
     except SeqeraConfigurationError as exc:
-        return ProbeResult(name, "unhealthy", None, str(exc), {"error": str(exc)})
+        return ProbeResult(
+            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
+        )
 
     url = f"{api_url}/user-info"
     start = time.perf_counter()
@@ -161,30 +130,30 @@ async def _probe_seqera_api() -> ProbeResult:
     except httpx.TimeoutException:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Seqera API did not respond within {int(PROBE_TIMEOUT_SECONDS)}s",
-            {"error": "timeout", "url": url},
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=f"Seqera API did not respond within {int(PROBE_TIMEOUT_SECONDS)}s",
+            detail={"error": "timeout", "url": url},
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Seqera API unreachable: {exc}",
-            {"error": str(exc), "url": url},
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=f"Seqera API unreachable: {exc}",
+            detail={"error": str(exc), "url": url},
         )
 
     if response.status_code in (401, 403):
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Seqera rejected the access token (HTTP {response.status_code}); "
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=f"Seqera rejected the access token (HTTP {response.status_code}); "
             "check SEQERA_ACCESS_TOKEN",
-            {
+            detail={
                 "statusCode": response.status_code,
                 "responseBody": _truncate(response.text),
                 "url": url,
@@ -193,21 +162,21 @@ async def _probe_seqera_api() -> ProbeResult:
 
     if response.is_error:
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Seqera API returned HTTP {response.status_code}",
-            {
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=f"Seqera API returned HTTP {response.status_code}",
+            detail={
                 "statusCode": response.status_code,
                 "responseBody": _truncate(response.text),
                 "url": url,
             },
         )
 
-    return ProbeResult(name, "healthy", latency_ms, None, None)
+    return ProbeResult(name=name, status="healthy", latency_ms=latency_ms)
 
 
-async def _probe_compute_env() -> ProbeResult:
+async def probe_compute_env() -> ProbeResult:
     """Probe the Gadi-backed compute environment status via the Seqera API.
 
     Reads ``GET /compute-envs/{COMPUTE_ID}?workspaceId={WORK_SPACE}`` and maps the
@@ -220,7 +189,9 @@ async def _probe_compute_env() -> ProbeResult:
         workspace_id = _required_env("WORK_SPACE")
         headers = _seqera_headers()
     except SeqeraConfigurationError as exc:
-        return ProbeResult(name, "unhealthy", None, str(exc), {"error": str(exc)})
+        return ProbeResult(
+            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
+        )
 
     url = f"{api_url}/compute-envs/{compute_id}"
     params = {"workspaceId": workspace_id}
@@ -232,20 +203,23 @@ async def _probe_compute_env() -> ProbeResult:
     except httpx.TimeoutException:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Compute environment check did not respond within {int(PROBE_TIMEOUT_SECONDS)}s",
-            {"error": "timeout", "url": url},
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=(
+                f"Compute environment check did not respond within "
+                f"{int(PROBE_TIMEOUT_SECONDS)}s"
+            ),
+            detail={"error": "timeout", "url": url},
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            f"Compute environment unreachable: {exc}",
-            {"error": str(exc), "url": url},
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=f"Compute environment unreachable: {exc}",
+            detail={"error": str(exc), "url": url},
         )
 
     if response.is_error:
@@ -256,11 +230,11 @@ async def _probe_compute_env() -> ProbeResult:
         if response.status_code in (403, 404):
             error_message = f"{error_message}; check COMPUTE_ID, WORK_SPACE, and the access token"
         return ProbeResult(
-            name,
-            "unhealthy",
-            latency_ms,
-            error_message,
-            {
+            name=name,
+            status="unhealthy",
+            latency_ms=latency_ms,
+            message=error_message,
+            detail={
                 "statusCode": response.status_code,
                 "responseBody": _truncate(response.text),
                 "url": url,
@@ -280,7 +254,13 @@ async def _probe_compute_env() -> ProbeResult:
         if isinstance(env_message, str) and env_message.strip():
             message = f"{message} ({env_message.strip()})"
 
-    return ProbeResult(name, status, latency_ms, message, {"computeEnv": compute_env})
+    return ProbeResult(
+        name=name,
+        status=status,
+        latency_ms=latency_ms,
+        message=message,
+        detail={"computeEnv": compute_env},
+    )
 
 
 async def _delete_compute_env(
@@ -353,7 +333,7 @@ async def _poll_compute_env_state(
         await asyncio.sleep(_AGENT_PROBE_POLL_INTERVAL_SECONDS)
 
 
-async def _probe_tower_agent() -> ProbeResult:
+async def probe_tower_agent() -> ProbeResult:
     """Actively verify Tower Agent liveness via a clone-create-delete cycle.
 
     Clones the monitored compute env (``COMPUTE_ID``) — reusing its platform,
@@ -369,7 +349,9 @@ async def _probe_tower_agent() -> ProbeResult:
         workspace_id = _required_env("WORK_SPACE")
         headers = _seqera_headers()
     except SeqeraConfigurationError as exc:
-        return ProbeResult(name, "unhealthy", None, str(exc), {"error": str(exc)})
+        return ProbeResult(
+            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
+        )
 
     params = {"workspaceId": workspace_id}
     post_headers = {**headers, "Content-Type": "application/json"}
@@ -383,11 +365,11 @@ async def _probe_tower_agent() -> ProbeResult:
             )
             if src.is_error:
                 return ProbeResult(
-                    name,
-                    "unhealthy",
-                    int((time.perf_counter() - start) * 1000),
-                    f"Could not read source compute env to clone (HTTP {src.status_code})",
-                    {"statusCode": src.status_code, "responseBody": _truncate(src.text)},
+                    name=name,
+                    status="unhealthy",
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    message=f"Could not read source compute env to clone (HTTP {src.status_code})",
+                    detail={"statusCode": src.status_code, "responseBody": _truncate(src.text)},
                 )
             src_env = src.json().get("computeEnv", {})
             platform = src_env.get("platform")
@@ -395,11 +377,11 @@ async def _probe_tower_agent() -> ProbeResult:
             credentials_id = src_env.get("credentialsId")
             if not (platform and config and credentials_id):
                 return ProbeResult(
-                    name,
-                    "degraded",
-                    int((time.perf_counter() - start) * 1000),
-                    "Source compute env is missing platform/config/credentialsId to clone",
-                    {"platform": platform, "hasConfig": bool(config)},
+                    name=name,
+                    status="degraded",
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    message="Source compute env is missing platform/config/credentialsId to clone",
+                    detail={"platform": platform, "hasConfig": bool(config)},
                 )
 
             # 2. Create a throwaway copy. This forces agent validation.
@@ -419,21 +401,25 @@ async def _probe_tower_agent() -> ProbeResult:
             )
             if create.is_error:
                 return ProbeResult(
-                    name,
-                    "unhealthy",
-                    int((time.perf_counter() - start) * 1000),
-                    f"Tower Agent health-check env creation was rejected "
-                    f"(HTTP {create.status_code})",
-                    {"statusCode": create.status_code, "responseBody": _truncate(create.text)},
+                    name=name,
+                    status="unhealthy",
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    message=(
+                        f"Tower Agent health-check env creation was rejected "
+                        f"(HTTP {create.status_code})"
+                    ),
+                    detail={
+                        "statusCode": create.status_code,
+                        "responseBody": _truncate(create.text),
+                    },
                 )
             created_id = str(create.json().get("computeEnvId") or "") or None
             if not created_id:
                 return ProbeResult(
-                    name,
-                    "degraded",
-                    int((time.perf_counter() - start) * 1000),
-                    "Seqera did not return a computeEnvId for the health-check env",
-                    None,
+                    name=name,
+                    status="degraded",
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    message="Seqera did not return a computeEnvId for the health-check env",
                 )
 
             # 3. Poll until the env validates (or the time budget runs out).
@@ -458,18 +444,24 @@ async def _probe_tower_agent() -> ProbeResult:
             await _delete_compute_env(api_url, headers, params, created_id)
 
     latency_ms = int((time.perf_counter() - start) * 1000)
-    return ProbeResult(name, status, latency_ms, message, detail)
+    return ProbeResult(
+        name=name,
+        status=status,
+        latency_ms=latency_ms,
+        message=message,
+        detail=detail,
+    )
 
 
-async def _collect_system_status() -> SystemStatus:
+async def collect_system_status() -> SystemStatus:
     """Run the probes concurrently and aggregate into an overall status.
 
     The Tower Agent probe is opt-in (ENABLE_AGENT_HEALTHCHECK) because it mutates
     Seqera state (creates and deletes a throwaway compute env).
     """
-    probes = [_probe_seqera_api(), _probe_compute_env()]
+    probes = [probe_seqera_api(), probe_compute_env()]
     if _agent_probe_enabled():
-        probes.append(_probe_tower_agent())
+        probes.append(probe_tower_agent())
 
     components = list(await asyncio.gather(*probes))
     overall = _worst([c.status for c in components])
@@ -480,63 +472,88 @@ async def _collect_system_status() -> SystemStatus:
     )
 
 
-async def _refresh_cache() -> SystemStatus:
-    """Run the probes and update both the TTL cache and the stale fallback."""
-    global _last_status
-    status = await _collect_system_status()
-    _status_cache[_CACHE_KEY] = status
-    _last_status = status
+def _is_postgresql(db: Session) -> bool:
+    bind = db.get_bind()
+    return bind.dialect.name == "postgresql"
+
+
+def _try_acquire_cache_refresh_lock(db: Session) -> bool:
+    """
+    Try to get a lock on the shared DB cache - if we can't get the lock,
+    assume another process is already refreshing the cache.
+    """
+    if not _is_postgresql(db):
+        return True
+    return bool(db.execute(select(func.pg_try_advisory_xact_lock(_CACHE_LOCK_ID))).scalar_one())
+
+
+async def refresh_db_cache(db: Session) -> SystemStatus:
+    """Run probes and replace the single shared DB cache row."""
+    status = await collect_system_status()
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=_CACHE_TTL_SECONDS)
+    payload = status.model_dump(mode="json")
+
+    row = db.get(SystemStatusCache, _CACHE_KEY)
+    if row is None:
+        row = SystemStatusCache(
+            key=_CACHE_KEY,
+            payload=payload,
+            checked_at=status.checked_at,
+            expires_at=expires_at,
+            updated_at=now,
+        )
+    else:
+        row.payload = payload
+        row.checked_at = status.checked_at
+        row.expires_at = expires_at
+        row.updated_at = now
+
+    db.add(row)
+    db.commit()
     return status
 
 
-def _spawn_background_refresh() -> None:
-    """Kick off a single background refresh, discarding its result.
+async def get_system_status(
+    db: Session | None = None,
+    *,
+    force_refresh: bool = False,
+    allow_stale: bool = True,
+) -> SystemStatus:
+    """Return the system status using the shared DB cache when available.
 
-    Guarded by ``_refresh_task`` so overlapping stale reads don't launch a
-    stampede of refreshes. Exceptions are logged, never propagated — a failed
-    background refresh just means we keep serving the last good status.
+    If ``db`` is None, this function runs the probes directly without caching.
     """
-    global _refresh_task
-    if _refresh_task is not None and not _refresh_task.done():
-        return
+    if db is None:
+        return await collect_system_status()
 
-    async def _run() -> None:
-        try:
-            async with _get_lock():
-                # Another waiter may have refreshed while we queued on the lock.
-                if _status_cache.get(_CACHE_KEY) is not None:
-                    return
-                await _refresh_cache()
-        except Exception:
-            logger.exception("Background health refresh failed; serving last known status")
+    now = datetime.now(UTC)
+    row = db.get(SystemStatusCache, _CACHE_KEY)
+    if row is not None:
+        if row.is_fresh(now=now) and not force_refresh:
+            return row.get_status()
 
-    _refresh_task = asyncio.ensure_future(_run())
+        is_locked_by_other = not _try_acquire_cache_refresh_lock(db)
+        if is_locked_by_other:
+            if allow_stale and not force_refresh:
+                return row.get_status()
+            return await collect_system_status()
+    else:
+        is_locked_by_other = not _try_acquire_cache_refresh_lock(db)
+        if is_locked_by_other:
+            return await collect_system_status()
 
+    db.expire_all()
+    row = db.get(SystemStatusCache, _CACHE_KEY)
+    now = datetime.now(UTC)
+    if row is not None and not force_refresh and row.is_fresh(now=now):
+        return row.get_status()
 
-async def get_system_status(*, force_refresh: bool = False) -> SystemStatus:
-    """Return the system status, keeping callers off the slow probe path.
-
-    Fresh cache hit -> returned immediately. Expired cache but a prior result
-    exists -> that (slightly stale) result is returned immediately and a refresh
-    is kicked off in the background (stale-while-revalidate), so the caller never
-    waits ~2s on the probes. Only a genuine cold start (or ``force_refresh``, used
-    by the admin "refresh now" action) blocks on a live probe run. An
-    ``asyncio.Lock`` collapses a cold-start stampede into a single probe run.
-    """
-    if not force_refresh:
-        cached: SystemStatus | None = _status_cache.get(_CACHE_KEY)
-        if cached is not None:
-            return cached
-        if _last_status is not None:
-            _spawn_background_refresh()
-            return _last_status
-
-    async with _get_lock():
-        if not force_refresh:
-            cached = _status_cache.get(_CACHE_KEY)
-            if cached is not None:
-                return cached
-        return await _refresh_cache()
+    try:
+        return await refresh_db_cache(db)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _cloudwatch_log_group_url() -> str | None:
