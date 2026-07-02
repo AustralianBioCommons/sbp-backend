@@ -117,12 +117,22 @@ def test_get_owned_runs_by_run_id_returns_only_current_user_runs(test_db):
     test_db.add(user2)
     test_db.commit()
 
-    test_db.add_all([
-        WorkflowRun(owner_user_id=user1.id, seqera_run_id="run-user1-1", work_dir="workdir-1001"),
-        WorkflowRun(owner_user_id=user1.id, seqera_run_id="run-user1-2", work_dir="workdir-1002"),
-        WorkflowRun(owner_user_id=user2.id, seqera_run_id="run-user2-1", work_dir="workdir-2001"),
-        WorkflowRun(owner_user_id=user2.id, seqera_run_id="run-user2-2", work_dir="workdir-2002"),
-    ])
+    test_db.add_all(
+        [
+            WorkflowRun(
+                owner_user_id=user1.id, seqera_run_id="run-user1-1", work_dir="workdir-1001"
+            ),
+            WorkflowRun(
+                owner_user_id=user1.id, seqera_run_id="run-user1-2", work_dir="workdir-1002"
+            ),
+            WorkflowRun(
+                owner_user_id=user2.id, seqera_run_id="run-user2-1", work_dir="workdir-2001"
+            ),
+            WorkflowRun(
+                owner_user_id=user2.id, seqera_run_id="run-user2-2", work_dir="workdir-2002"
+            ),
+        ]
+    )
     test_db.commit()
 
     user1_runs = job_utils.get_owned_runs_by_run_id(test_db, user1.id)

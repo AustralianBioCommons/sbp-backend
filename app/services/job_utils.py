@@ -55,12 +55,16 @@ def get_owned_run(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None
 
 
 def get_owned_runs_by_run_id(db: Session, user_id: UUID) -> dict[str, WorkflowRun]:
-    rows = db.execute(
-        select(WorkflowRun).where(
-            WorkflowRun.owner_user_id == user_id,
-            WorkflowRun.seqera_run_id.is_not(None),
+    rows = (
+        db.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.owner_user_id == user_id,
+                WorkflowRun.seqera_run_id.is_not(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {run.seqera_run_id: run for run in rows}
 
 
