@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
+from ..services import health
 from ..services.wisps_executor import launch_wisps_workflow_new
 from . import SCHEDULER
 
@@ -69,8 +70,13 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
 
 def submit_pending_jobs(dry_run: bool = False):
     logger.info("Checking for pending jobs...")
-    # TODO: need to check service status before submitting
     db_session = next(get_db())
+    system_status = asyncio.run(health.get_system_status(db_session))
+    logger.info(f"System status is {system_status.overall_status}.")
+    if system_status.overall_status == "unhealthy":
+        logger.warning("Skipping pending job submission while system status is unhealthy.")
+        return
+
     now = datetime.now(tz=UTC)
 
     pending_query = select(QueuedJob).where(
