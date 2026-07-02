@@ -7,10 +7,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ...db.models.core import RunInput, RunMetric, RunOutput, WorkflowRun
+from ...db.models.job_queue import QueuedJob
 from ...schemas.workflows import (
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,
@@ -63,6 +64,18 @@ def _resolve_final_design_count(owned_run: WorkflowRun | None) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _get_pending_queued_job(db: Session, owned_run: WorkflowRun | None) -> QueuedJob | None:
+    if owned_run is None:
+        return None
+    queued_job = db.scalar(
+        select(QueuedJob).where(
+            QueuedJob.workflow_run_id == owned_run.id,
+            QueuedJob.status == "pending",
+        )
+    )
+    return queued_job if getattr(queued_job, "status", None) == "pending" else None
+
+
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
 async def cancel_workflow(
     run_id: str,
@@ -111,24 +124,28 @@ async def list_jobs(
 
     for run_id in owned_run_ids:
         owned_run = get_owned_run(db, current_user_id, run_id)
+        pending_queued_job = _get_pending_queued_job(db, owned_run)
 
         # Attempt live status from Seqera; fall back to DB-only data if unreachable.
         seqera_payload: dict[str, object] = {}
         ui_status = "N/A"
-        try:
-            seqera_payload = await describe_workflow(run_id)
-            pipeline_status = extract_pipeline_status(seqera_payload)
-            ui_status = map_pipeline_status_to_ui(pipeline_status)
-        except SeqeraAPIError as exc:
-            if exc.status_code is not None and exc.status_code < 500:
-                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-                continue
-            logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
-            seqera_unavailable = True
-        except Exception as exc:
-            # Network errors, timeouts, or configuration issues — do not fail the list.
-            logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
-            seqera_unavailable = True
+        if pending_queued_job is not None:
+            ui_status = "Pending"
+        else:
+            try:
+                seqera_payload = await describe_workflow(run_id)
+                pipeline_status = extract_pipeline_status(seqera_payload)
+                ui_status = map_pipeline_status_to_ui(pipeline_status)
+            except SeqeraAPIError as exc:
+                if exc.status_code is not None and exc.status_code < 500:
+                    # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+                    continue
+                logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
+                seqera_unavailable = True
+            except Exception as exc:
+                # Network errors, timeouts, or configuration issues — do not fail the list.
+                logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
+                seqera_unavailable = True
 
         if allowed_statuses and ui_status not in allowed_statuses:
             continue
