@@ -7,11 +7,10 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from ...db.models.core import RunInput, RunMetric, RunOutput, WorkflowRun
-from ...db.models.job_queue import QueuedJob
 from ...schemas.workflows import (
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,
@@ -29,10 +28,7 @@ from ...services.job_utils import (
     format_tool_name,
     format_workflow_name,
     get_owned_run,
-    get_owned_run_ids,
-    get_score_by_seqera_run_id,
-    get_tool_by_seqera_run_id,
-    get_workflow_type_by_seqera_run_id,
+    get_user_job_list_rows,
     parse_submit_datetime,
 )
 from ...services.seqera import describe_workflow
@@ -62,18 +58,6 @@ def _resolve_final_design_count(owned_run: WorkflowRun | None) -> int | None:
         return None
     value = owned_run.metrics.final_design_count
     return value if isinstance(value, int) else None
-
-
-def _get_pending_queued_job(db: Session, owned_run: WorkflowRun | None) -> QueuedJob | None:
-    if owned_run is None:
-        return None
-    queued_job = db.scalar(
-        select(QueuedJob).where(
-            QueuedJob.workflow_run_id == owned_run.id,
-            QueuedJob.status == "pending",
-        )
-    )
-    return queued_job if getattr(queued_job, "status", None) == "pending" else None
 
 
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
@@ -113,27 +97,25 @@ async def list_jobs(
     db: Session = Depends(get_db),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
-    owned_run_ids = get_owned_run_ids(db, current_user_id)
-    score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
-    workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
-    tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
+    user_runs = get_user_job_list_rows(db, current_user_id)
     search_text = (search or "").strip().lower()
     allowed_statuses = set(status_filter or [])
     jobs: list[JobListItem] = []
     seqera_unavailable = False
 
-    for run_id in owned_run_ids:
-        owned_run = get_owned_run(db, current_user_id, run_id)
-        pending_queued_job = _get_pending_queued_job(db, owned_run)
+    for user_run in user_runs:
+        run_id = user_run.run_id
+        owned_run = user_run.run
+        seqera_run_id = user_run.seqera_run_id
 
         # Attempt live status from Seqera; fall back to DB-only data if unreachable.
         seqera_payload: dict[str, object] = {}
         ui_status = "N/A"
-        if pending_queued_job is not None:
+        if user_run.is_pending:
             ui_status = "Pending"
-        else:
+        elif seqera_run_id:
             try:
-                seqera_payload = await describe_workflow(run_id)
+                seqera_payload = await describe_workflow(seqera_run_id)
                 pipeline_status = extract_pipeline_status(seqera_payload)
                 ui_status = map_pipeline_status_to_ui(pipeline_status)
             except SeqeraAPIError as exc:
@@ -157,8 +139,8 @@ async def list_jobs(
         if submitted_at is None:
             submitted_at = datetime.now(UTC)
 
-        workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
-        tool = tool_by_run_id.get(run_id, "Unknown")
+        workflow_type = user_run.workflow_type
+        tool = user_run.tool
         job_name = _resolve_job_name(run_id, wf, owned_run)
 
         if (
@@ -168,7 +150,7 @@ async def list_jobs(
         ):
             continue
 
-        db_score = score_by_run_id.get(run_id)
+        db_score = user_run.score
 
         # A cached score means the job completed at some point; treat it as Completed
         # when Seqera is unreachable and we cannot get the live status.
@@ -188,7 +170,7 @@ async def list_jobs(
                 status=ui_status,
                 submittedAt=submitted_at,
                 score=score if ui_status == "Completed" else None,
-                finalDesignCount=_resolve_final_design_count(owned_run),
+                finalDesignCount=user_run.final_design_count,
             )
         )
 

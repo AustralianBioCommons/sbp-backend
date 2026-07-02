@@ -7,8 +7,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...db.models.core import WorkflowRun
 from ...schemas.workflows import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
