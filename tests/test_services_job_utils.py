@@ -101,6 +101,15 @@ def test_get_tool_by_seqera_run_id(test_db):
     assert result["tool-run-4"] == "Unknown"
 
 
+def test_get_tool_by_seqera_run_id_skips_null_seqera_run_id():
+    # seqera_run_id is NOT NULL in the schema but the query result rows can still
+    # carry None in edge cases (e.g. legacy data). The loop skips those rows.
+    db = _DB(all_rows=[(None, "bindcraft", {}), ("run-a", "wisps", {})])
+    result = job_utils.get_tool_by_seqera_run_id(db, "any-user-id")
+    assert None not in result
+    assert result == {"run-a": "Wisps"}
+
+
 def test_get_sample_id_for_score_delegates():
     run = SimpleNamespace(id="rid", sample_id="s1")
     with patch("app.services.job_utils.get_sample_id_for_result", return_value="s1") as mock:
@@ -830,3 +839,16 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
 
     assert [item.key for item in result] == [snapshot_key]
     assert [item.category for item in result] == ["snapshot"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_returns_none_when_get_output_spec_raises():
+    run = SimpleNamespace(id="rid", seqera_run_id="wf-no-spec", tool=None, workflow=None)
+    db = _DB(scalar=None)
+
+    with patch(
+        "app.services.job_utils.get_output_spec", side_effect=ValueError("unknown workflow")
+    ):
+        score = await job_utils.ensure_completed_run_score(db, run, "Completed")
+
+    assert score is None
