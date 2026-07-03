@@ -607,6 +607,21 @@ async def extract_wisps_max_score(score_file: str) -> float | None:
     return max(values) if values else None
 
 
+async def extract_bulk_prediction_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    values: list[float] = []
+    for row in csv_reader:
+        ## get max_score from ptm column
+        value = row.get("ptm")
+        if value and value.strip():
+            try:
+                values.append(float(value))
+            except ValueError:
+                pass
+    return max(values) if values else None
+
+
 def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
@@ -647,6 +662,18 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_wisps_max_score,
+        classify=classify_wisps_output_key,
+    )
+
+
+def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
+    return WorkflowResultsSpec(
+        kind="bulk-prediction",
+        tool=tool,
+        required_categories={"report", "stats_csv"},
+        get_prefixes=build_wisps_output_listing_prefixes,
+        get_score_file=get_wisps_score_file,
+        extract_max_score=extract_bulk_prediction_max_score,
         classify=classify_wisps_output_key,
     )
 
@@ -696,6 +723,10 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
     "interaction-screening": {
         "boltz": _make_wisps_spec("boltz"),
         "colabfold": _make_wisps_spec("colabfold"),
+    },
+    "bulk-prediction": {
+        "boltz": _make_bulk_prediction_spec("boltz"),
+        "colabfold": _make_bulk_prediction_spec("colabfold"),
     },
 }
 
