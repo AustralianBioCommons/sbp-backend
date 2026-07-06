@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.job_queue import QueuedJob
 from app.services import job_utils, results_utils
 from tests.datagen import WorkflowRunFactory
 
@@ -61,44 +62,102 @@ def test_format_tool_name_empty_string():
     assert job_utils.format_tool_name("") == ""
 
 
-def test_get_tool_by_seqera_run_id(test_db):
-    user = AppUser(auth0_user_id="auth0|tool-u", name="Tool U", email="tool@example.com")
-    test_db.add(user)
+def test_get_user_job_list_rows_returns_current_user_run_metadata(test_db):
+    user = AppUser(auth0_user_id="auth0|job-list-u", name="Job List U", email="jobs@example.com")
+    other_user = AppUser(
+        auth0_user_id="auth0|job-list-other",
+        name="Other User",
+        email="other-jobs@example.com",
+    )
+    workflow = Workflow(name="de-novo-design", description="Design workflow")
+    other_workflow = Workflow(name="other-workflow", description="Other workflow")
+    test_db.add_all([user, other_user, workflow, other_workflow])
     test_db.commit()
 
     run_direct = WorkflowRun(
-        owner_user_id=user.id, seqera_run_id="tool-run-1", tool="bindcraft", work_dir="wd-t1"
+        owner_user_id=user.id,
+        workflow_id=workflow.id,
+        seqera_run_id="wf-direct",
+        tool="bindcraft",
+        work_dir="wd-direct",
     )
     run_form_mode = WorkflowRun(
         owner_user_id=user.id,
-        seqera_run_id="tool-run-2",
+        workflow_id=workflow.id,
+        seqera_run_id="wf-mode",
         tool=None,
         submitted_form_data={"mode": "colabfold"},
-        work_dir="wd-t2",
+        work_dir="wd-mode",
     )
-    run_form_tool = WorkflowRun(
+    run_form_tool_pending = WorkflowRun(
         owner_user_id=user.id,
-        seqera_run_id="tool-run-3",
+        workflow_id=workflow.id,
+        seqera_run_id=None,
         tool=None,
         submitted_form_data={"tool": "wisps"},
-        work_dir="wd-t3",
+        work_dir="wd-pending",
     )
-    run_no_tool = WorkflowRun(
+    run_no_metadata = WorkflowRun(
         owner_user_id=user.id,
-        seqera_run_id="tool-run-4",
+        workflow_id=None,
+        seqera_run_id="wf-unknown",
         tool=None,
         submitted_form_data={},
-        work_dir="wd-t4",
+        work_dir="wd-unknown",
     )
-    test_db.add_all([run_direct, run_form_mode, run_form_tool, run_no_tool])
+    other_run = WorkflowRun(
+        owner_user_id=other_user.id,
+        workflow_id=other_workflow.id,
+        seqera_run_id="wf-other",
+        tool="other",
+        work_dir="wd-other",
+    )
+    test_db.add_all([run_direct, run_form_mode, run_form_tool_pending, run_no_metadata, other_run])
     test_db.commit()
 
-    result = job_utils.get_tool_by_seqera_run_id(test_db, user.id)
+    test_db.add_all(
+        [
+            RunMetric(run_id=run_direct.id, max_score=0.9123, final_design_count=12),
+            RunMetric(run_id=run_form_mode.id, max_score=None, final_design_count=25),
+            RunMetric(run_id=other_run.id, max_score=0.5555, final_design_count=99),
+            QueuedJob(
+                workflow_run_id=run_form_tool_pending.id,
+                workflow_id=workflow.id,
+                launch_payload={},
+                status="pending",
+            ),
+        ]
+    )
+    test_db.commit()
 
-    assert result["tool-run-1"] == "Bindcraft"
-    assert result["tool-run-2"] == "Colabfold"
-    assert result["tool-run-3"] == "Wisps"
-    assert result["tool-run-4"] == "Unknown"
+    rows = job_utils.get_user_job_list_rows(test_db, user.id)
+    by_id = {row.run_id: row for row in rows}
+
+    assert set(by_id) == {
+        str(run_direct.id),
+        str(run_form_mode.id),
+        str(run_form_tool_pending.id),
+        str(run_no_metadata.id),
+    }
+    assert str(other_run.id) not in by_id
+
+    assert by_id[str(run_direct.id)].seqera_run_id == "wf-direct"
+    assert by_id[str(run_direct.id)].workflow_type == "De Novo Design"
+    assert by_id[str(run_direct.id)].tool == "Bindcraft"
+    assert by_id[str(run_direct.id)].score == 0.91
+    assert by_id[str(run_direct.id)].final_design_count == 12
+    assert by_id[str(run_direct.id)].is_pending is False
+
+    assert by_id[str(run_form_mode.id)].tool == "Colabfold"
+    assert by_id[str(run_form_mode.id)].score is None
+    assert by_id[str(run_form_mode.id)].final_design_count == 25
+
+    assert by_id[str(run_form_tool_pending.id)].seqera_run_id is None
+    assert by_id[str(run_form_tool_pending.id)].tool == "Wisps"
+    assert by_id[str(run_form_tool_pending.id)].is_pending is True
+
+    assert by_id[str(run_no_metadata.id)].workflow_type == "Unknown"
+    assert by_id[str(run_no_metadata.id)].tool == "Unknown"
 
 
 def test_get_sample_id_for_score_delegates():
@@ -107,180 +166,6 @@ def test_get_sample_id_for_score_delegates():
         result = job_utils._get_sample_id_for_score(run)
     assert result == "s1"
     mock.assert_called_once_with(run)
-
-
-def test_get_owned_run_ids_returns_only_current_user_runs(test_db):
-    """Test that get_owned_run_ids returns only runs owned by the specified user."""
-    # Create two users
-    user1 = AppUser(
-        auth0_user_id="auth0|user1",
-        name="User One",
-        email="user1@example.com",
-    )
-    user2 = AppUser(
-        auth0_user_id="auth0|user2",
-        name="User Two",
-        email="user2@example.com",
-    )
-    test_db.add(user1)
-    test_db.add(user2)
-    test_db.commit()
-
-    # Create runs for user1
-    run1_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-1",
-        work_dir="workdir-1001",
-    )
-    run2_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-2",
-        work_dir="workdir-1002",
-    )
-
-    # Create runs for user2
-    run1_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        seqera_run_id="run-user2-1",
-        work_dir="workdir-2001",
-    )
-    run2_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        seqera_run_id="run-user2-2",
-        work_dir="workdir-2002",
-    )
-
-    test_db.add_all([run1_user1, run2_user1, run1_user2, run2_user2])
-    test_db.commit()
-
-    # Get run IDs for user1 - should only return user1's runs
-    user1_runs = job_utils.get_owned_run_ids(test_db, user1.id)
-    assert user1_runs == {"run-user1-1", "run-user1-2"}
-    assert "run-user2-1" not in user1_runs
-    assert "run-user2-2" not in user1_runs
-
-    # Get run IDs for user2 - should only return user2's runs
-    user2_runs = job_utils.get_owned_run_ids(test_db, user2.id)
-    assert user2_runs == {"run-user2-1", "run-user2-2"}
-    assert "run-user1-1" not in user2_runs
-    assert "run-user1-2" not in user2_runs
-
-
-def test_get_score_by_seqera_run_id_returns_only_current_user_runs(test_db):
-    """Test that get_score_by_seqera_run_id returns only scores for the specified user."""
-    # Create two users
-    user1 = AppUser(
-        auth0_user_id="auth0|user1",
-        name="User One",
-        email="user1@example.com",
-    )
-    user2 = AppUser(
-        auth0_user_id="auth0|user2",
-        name="User Two",
-        email="user2@example.com",
-    )
-    test_db.add_all([user1, user2])
-    test_db.commit()
-
-    # Create runs with metrics for user1
-    run1_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-1",
-        work_dir="workdir-1001",
-    )
-    run2_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        seqera_run_id="run-user1-2",
-        work_dir="workdir-1002",
-    )
-    test_db.add_all([run1_user1, run2_user1])
-    test_db.commit()
-
-    # Add metrics
-    metric1 = RunMetric(run_id=run1_user1.id, max_score=0.9123)
-    metric2 = RunMetric(run_id=run2_user1.id, max_score=None)
-    test_db.add_all([metric1, metric2])
-
-    # Create runs with metrics for user2
-    run1_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        seqera_run_id="run-user2-1",
-        work_dir="workdir-2001",
-    )
-    test_db.add(run1_user2)
-    test_db.commit()
-
-    metric3 = RunMetric(run_id=run1_user2.id, max_score=0.5555)
-    test_db.add(metric3)
-    test_db.commit()
-
-    # Get scores for user1
-    user1_scores = job_utils.get_score_by_seqera_run_id(test_db, user1.id)
-    assert user1_scores == {"run-user1-1": 0.91}  # Numeric(8, 2) precision
-    assert "run-user2-1" not in user1_scores
-
-    # Get scores for user2
-    user2_scores = job_utils.get_score_by_seqera_run_id(test_db, user2.id)
-    assert user2_scores == {"run-user2-1": 0.56}  # Numeric(8, 2) precision
-    assert "run-user1-1" not in user2_scores
-
-
-def test_get_workflow_type_by_seqera_run_id_returns_only_current_user_runs(test_db):
-    """Test that get_workflow_type_by_seqera_run_id returns only workflow types for the specified user."""
-    # Create two users
-    user1 = AppUser(
-        auth0_user_id="auth0|user1",
-        name="User One",
-        email="user1@example.com",
-    )
-    user2 = AppUser(
-        auth0_user_id="auth0|user2",
-        name="User Two",
-        email="user2@example.com",
-    )
-    test_db.add_all([user1, user2])
-    test_db.commit()
-
-    # Create workflows
-    workflow1 = Workflow(
-        name="BindCraft",
-        description="Binding workflow",
-    )
-    workflow2 = Workflow(
-        name="OtherWorkflow",
-        description="Other workflow",
-    )
-    test_db.add_all([workflow1, workflow2])
-    test_db.commit()
-
-    # Create runs for user1
-    run1_user1 = WorkflowRun(
-        owner_user_id=user1.id,
-        workflow_id=workflow1.id,
-        seqera_run_id="run-user1-1",
-        work_dir="workdir-1001",
-    )
-    test_db.add(run1_user1)
-
-    # Create runs for user2
-    run1_user2 = WorkflowRun(
-        owner_user_id=user2.id,
-        workflow_id=workflow2.id,
-        seqera_run_id="run-user2-1",
-        work_dir="workdir-2001",
-    )
-    test_db.add(run1_user2)
-    test_db.commit()
-
-    # Get workflow types for user1
-    user1_types = job_utils.get_workflow_type_by_seqera_run_id(test_db, user1.id)
-    assert user1_types == {"run-user1-1": "Bindcraft"}
-    assert "run-user2-1" not in user1_types
-
-    # Get workflow types for user2
-    user2_types = job_utils.get_workflow_type_by_seqera_run_id(test_db, user2.id)
-    assert user2_types == {"run-user2-1": "Otherworkflow"}
-    assert "run-user1-1" not in user2_types
 
 
 @pytest.mark.asyncio
