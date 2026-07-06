@@ -9,7 +9,11 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import InteractionScreeningFormData, WorkflowLaunchForm
+from app.schemas.workflows import (
+    InteractionScreeningFormData,
+    WorkflowLaunchForm,
+    WorkflowUserDetails,
+)
 from app.services.launch_payloads import get_executor_script
 from app.services.seqera import (
     WorkflowExecutorError,
@@ -33,7 +37,66 @@ from app.services.workflow_config_fetcher import (
     _validate_config_path,
     fetch_workflow_config,
 )
-from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+
+_USER_DETAILS = WorkflowUserDetails(
+    user_email="user@ex.com",
+    full_name="Test User",
+    institute="USYD",
+    ip_address="1.2.3.4",
+)
+
+
+def _queued_wisps_job(
+    *,
+    params_text: str | None = None,
+    prerun_script_path: str | None = None,
+    submitted_form_data: dict | None = None,
+) -> QueuedJob:
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        name="interaction-screening",
+        prerun_script_path=prerun_script_path,
+    )
+    workflow_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        submitted_form_data=submitted_form_data
+        or {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/seqs.fa",
+            "splitOutputDir": "/tmp/split",
+        },
+    )
+    launch_payload = {
+        "computeEnvId": "ce1",
+        "runName": "test-run",
+        "pipeline": "nf-core/wisps",
+        "workDir": "s3://work",
+        "workspaceId": "ws1",
+        "revision": "dev",
+        "paramsText": params_text
+        or "outdir: s3://out\ninput: https://sheet\nmode: g1-g2\ntools: boltz",
+        "configProfiles": ["singularity"],
+        "configText": "config_text",
+        "resume": False,
+    }
+    return QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=workflow_run,
+        launch_payload=launch_payload,
+        status="pending",
+    )
+
+
+def _wisps_submitted_form_data() -> dict:
+    return {
+        "workflow": "interaction-screening",
+        "tool": "boltz",
+        "fastaS3Uri": "s3://bucket/seqs.fa",
+        "splitOutputDir": "/tmp/split",
+    }
 
 
 @contextmanager
@@ -193,11 +256,8 @@ def test_get_wisps_config_text_appends_process_block():
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
-            username="user@ex.com",
+            user_details=_USER_DETAILS,
             timestamp="20240101_120000",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
         )
     assert "process {" in result
     assert "clusterOptions" in result
@@ -208,11 +268,8 @@ def test_get_wisps_config_text_contains_job_fields():
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
-            username="user@ex.com",
+            user_details=_USER_DETAILS,
             timestamp="20240101_120000",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
         )
     assert "my-job" in result
     assert "user@ex.com" in result
@@ -223,11 +280,8 @@ def test_get_wisps_config_text_contains_base_config():
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
             job_id="my-job",
-            username="user@ex.com",
+            user_details=_USER_DETAILS,
             timestamp="20240101_120000",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
         )
     assert "base_config" in result
 
@@ -272,12 +326,10 @@ def test_samplesheet_url_format():
 @pytest.mark.anyio
 async def test_post_seqera_launch_success():
     with respx.mock:
-        respx.post("https://api.test/launch").mock(
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
             return_value=httpx.Response(200, json={"workflowId": "wf_abc", "status": "submitted"})
         )
-        result = await post_seqera_launch(
-            "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
-        )
+        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
     assert result.workflow_id == "wf_abc"
     assert result.status == "submitted"
 
@@ -285,41 +337,35 @@ async def test_post_seqera_launch_success():
 @pytest.mark.anyio
 async def test_post_seqera_launch_nested_workflow_id():
     with respx.mock:
-        respx.post("https://api.test/launch").mock(
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
             return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}})
         )
-        result = await post_seqera_launch(
-            "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
-        )
+        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
     assert result.workflow_id == "wf_nested"
 
 
 @pytest.mark.anyio
 async def test_post_seqera_launch_http_error():
     with respx.mock:
-        respx.post("https://api.test/launch").mock(
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
             return_value=httpx.Response(401, text="Unauthorized")
         )
         with pytest.raises(WorkflowExecutorError, match="401"):
-            await post_seqera_launch(
-                "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
-            )
+            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
 
 
 @pytest.mark.anyio
 async def test_post_seqera_launch_missing_workflow_id():
     with respx.mock:
-        respx.post("https://api.test/launch").mock(
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
             return_value=httpx.Response(200, json={"status": "submitted"})
         )
         with pytest.raises(WorkflowExecutorError, match="workflowId"):
-            await post_seqera_launch(
-                "https://api.test/launch", {"launch": {}}, workflow_label="WISPS"
-            )
+            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_success(monkeypatch):
+async def test_launch_wisps_workflow_success(monkeypatch, persistent_models):
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token123")
     monkeypatch.setenv("WORK_SPACE", "ws1")
@@ -330,43 +376,15 @@ async def test_launch_wisps_workflow_success(monkeypatch):
     mock_result = WorkflowLaunchResult(workflow_id="wf_xyz", status="submitted")
 
     with (
-        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor.post_seqera_launch",
             new=AsyncMock(return_value=mock_result),
         ) as mock_post,
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
-        patch(
-            "app.services.wisps_executor.get_wisps_default_params",
-            return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
-        ),
     ):
-        form = WorkflowLaunchForm(
-            workflow="interaction-screening", tool="boltz", runName="test-run"
-        )
-        form_data = InteractionScreeningFormData(
-            workflow="interaction-screening",
-            tool="boltz",
-            fastaS3Uri="s3://bucket/seqs.fa",
-            splitOutputDir="/tmp/split",
-        )
-        result = await launch_wisps_workflow(
-            form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
-            form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
-            output_id="output-001",
-        )
+        result = await launch_wisps_workflow(queued_job=_queued_wisps_job())
 
     assert result.workflow_id == "wf_xyz"
-    posted_payload = mock_post.call_args.args[1]["launch"]
+    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
     assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
     assert "export S3_PATH=bucket/seqs.fa" in posted_payload["preRunScript"]
     assert "export D=/tmp/split" in posted_payload["preRunScript"]
@@ -403,7 +421,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
     ):
-        launch_payload = await prepare_wisps_workflow(
+        prepared_job = await prepare_wisps_workflow(
             form=form,
             s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
@@ -413,10 +431,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
             form_data=form_data,
             revision="dev",
             output_id="output-queued",
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
+            user_details=_USER_DETAILS.model_copy(update={"user_email": "user@test.com"}),
         )
 
     queued_job = test_db.scalar(
@@ -425,10 +440,9 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    # TODO: update to "pending" once we have a job queue
-    assert queued_job.status == "submitted"
+    assert queued_job.status == "pending"
     assert queued_job.next_attempt_at is not None
-    assert queued_job.launch_payload == launch_payload
+    assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce1"
     assert queued_job.launch_payload["runName"] == "queued-run"
     assert queued_job.launch_payload["pipeline"] == "nf-core/wisps"
@@ -448,7 +462,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
+async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch, persistent_models):
     """prerun_script_path is forwarded to get_executor_script."""
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token123")
@@ -461,82 +475,33 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch):
     prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
 
     with (
-        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor.post_seqera_launch",
             new=AsyncMock(return_value=mock_result),
         ) as mock_post,
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
-        patch(
-            "app.services.wisps_executor.get_wisps_default_params",
-            return_value={"outdir": "s3://out", "input": "https://sheet", "mode": "g1-g2"},
-        ),
         patch(
             "app.services.wisps_executor.get_executor_script", return_value="prerun_body"
         ) as mock_script,
     ):
-        form = WorkflowLaunchForm(
-            workflow="interaction-screening", tool="boltz", runName="prerun-run"
-        )
-        form_data = InteractionScreeningFormData(
-            workflow="interaction-screening",
-            tool="boltz",
-            fastaS3Uri="s3://bucket/seqs.fa",
-            splitOutputDir="/tmp/split",
-        )
         result = await launch_wisps_workflow(
-            form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
-            form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
-            output_id="output-003",
-            prerun_script_path=prerun_url,
+            queued_job=_queued_wisps_job(prerun_script_path=prerun_url)
         )
 
     assert result.workflow_id == "wf_prerun"
     call_kwargs = mock_script.call_args.kwargs
     assert call_kwargs["prerun_script_path"] == prerun_url
-    posted_payload = mock_post.call_args.args[1]["launch"]
+    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
     assert posted_payload["preRunScript"] == "prerun_body"
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_missing_env_var(monkeypatch):
+async def test_launch_wisps_workflow_missing_env_var(monkeypatch, persistent_models):
     monkeypatch.delenv("SEQERA_API_URL", raising=False)
 
-    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
-    form_data = InteractionScreeningFormData(
-        workflow="interaction-screening",
-        tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa",
-        splitOutputDir="/tmp/split",
-    )
     with (
-        _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
     ):
-        await launch_wisps_workflow(
-            form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
-            form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
-            output_id="output-001",
-        )
+        await launch_wisps_workflow(queued_job=_queued_wisps_job())
 
 
 @pytest.mark.anyio
@@ -559,7 +524,7 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         pytest.raises(SeqeraConfigurationError, match="output identifier"),
     ):
-        await launch_wisps_workflow(
+        await prepare_wisps_workflow(
             form=form,
             s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
@@ -567,11 +532,8 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
             output_id=None,
+            user_details=_USER_DETAILS,
         )
 
 
@@ -595,7 +557,7 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         pytest.raises(SeqeraConfigurationError),
     ):
-        await launch_wisps_workflow(
+        await prepare_wisps_workflow(
             form=form,
             s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
@@ -603,11 +565,8 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
             output_id="   ",
+            user_details=_USER_DETAILS,
         )
 
 
@@ -631,7 +590,7 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
         pytest.raises(SeqeraConfigurationError, match="run name"),
     ):
-        await launch_wisps_workflow(
+        await prepare_wisps_workflow(
             form=form,
             s3_input_key="inputs/samplesheets/test.csv",
             db_session=db_session,
@@ -639,16 +598,13 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
             pipeline="nf-core/wisps",
             config_path="/fake/config.nf",
             form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
             output_id="output-001",
+            user_details=_USER_DETAILS,
         )
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_with_tool(monkeypatch):
+async def test_launch_wisps_workflow_with_tool(monkeypatch, persistent_models):
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token123")
     monkeypatch.setenv("WORK_SPACE", "ws1")
@@ -659,44 +615,15 @@ async def test_launch_wisps_workflow_with_tool(monkeypatch):
     mock_result = WorkflowLaunchResult(workflow_id="wf_tool", status="submitted")
 
     with (
-        _mock_wisps_db_context() as (db_session, workflow_run, *_),
         patch(
             "app.services.wisps_executor.post_seqera_launch",
             new=AsyncMock(return_value=mock_result),
         ),
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
-        patch(
-            "app.services.wisps_executor.get_wisps_default_params",
-            return_value={
-                "outdir": "s3://out",
-                "input": "https://sheet",
-                "mode": "g1-g2",
-                "tools": "boltz",
-            },
-        ),
     ):
-        form = WorkflowLaunchForm(
-            workflow="interaction-screening", tool="boltz", runName="test-run-tool"
-        )
-        form_data = InteractionScreeningFormData(
-            workflow="interaction-screening",
-            tool="boltz",
-            fastaS3Uri="s3://bucket/seqs.fa",
-            splitOutputDir="/tmp/split",
-        )
         result = await launch_wisps_workflow(
-            form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
-            form_data=form_data,
-            user_email="user@test.com",
-            full_name="Test User",
-            institute="USYD",
-            ip_address="1.2.3.4",
-            output_id="output-002",
+            queued_job=_queued_wisps_job(
+                params_text="outdir: s3://out\ninput: https://sheet\nmode: g1-g2\ntools: boltz"
+            )
         )
 
     assert result.workflow_id == "wf_tool"

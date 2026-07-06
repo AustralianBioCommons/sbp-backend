@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -12,6 +13,8 @@ from fastapi.testclient import TestClient
 from app.db.models.core import Workflow, WorkflowRun
 from app.main import create_app
 from app.routes.workflow.jobs import get_job_details, list_jobs
+from app.services.job_utils import UserJobListRow
+from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 
 @pytest.fixture

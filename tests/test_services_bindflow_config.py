@@ -9,6 +9,7 @@ import httpx
 import pytest
 import respx
 
+from app.schemas.workflows import WorkflowUserDetails
 from app.services.bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -17,6 +18,12 @@ from app.services.bindflow_config import (
 from app.services.launch_payloads import get_executor_script
 
 _SHEET_URL = "https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesheet.csv"
+_USER_DETAILS = WorkflowUserDetails(
+    user_email="user@example.com",
+    full_name="",
+    institute="",
+    ip_address="",
+)
 
 # =============================================================================
 # Tests for get_bindflow_default_params()
@@ -119,7 +126,7 @@ def test_get_bindflow_config_text_includes_base_config():
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
             job_id="run-1",
-            username="user@example.com",
+            user_details=_USER_DETAILS,
             timestamp="20260507_120000",
         )
     assert "base_config_content" in result
@@ -130,7 +137,7 @@ def test_get_bindflow_config_text_appends_process_block():
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
             job_id="run-1",
-            username="user@example.com",
+            user_details=_USER_DETAILS,
             timestamp="20260507_120000",
         )
     assert "process {" in result
@@ -142,7 +149,7 @@ def test_get_bindflow_config_text_interpolates_job_fields():
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
             job_id="my-run",
-            username="alice@example.com",
+            user_details=_USER_DETAILS.model_copy(update={"user_email": "alice@example.com"}),
             timestamp="20260507_090000",
         )
     assert "my-run" in result
@@ -155,11 +162,13 @@ def test_get_bindflow_config_text_optional_fields():
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
             job_id="run-1",
-            username="user@example.com",
+            user_details=WorkflowUserDetails(
+                user_email="user@example.com",
+                full_name="Alice Smith",
+                institute="BioCommons",
+                ip_address="1.2.3.4",
+            ),
             timestamp="ts",
-            full_name="Alice Smith",
-            institute="BioCommons",
-            ip_address="1.2.3.4",
         )
     assert "Alice Smith" in result
     assert "BioCommons" in result
@@ -174,7 +183,7 @@ def test_get_bindflow_config_text_url_fetching():
         result = get_bindflow_config_text(
             "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
             job_id="run-url",
-            username="user@example.com",
+            user_details=_USER_DETAILS,
             timestamp="20260507_120000",
         )
     assert "remote_base_config" in result
@@ -190,6 +199,6 @@ def test_get_bindflow_config_text_url_error_raises():
             get_bindflow_config_text(
                 "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
                 job_id="run-1",
-                username="user@example.com",
+                user_details=_USER_DETAILS,
                 timestamp="ts",
             )
