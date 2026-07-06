@@ -13,7 +13,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
@@ -21,13 +21,56 @@ from app.services.bindflow_executor import (
 )
 from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult
 from app.services.seqera_errors import SeqeraConfigurationError
-from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
+_USER_DETAILS = WorkflowUserDetails(
+    user_email="test@example.com",
+    full_name="Test_User",
+    institute="example.com",
+    ip_address="127.0.0.1",
+)
 
 
 def _empty_form_data() -> WorkflowFormData:
     return WorkflowFormData(workflow="de-novo-design", tool="bindcraft")
+
+
+def _queued_bindflow_job(
+    *,
+    params_text: str | None = None,
+    prerun_script_path: str | None = None,
+) -> QueuedJob:
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        name="de-novo-design",
+        prerun_script_path=prerun_script_path,
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    launch_payload = {
+        "computeEnvId": "test_compute_env_id",
+        "runName": "seqera-test-run",
+        "pipeline": "https://github.com/test/repo",
+        "workDir": "/test/work/dir",
+        "workspaceId": "test_workspace_id",
+        "revision": "dev",
+        "paramsText": params_text
+        or (
+            "project: yz52\n"
+            "outdir: s3://test-s3-bucket/run-out\n"
+            "input: s3://test-s3-bucket/inputs/samplesheets/test.csv\n"
+            "mode: bindcraft"
+        ),
+        "configProfiles": ["gadi"],
+        "configText": "",
+        "resume": False,
+    }
+    return QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=workflow_run,
+        launch_payload=launch_payload,
+        status="pending",
+    )
 
 
 @contextmanager
@@ -64,35 +107,16 @@ def test_get_missing_env_variable():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_success_minimal():
+async def test_launch_success_minimal(persistent_models):
     """Test successful workflow launch with minimal parameters."""
-    route = respx.post("https://api.seqera.test/workflow/launch").mock(
+    route = respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
         return_value=httpx.Response(
             200,
             json={"workflowId": "wf_test_123"},
         )
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-test-minimal"
-    )
-
-    with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-        result = await launch_bindflow_workflow(
-            form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="https://github.com/test/repo",
-            config_path=_CONFIG_PATH,
-            mode="bindcraft",
-            form_data=_empty_form_data(),
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
-            output_id="run-out-1",
-        )
+    result = await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
 
     assert isinstance(result, WorkflowLaunchResult)
     assert result.workflow_id == "wf_test_123"
@@ -141,7 +165,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
         ),
     ):
-        launch_payload = await prepare_bindflow_workflow(
+        prepared_job = await prepare_bindflow_workflow(
             form=form,
             s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
@@ -152,10 +176,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             output_id="run-output-id",
             mode="bindcraft",
             form_data=form_data,
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
+            user_details=_USER_DETAILS,
         )
 
     queued_job = test_db.scalar(
@@ -164,10 +185,9 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    # TODO: update to "pending" once we have a job queue
-    assert queued_job.status == "submitted"
+    assert queued_job.status == "pending"
     assert queued_job.next_attempt_at is not None
-    assert queued_job.launch_payload == launch_payload
+    assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
     assert queued_job.launch_payload["runName"] == "queued-bindflow-run"
     assert queued_job.launch_payload["pipeline"] == "https://github.com/test/repo"
@@ -190,21 +210,13 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_success_with_all_params():
+async def test_launch_success_with_all_params(persistent_models):
     """Test successful launch with all parameters."""
     route = respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(
             200,
             json={"workflowId": "wf_full_456"},
         )
-    )
-
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design",
-        tool="bindcraft",
-        runName="my-custom-run",
-        configProfiles=["docker", "test"],
-        paramsText="custom_param: value",
     )
 
     with (
@@ -215,21 +227,13 @@ async def test_launch_success_with_all_params():
         ) as mock_script,
     ):
         result = await launch_bindflow_workflow(
-            form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="https://github.com/test/repo",
-            config_path=_CONFIG_PATH,
-            revision="main",
-            mode="bindcraft",
-            form_data=_empty_form_data(),
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
-            output_id="run-out-2",
-            prerun_script_path="/some/prerun.sh",
+            queued_job=_queued_bindflow_job(
+                params_text=(
+                    "input: s3://test-s3-bucket/inputs/samplesheets/test.csv\n"
+                    "custom_param: value"
+                ),
+                prerun_script_path="/some/prerun.sh",
+            )
         )
 
     assert result.workflow_id == "wf_full_456"
@@ -245,32 +249,13 @@ async def test_launch_success_with_all_params():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_includes_default_params():
+async def test_launch_includes_default_params(persistent_models):
     """Test that default parameters are included."""
     route = respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(200, json={"workflowId": "wf_123"})
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-default-params"
-    )
-
-    with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-        await launch_bindflow_workflow(
-            form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="https://github.com/test/repo",
-            config_path=_CONFIG_PATH,
-            mode="bindcraft",
-            form_data=_empty_form_data(),
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
-            output_id="run-out-3",
-        )
+    await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
 
     request = route.calls.last.request
     payload = json.loads(request.content)
@@ -283,32 +268,13 @@ async def test_launch_includes_default_params():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_with_dataset_adds_input_url():
+async def test_launch_with_dataset_adds_input_url(persistent_models):
     """Test that providing a dataset ID adds it to launch payload."""
     route = respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(200, json={"workflowId": "wf_dataset_999"})
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-dataset-url"
-    )
-
-    with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-        await launch_bindflow_workflow(
-            form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="https://github.com/test/repo",
-            config_path=_CONFIG_PATH,
-            mode="bindcraft",
-            form_data=_empty_form_data(),
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
-            output_id="run-out-4",
-        )
+    await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
 
     request = route.calls.last.request
     payload = json.loads(request.content)
@@ -319,129 +285,57 @@ async def test_launch_with_dataset_adds_input_url():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_api_error_response():
+async def test_launch_api_error_response(persistent_models):
     """Test handling of API error response."""
     respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(400, text="Invalid request")
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-api-error"
-    )
-
     with pytest.raises(WorkflowExecutorError, match="400"):
-        with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-            await launch_bindflow_workflow(
-                form,
-                s3_input_key="inputs/samplesheets/test.csv",
-                db_session=db_session,
-                workflow_run=workflow_run,
-                pipeline="https://github.com/test/repo",
-                config_path=_CONFIG_PATH,
-                mode="bindcraft",
-                form_data=_empty_form_data(),
-                user_email="test@example.com",
-                full_name="Test_User",
-                institute="example.com",
-                ip_address="127.0.0.1",
-                output_id="run-out-5",
-            )
+        await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_missing_workflow_id_in_response():
+async def test_launch_missing_workflow_id_in_response(persistent_models):
     """Test error handling when API response lacks workflowId."""
     respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(200, json={"status": "success"})
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-missing-workflow-id"
-    )
-
     with pytest.raises(WorkflowExecutorError, match="workflowId"):
-        with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-            await launch_bindflow_workflow(
-                form,
-                s3_input_key="inputs/samplesheets/test.csv",
-                db_session=db_session,
-                workflow_run=workflow_run,
-                pipeline="https://github.com/test/repo",
-                config_path=_CONFIG_PATH,
-                mode="bindcraft",
-                form_data=_empty_form_data(),
-                user_email="test@example.com",
-                full_name="Test_User",
-                institute="example.com",
-                ip_address="127.0.0.1",
-                output_id="run-out-6",
-            )
+        await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
 
 
-def test_launch_missing_env_vars():
+def test_launch_missing_env_vars(persistent_models):
     """Test that missing environment variables raise error."""
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design", tool="bindcraft", runName="seqera-custom-params"
-    )
-
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.delenv("SEQERA_API_URL", raising=False)
         monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
         monkeypatch.delenv("WORK_SPACE", raising=False)
 
         with pytest.raises(SeqeraConfigurationError):
-            with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-                asyncio.run(
-                    launch_bindflow_workflow(
-                        form,
-                        s3_input_key="inputs/samplesheets/test.csv",
-                        db_session=db_session,
-                        workflow_run=workflow_run,
-                        pipeline="https://github.com/test/repo",
-                        config_path=_CONFIG_PATH,
-                        mode="bindcraft",
-                        form_data=_empty_form_data(),
-                        user_email="test@example.com",
-                        full_name="Test_User",
-                        institute="example.com",
-                        ip_address="127.0.0.1",
-                        output_id="run-out-7",
-                    )
-                )
+            asyncio.run(launch_bindflow_workflow(queued_job=_queued_bindflow_job()))
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_launch_with_custom_params_text():
+async def test_launch_with_custom_params_text(persistent_models):
     """Test launch with custom paramsText."""
     route = respx.post(url__regex=r".*/workflow/launch.*").mock(
         return_value=httpx.Response(200, json={"workflowId": "wf_params_xyz"})
     )
 
-    form = WorkflowLaunchForm(
-        workflow="de-novo-design",
-        tool="bindcraft",
-        runName="seqera-custom-params",
-        paramsText="my_custom_param: 42\nanother_param: test",
-    )
-
-    with _mock_bindflow_db_context() as (db_session, workflow_run, *_):
-        await launch_bindflow_workflow(
-            form,
-            s3_input_key="inputs/samplesheets/test.csv",
-            db_session=db_session,
-            workflow_run=workflow_run,
-            pipeline="https://github.com/test/repo",
-            config_path=_CONFIG_PATH,
-            mode="bindcraft",
-            form_data=_empty_form_data(),
-            user_email="test@example.com",
-            full_name="Test_User",
-            institute="example.com",
-            ip_address="127.0.0.1",
-            output_id="run-out-8",
+    await launch_bindflow_workflow(
+        queued_job=_queued_bindflow_job(
+            params_text=(
+                "outdir: s3://test-s3-bucket/run-out\n"
+                "input: s3://test-s3-bucket/inputs/samplesheets/test.csv\n"
+                "my_custom_param: 42\n"
+                "another_param: test"
+            )
         )
+    )
 
     request = route.calls.last.request
     payload = json.loads(request.content)
