@@ -7,11 +7,12 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.db.admin import require_admin_access
 from app.routes.system_status import router as system_status_router
+from app.schemas.health import ProbeResult, SystemStatus
 from app.services import health
-from app.services.health import ProbeResult, SystemStatus
 
 DB_ADMIN_REQUIRED_ENV = {
     "AUTH_DOMAIN": "example.auth.test",
@@ -27,20 +28,23 @@ def _fake_status() -> SystemStatus:
         overall_status="unhealthy",
         checked_at=datetime(2026, 6, 1, 3, 12, 55, tzinfo=UTC),
         components=[
-            ProbeResult("seqera_api", "healthy", 240, None, None),
+            ProbeResult(name="seqera_api", status="healthy", latency_ms=240),
             ProbeResult(
-                "seqera_compute_env",
-                "unhealthy",
-                310,
-                "Compute environment state: ERRORED (Gadi agent disconnected)",
-                {"computeEnv": {"status": "ERRORED"}},
+                name="seqera_compute_env",
+                status="unhealthy",
+                latency_ms=310,
+                message="Compute environment state: ERRORED (Gadi agent disconnected)",
+                detail={"computeEnv": {"status": "ERRORED"}},
             ),
         ],
     )
 
 
-def _build_client(monkeypatch) -> TestClient:
-    async def fake_get_system_status(*, force_refresh: bool = False):
+def _build_client(monkeypatch: MonkeyPatch) -> TestClient:
+    async def fake_get_system_status(
+        db: object | None = None, *, force_refresh: bool = False
+    ) -> SystemStatus:
+        _ = (db, force_refresh)
         return _fake_status()
 
     monkeypatch.setattr(health, "get_system_status", fake_get_system_status)
@@ -51,7 +55,7 @@ def _build_client(monkeypatch) -> TestClient:
     return TestClient(app)
 
 
-def test_admin_system_status_returns_verbose_payload(monkeypatch):
+def test_admin_system_status_returns_verbose_payload(monkeypatch: MonkeyPatch):
     client = _build_client(monkeypatch)
     resp = client.get("/admin/api/system-status")
 
@@ -83,10 +87,13 @@ def test_admin_system_status_requires_admin():
     assert resp.status_code == 401
 
 
-def test_admin_system_status_passes_refresh_flag(monkeypatch):
+def test_admin_system_status_passes_refresh_flag(monkeypatch: MonkeyPatch):
     seen = {}
 
-    async def fake_get_system_status(*, force_refresh: bool = False):
+    async def fake_get_system_status(
+        db: object | None = None, *, force_refresh: bool = False
+    ) -> SystemStatus:
+        _ = db
         seen["force_refresh"] = force_refresh
         return _fake_status()
 

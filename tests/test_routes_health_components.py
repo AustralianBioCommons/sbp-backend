@@ -6,11 +6,13 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.routes.dependencies import get_current_user_id, require_workflow_execution_role
 from app.routes.health import router as health_router
+from app.schemas.health import ProbeResult, SystemStatus
 from app.services import health
-from app.services.health import DEGRADED_USER_MESSAGE, ProbeResult, SystemStatus
+from app.services.health import DEGRADED_USER_MESSAGE
 
 
 def _status(overall: str) -> SystemStatus:
@@ -20,20 +22,23 @@ def _status(overall: str) -> SystemStatus:
         overall_status=overall,  # type: ignore[arg-type]
         checked_at=datetime(2026, 6, 1, 3, 12, 55, tzinfo=UTC),
         components=[
-            ProbeResult("seqera_api", "healthy", 240, None, None),
+            ProbeResult(name="seqera_api", status="healthy", latency_ms=240),
             ProbeResult(
-                "seqera_compute_env",
-                overall,  # type: ignore[arg-type]
-                310,
-                "Compute environment state: ERRORED",
-                {"computeEnv": {"status": "ERRORED"}},
+                name="seqera_compute_env",
+                status=overall,  # type: ignore[arg-type]
+                latency_ms=310,
+                message="Compute environment state: ERRORED",
+                detail={"computeEnv": {"status": "ERRORED"}},
             ),
         ],
     )
 
 
-def _build_client(monkeypatch, overall: str) -> TestClient:
-    async def fake_get_system_status(*, force_refresh: bool = False):
+def _build_client(monkeypatch: MonkeyPatch, overall: str) -> TestClient:
+    async def fake_get_system_status(
+        db: object | None = None, *, force_refresh: bool = False
+    ) -> SystemStatus:
+        _ = (db, force_refresh)
         return _status(overall)
 
     monkeypatch.setattr(health, "get_system_status", fake_get_system_status)
@@ -45,7 +50,7 @@ def _build_client(monkeypatch, overall: str) -> TestClient:
     return TestClient(app)
 
 
-def test_healthy_returns_no_message(monkeypatch):
+def test_healthy_returns_no_message(monkeypatch: MonkeyPatch):
     client = _build_client(monkeypatch, "healthy")
     resp = client.get("/api/health/components")
 
@@ -58,7 +63,7 @@ def test_healthy_returns_no_message(monkeypatch):
     assert "components" not in body
 
 
-def test_degraded_returns_user_message(monkeypatch):
+def test_degraded_returns_user_message(monkeypatch: MonkeyPatch):
     client = _build_client(monkeypatch, "degraded")
     resp = client.get("/api/health/components")
 
@@ -68,7 +73,7 @@ def test_degraded_returns_user_message(monkeypatch):
     assert body["message"] == DEGRADED_USER_MESSAGE
 
 
-def test_unhealthy_returns_user_message(monkeypatch):
+def test_unhealthy_returns_user_message(monkeypatch: MonkeyPatch):
     client = _build_client(monkeypatch, "unhealthy")
     resp = client.get("/api/health/components")
 
@@ -78,7 +83,7 @@ def test_unhealthy_returns_user_message(monkeypatch):
     assert body["message"] == DEGRADED_USER_MESSAGE
 
 
-def test_served_from_cache_never_force_refreshes(monkeypatch):
+def test_served_from_cache_never_force_refreshes(monkeypatch: MonkeyPatch):
     """The user-facing endpoint never triggers a live probe run.
 
     force_refresh would bypass the cache and (with the agent probe enabled) mutate
@@ -86,7 +91,10 @@ def test_served_from_cache_never_force_refreshes(monkeypatch):
     """
     seen = {}
 
-    async def fake_get_system_status(*, force_refresh: bool = False):
+    async def fake_get_system_status(
+        db: object | None = None, *, force_refresh: bool = False
+    ) -> SystemStatus:
+        _ = db
         seen["force_refresh"] = force_refresh
         return _status("healthy")
 
