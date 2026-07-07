@@ -113,7 +113,7 @@ async def launch_wisps_workflow(
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
     if not queued_job.workflow_run.submitted_form_data:
         raise ValueError("No submitted form data found for queued job")
-    form_data = WorkflowFormData(**queued_job.workflow_run.submitted_form_data)
+    form_data = WorkflowFormData.model_validate(queued_job.workflow_run.submitted_form_data)
 
     fasta_s3_uri = form_data.extra_fields.get("fastaS3Uri", "").strip()
     split_output_dir = form_data.extra_fields.get("splitOutputDir", "").strip()

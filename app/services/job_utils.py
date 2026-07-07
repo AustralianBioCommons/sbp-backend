@@ -7,10 +7,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models.core import RunMetric, WorkflowRun
@@ -68,14 +68,17 @@ class UserJobListRow:
 
 
 def get_user_job_list_rows_select(user_id: UUID) -> Select[tuple[WorkflowRun, JobStatus | None]]:
-    queued_job_status = (
-        select(QueuedJob.status)
-        .where(
-            QueuedJob.workflow_run_id == WorkflowRun.id,
-        )
-        .order_by(QueuedJob.queued_at.desc())
-        .limit(1)
-        .scalar_subquery()
+    queued_job_status = cast(
+        ColumnElement[JobStatus | None],
+        (
+            select(QueuedJob.status)
+            .where(
+                QueuedJob.workflow_run_id == WorkflowRun.id,
+            )
+            .order_by(QueuedJob.queued_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        ),
     )
     return (
         select(WorkflowRun, queued_job_status)
