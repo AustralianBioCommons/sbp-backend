@@ -31,15 +31,14 @@ class LaunchFunction(Protocol):
         *,
         queued_job: QueuedJob,
         dry_run: bool = False,
-    ) -> Awaitable[WorkflowLaunchResult | None]:
-        ...
+    ) -> Awaitable[WorkflowLaunchResult | None]: ...
 
 
 def get_retry_delay(job: QueuedJob) -> timedelta:
     """
     Apply exponential backoff to the retry delay, based on number of attempts.
     """
-    return timedelta(seconds=RETRY_DELAY_BASE * (2 ** job.attempts - 1))
+    return timedelta(seconds=RETRY_DELAY_BASE * (2**job.attempts - 1))
 
 
 def is_seqera_available(db_session: Session) -> bool:
@@ -115,8 +114,7 @@ def submit_pending_jobs(dry_run: bool = False):
     now = datetime.now(tz=UTC)
 
     pending_query = select(QueuedJob).where(
-        QueuedJob.status == "pending",
-        QueuedJob.next_attempt_at <= now
+        QueuedJob.status == "pending", QueuedJob.next_attempt_at <= now
     )
 
     pending_jobs = db_session.scalars(pending_query).all()

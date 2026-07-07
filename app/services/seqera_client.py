@@ -13,6 +13,7 @@ from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 class SeqeraClient:
     """Async HTTP client wrapper for Seqera API calls."""
+
     api_url: str
 
     def __init__(

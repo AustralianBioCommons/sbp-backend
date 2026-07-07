@@ -410,9 +410,7 @@ async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch, persiste
     monkeypatch.delenv("SEQERA_API_URL", raising=False)
     monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
 
-    with (
-        pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
-    ):
+    with (pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),):
         await launch_proteinfold_workflow(queued_job=_queued_proteinfold_job())
 
 

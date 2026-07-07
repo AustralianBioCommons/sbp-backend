@@ -52,6 +52,7 @@ class UserJobListRow:
     """
     Entries used for list_jobs endpoint
     """
+
     run: WorkflowRun
     run_id: str
     seqera_run_id: str | None

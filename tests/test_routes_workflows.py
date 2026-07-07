@@ -141,9 +141,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
             select(RunMetric).where(RunMetric.run_id == created_run.id)
         ).scalar_one()
         assert metric.final_design_count == 20
-        queued_job = db.scalar(
-            select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id)
-        )
+        queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
         assert queued_job.status == "pending"
 
@@ -556,7 +554,9 @@ def _add_proteinfold_workflow(test_engine):
             db.commit()
 
 
-@patch("app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare)
+@patch(
+    "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
+)
 def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engine):
     """Test successful proteinfold workflow launch."""
     _add_proteinfold_workflow(test_engine)
@@ -609,9 +609,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
 
 
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
-def test_launch_proteinfold_queue_preparation_error(
-    mock_prepare, client: TestClient, test_engine
-):
+def test_launch_proteinfold_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
     """Unexpected queue preparation errors should return 500."""
     _add_proteinfold_workflow(test_engine)
     mock_prepare.side_effect = RuntimeError("queue build failed")
@@ -877,9 +875,7 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
         assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
         assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
         assert created_run.submission_timestamp is not None
-        queued_job = db.scalar(
-            select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id)
-        )
+        queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
         assert queued_job.status == "pending"
 
@@ -1133,9 +1129,7 @@ def test_launch_deducts_credits_when_enabled(mock_prepare, client, test_engine, 
 
 
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_rejected_when_insufficient_credits(
-    mock_prepare, client, test_engine, monkeypatch
-):
+def test_launch_rejected_when_insufficient_credits(mock_prepare, client, test_engine, monkeypatch):
     """With credits enabled, an unaffordable launch is rejected (402) and not queued."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
     with Session(test_engine) as db:

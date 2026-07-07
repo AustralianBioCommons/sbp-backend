@@ -501,9 +501,7 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch, persis
 async def test_launch_wisps_workflow_missing_env_var(monkeypatch, persistent_models):
     monkeypatch.delenv("SEQERA_API_URL", raising=False)
 
-    with (
-        pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),
-    ):
+    with (pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"),):
         await launch_wisps_workflow(queued_job=_queued_wisps_job())
 
 

@@ -95,6 +95,7 @@ class WorkflowUserDetails(BaseModel):
     """
     Details recorded in workflow runs - required by compute providers
     """
+
     user_email: str = Field(..., description="Email address of the user")
     full_name: str = Field(..., description="Full name of the user")
     institute: str = Field(..., description="Institute of the user")

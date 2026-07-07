@@ -6,8 +6,8 @@ from typing import Any
 from sqlalchemy import JSON, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .. import Base
 from ...schemas.health import SystemStatus
+from .. import Base
 
 
 class SystemStatusCache(Base):

@@ -1,12 +1,14 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import typer
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
+
 from app.scheduler import SCHEDULER
 from app.scheduler.jobs import submit_pending_jobs
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
+
 
 def main(dry_run: bool = False):
     try:

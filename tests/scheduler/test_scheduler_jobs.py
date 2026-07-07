@@ -54,9 +54,7 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
     )
 
 
-def test_launch_job_marks_failed_after_max_failed_attempts(
-    test_db, persistent_models, monkeypatch
-):
+def test_launch_job_marks_failed_after_max_failed_attempts(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job(attempts=scheduler_jobs.LAUNCH_MAX_ATTEMPTS - 1)
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)

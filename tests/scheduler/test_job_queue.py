@@ -35,9 +35,7 @@ def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | N
     )
 
 
-def test_submit_pending_jobs_skips_when_seqera_unavailable(
-    test_db, persistent_models, monkeypatch
-):
+def test_submit_pending_jobs_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
     due_job = _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
     scheduler = _make_scheduler()
     checked_sessions = []
@@ -63,7 +61,9 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     test_db, persistent_models, monkeypatch
 ):
     now = datetime.now(UTC)
-    due_pending_job = _create_queued_job(status="pending", next_attempt_at=now - timedelta(minutes=1))
+    due_pending_job = _create_queued_job(
+        status="pending", next_attempt_at=now - timedelta(minutes=1)
+    )
     _create_queued_job(status="pending", next_attempt_at=now + timedelta(minutes=1))
     _create_queued_job(status="submitted", next_attempt_at=now - timedelta(minutes=1))
     _create_queued_job(status="failed", next_attempt_at=now - timedelta(minutes=1))
@@ -86,9 +86,7 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     assert scheduled_job.max_instances == 1
 
 
-def test_submit_pending_jobs_skips_jobs_already_scheduled(
-    test_db, persistent_models, monkeypatch
-):
+def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_models, monkeypatch):
     due_job = _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
     launch_id = f"launch_job_{due_job.id}"
     scheduler = _make_scheduler()

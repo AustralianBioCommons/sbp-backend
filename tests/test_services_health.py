@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import httpx
-import pytest
 
 from app.db.models.system_status import SystemStatusCache
 from app.schemas.health import (

@@ -247,9 +247,7 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
     with (
         patch(
             "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-999")
-            ],
+            return_value=[UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-999")],
         ),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
@@ -315,9 +313,7 @@ async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
     with (
         patch(
             "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")
-            ],
+            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
         ),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
@@ -381,9 +377,7 @@ async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id):
     with (
         patch(
             "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")
-            ],
+            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
         ),
         patch(
             "app.routes.workflow.jobs.describe_workflow",

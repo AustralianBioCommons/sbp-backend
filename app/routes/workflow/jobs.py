@@ -133,9 +133,7 @@ async def list_jobs(
         if user_run.seqera_run_id and user_run.queued_status not in {"pending", "failed"}
     ]
     seqera_results = dict(
-        await asyncio.gather(
-            *(_fetch_seqera(user_run) for user_run in seqera_fetch_rows)
-        )
+        await asyncio.gather(*(_fetch_seqera(user_run) for user_run in seqera_fetch_rows))
     )
 
     jobs: list[JobListItem] = []
