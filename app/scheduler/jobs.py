@@ -8,6 +8,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from schemas.workflows import WorkflowName
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..services import health
@@ -61,11 +62,12 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
 
     now = datetime.now(tz=UTC)
     launch_func: LaunchFunction
-    if job.workflow.name == "interaction-screening":
+    workflow_name: WorkflowName = job.workflow.name
+    if workflow_name in ("interaction-screening", "bulk-prediction"):
         launch_func = launch_wisps_workflow
-    elif job.workflow.name in ("single-prediction", "proteinfold"):
+    elif workflow_name in ("single-prediction", "proteinfold"):
         launch_func = launch_proteinfold_workflow
-    elif job.workflow.name in ("de-novo-design", "bindflow", "bindcraft"):
+    elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
         launch_func = launch_bindflow_workflow
     else:
         raise ValueError(f"Unsupported workflow: {job.workflow.name}")
@@ -104,6 +106,8 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
 
 
 def submit_pending_jobs(dry_run: bool = False):
+    # Time between jobs
+    job_offset = 10
     logger.info("Checking for pending jobs...")
     db_session = next(get_db())
     ok_to_launch = is_seqera_available(db_session)
@@ -119,7 +123,7 @@ def submit_pending_jobs(dry_run: bool = False):
 
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
-    for job in pending_jobs:
+    for index, job in enumerate(pending_jobs):
         launch_id = f"launch_job_{job.id}"
         # Ignore if already scheduled
         if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:
@@ -133,6 +137,7 @@ def submit_pending_jobs(dry_run: bool = False):
             name=launch_id,
             max_instances=1,
             replace_existing=True,
+            next_run_time=now + timedelta(seconds=index * job_offset),
         )
 
     logger.info("Finished submitting pending jobs.")
