@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -22,6 +23,7 @@ from ...schemas.workflows import (
     map_pipeline_status_to_ui,
 )
 from ...services.job_utils import (
+    UserJobListRow,
     coerce_workflow_payload,
     ensure_completed_run_score,
     extract_pipeline_status,
@@ -100,6 +102,42 @@ async def list_jobs(
     user_runs = get_user_job_list_rows(db, current_user_id)
     search_text = (search or "").strip().lower()
     allowed_statuses = set(status_filter or [])
+
+    async def _fetch_seqera(user_run: UserJobListRow) -> tuple[str, dict[str, object] | None]:
+        """None signals a 4xx (skip); empty dict signals a 5xx/network error (DB fallback)."""
+        seqera_run_id = user_run.seqera_run_id
+        if not seqera_run_id:
+            return user_run.run_id, {}
+        try:
+            return user_run.run_id, await describe_workflow(seqera_run_id)
+        except SeqeraAPIError as exc:
+            if exc.status_code is not None and exc.status_code < 500:
+                return user_run.run_id, None
+            logger.warning(
+                "Seqera unavailable for run %s, using DB fallback: %s",
+                seqera_run_id,
+                exc,
+            )
+            return user_run.run_id, {}
+        except Exception as exc:
+            logger.warning(
+                "Seqera unreachable for run %s, using DB fallback: %s",
+                seqera_run_id,
+                exc,
+            )
+            return user_run.run_id, {}
+
+    seqera_fetch_rows = [
+        user_run
+        for user_run in user_runs
+        if user_run.seqera_run_id and user_run.queued_status not in {"pending", "failed"}
+    ]
+    seqera_results = dict(
+        await asyncio.gather(
+            *(_fetch_seqera(user_run) for user_run in seqera_fetch_rows)
+        )
+    )
+
     jobs: list[JobListItem] = []
     seqera_unavailable = False
 
@@ -108,7 +146,6 @@ async def list_jobs(
         owned_run = user_run.run
         seqera_run_id = user_run.seqera_run_id
 
-        # Attempt live status from Seqera; fall back to DB-only data if unreachable.
         seqera_payload: dict[str, object] = {}
         ui_status = "N/A"
         if user_run.queued_status == "pending":
@@ -116,19 +153,15 @@ async def list_jobs(
         elif user_run.queued_status == "failed":
             ui_status = "Failed"
         elif seqera_run_id:
-            try:
-                seqera_payload = await describe_workflow(seqera_run_id)
+            fetched_payload = seqera_results.get(run_id)
+            if fetched_payload is None:
+                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+                continue
+            if fetched_payload:
+                seqera_payload = fetched_payload
                 pipeline_status = extract_pipeline_status(seqera_payload)
                 ui_status = map_pipeline_status_to_ui(pipeline_status)
-            except SeqeraAPIError as exc:
-                if exc.status_code is not None and exc.status_code < 500:
-                    # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-                    continue
-                logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
-                seqera_unavailable = True
-            except Exception as exc:
-                # Network errors, timeouts, or configuration issues — do not fail the list.
-                logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
+            else:
                 seqera_unavailable = True
 
         if allowed_statuses and ui_status not in allowed_statuses:
@@ -136,7 +169,7 @@ async def list_jobs(
 
         wf = coerce_workflow_payload(seqera_payload)
         submitted_at = parse_submit_datetime(seqera_payload)
-        if submitted_at is None and owned_run and owned_run.submission_timestamp:
+        if submitted_at is None and owned_run.submission_timestamp:
             submitted_at = owned_run.submission_timestamp
         if submitted_at is None:
             submitted_at = datetime.now(UTC)
@@ -160,7 +193,7 @@ async def list_jobs(
             ui_status = "Completed"
 
         score = db_score
-        if score is None and owned_run:
+        if score is None:
             score = await ensure_completed_run_score(db, owned_run, ui_status)
 
         jobs.append(

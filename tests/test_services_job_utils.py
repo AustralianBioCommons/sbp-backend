@@ -715,3 +715,16 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
 
     assert [item.key for item in result] == [snapshot_key]
     assert [item.category for item in result] == ["snapshot"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_returns_none_when_get_output_spec_raises():
+    run = SimpleNamespace(id="rid", seqera_run_id="wf-no-spec", tool=None, workflow=None)
+    db = _DB(scalar=None)
+
+    with patch(
+        "app.services.job_utils.get_output_spec", side_effect=ValueError("unknown workflow")
+    ):
+        score = await job_utils.ensure_completed_run_score(db, run, "Completed")
+
+    assert score is None

@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.db.models import QueuedJob
 from app.schemas.workflows import (
-    InteractionScreeningFormData,
+    WispsFormData,
     WorkflowLaunchForm,
     WorkflowUserDetails,
 )
@@ -121,7 +121,7 @@ def _mock_wisps_db_context():
 
 def test_get_wisps_default_params_required_keys():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv"
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="g1-g2"
     )
     assert "outdir" in params
     assert "input" in params
@@ -130,14 +130,17 @@ def test_get_wisps_default_params_required_keys():
 
 def test_get_wisps_default_params_no_tool():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool=None
+        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", mode="g1-g2", tool=None
     )
     assert "tools" not in params
 
 
 def test_get_wisps_default_params_with_tool():
     params = get_wisps_default_params(
-        out_dir="s3://bucket/out", samplesheet_url="https://api/sheet.csv", tool="boltz"
+        out_dir="s3://bucket/out",
+        samplesheet_url="https://api/sheet.csv",
+        mode="manual",
+        tool="boltz",
     )
     assert params["tools"] == "boltz"
 
@@ -408,7 +411,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
-    form_data = InteractionScreeningFormData(
+    form_data = WispsFormData(
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
@@ -514,7 +517,7 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
-    form_data = InteractionScreeningFormData(
+    form_data = WispsFormData(
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
@@ -547,7 +550,7 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
-    form_data = InteractionScreeningFormData(
+    form_data = WispsFormData(
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
@@ -580,7 +583,7 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
     monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName=None)
-    form_data = InteractionScreeningFormData(
+    form_data = WispsFormData(
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",

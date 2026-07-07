@@ -961,3 +961,143 @@ async def test_get_result_report_allows_missing_report_payload(test_db):
 
     assert result.runId == "wf-report-none"
     assert result.report is None
+
+
+@pytest.mark.asyncio
+async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
+    from app.db.models.core import Workflow
+    from app.db.models.job_queue import QueuedJob
+
+    user = AppUser(
+        auth0_user_id="auth0|results-queued-job-user",
+        name="Queued Job User",
+        email="queued-job@example.com",
+    )
+    workflow = Workflow(name="de-novo-design-queued")
+    run = WorkflowRun(
+        owner=user,
+        workflow=workflow,
+        seqera_run_id="wf-queued-1",
+        submitted_form_data={"binder_name": "PDL1"},
+        work_dir="/tmp/wf-queued-1",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+    job = QueuedJob(
+        workflow_run_id=run.id,
+        workflow_id=workflow.id,
+        launch_payload={
+            "paramsText": "binder_name: PDL1\nnum_designs: 5",
+            "configProfiles": ["singularity", "gadi"],
+        },
+    )
+    test_db.add(job)
+    test_db.commit()
+
+    result = await get_result_setting_params("wf-queued-1", user.id, test_db)
+
+    assert result.runId == "wf-queued-1"
+    assert result.settingParams["paramsText"] == {"binder_name": "PDL1", "num_designs": 5}
+    assert result.settingParams["configProfiles"] == ["singularity", "gadi"]
+
+
+@pytest.mark.asyncio
+async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(test_db):
+    from app.db.models.core import Workflow
+    from app.db.models.job_queue import QueuedJob
+
+    user = AppUser(
+        auth0_user_id="auth0|results-queued-job-user-2",
+        name="Queued Job User 2",
+        email="queued-job2@example.com",
+    )
+    workflow = Workflow(name="de-novo-design-queued-2")
+    run = WorkflowRun(
+        owner=user,
+        workflow=workflow,
+        seqera_run_id="wf-queued-2",
+        submitted_form_data={"binder_name": "PDL1"},
+        work_dir="/tmp/wf-queued-2",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+    job = QueuedJob(
+        workflow_run_id=run.id,
+        workflow_id=workflow.id,
+        launch_payload={"paramsText": "{\x00invalid yaml"},
+    )
+    test_db.add(job)
+    test_db.commit()
+
+    result = await get_result_setting_params("wf-queued-2", user.id, test_db)
+
+    assert result.settingParams["paramsText"] == "{\x00invalid yaml"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_returns_404_for_missing_owned_run(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|download-all-missing",
+        name="Download All Missing",
+        email="download-all-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_download_all("wf-download-all-missing", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|download-all-config-err",
+        name="Download All Config Err",
+        email="download-all-config-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-all-config-err",
+        work_dir="/tmp/wf-download-all-config-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_all_downloads_zipped",
+        new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_all("wf-download-all-config-err", user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "s3 config missing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_maps_s3_service_error_to_502(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|download-all-service-err",
+        name="Download All Service Err",
+        email="download-all-service-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-all-service-err",
+        work_dir="/tmp/wf-download-all-service-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_all_downloads_zipped",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_all("wf-download-all-service-err", user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream error"
