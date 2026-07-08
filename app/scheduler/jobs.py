@@ -8,9 +8,9 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from schemas.workflows import WorkflowName
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
+from ..schemas.workflows import WorkflowName
 from ..services import health
 from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
