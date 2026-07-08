@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 import pytest
 
 from app import run_scheduler
@@ -13,6 +11,7 @@ class RecordingScheduler:
     """
     Fake scheduler to check for expected calls.
     """
+
     def __init__(self, *, stop_on_start: bool = False):
         self.added_jobs = []
         self.events = []
