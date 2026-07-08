@@ -2,10 +2,12 @@ import random
 import uuid
 
 from faker import Faker
+from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from app.db.models.core import AppUser, RunInput, RunOutput, Workflow, WorkflowRun
 from app.db.models.job_queue import QueuedJob
+from app.services.job_utils import UserJobListRow
 
 fake = Faker()
 
@@ -62,3 +64,38 @@ class RunOutputFactory(SQLAlchemyFactory[RunOutput]):
 
 class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
     __set_relationships__ = False
+
+
+class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
+    @classmethod
+    def build(cls, **kwargs):
+        run = kwargs.pop("run", None)
+        run_id = kwargs.pop("run_id", str(uuid.uuid4()))
+        seqera_run_id = kwargs.pop("seqera_run_id", None)
+        submitted_at = kwargs.pop("submitted_at", None)
+        binder_name = kwargs.pop("binder_name", None)
+        run_name = kwargs.pop("run_name", None)
+        tool = kwargs.pop("tool", "Unknown")
+
+        if run is None:
+            run = WorkflowRunFactory.build(
+                seqera_run_id=seqera_run_id,
+                binder_name=binder_name,
+                run_name=run_name,
+                submission_timestamp=submitted_at,
+                submitted_form_data=None,
+                work_dir=f"workdir-{run_id}",
+                tool=None if tool == "Unknown" else tool,
+            )
+            run.metrics = None
+
+        return UserJobListRow(
+            run=run,
+            run_id=run_id,
+            seqera_run_id=seqera_run_id,
+            workflow_type=kwargs.pop("workflow_type", "Unknown"),
+            tool=tool,
+            score=kwargs.pop("score", None),
+            final_design_count=kwargs.pop("final_design_count", None),
+            queued_status=kwargs.pop("queued_status", None),
+        )

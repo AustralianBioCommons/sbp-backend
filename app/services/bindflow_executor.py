@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm
+from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -40,11 +40,9 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     output_id: str | None = None,
     mode: str,
     form_data: WorkflowFormData,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
-) -> dict[str, Any]:
+    user_details: WorkflowUserDetails,
+    commit: bool = False,
+) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
@@ -66,7 +64,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
     default_params["job_id"] = run_name
-    default_params["user_name"] = user_email
+    default_params["user_name"] = user_details.user_email
     default_params["timestamp"] = timestamp
     default_params["mode"] = mode
 
@@ -94,11 +92,8 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "configText": get_bindflow_config_text(
             config_path,
             job_id=run_name,
-            username=user_email,
+            user_details=user_details,
             timestamp=timestamp,
-            full_name=full_name,
-            institute=institute,
-            ip_address=ip_address,
         ),
         "resume": False,
     }
@@ -107,55 +102,24 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         workflow=workflow_run.workflow,
         workflow_run=workflow_run,
         launch_payload=without_prerun_script(launch_payload),
-        # TODO: set as submitted for now, we are still launching jobs immediately
-        status="submitted",
+        status="pending",
         next_attempt_at=datetime.now(UTC),
     )
     db_session.add(queued_job)
-    db_session.commit()
-    return launch_payload
+    if commit:
+        db_session.commit()
+    else:
+        db_session.flush()
+    return queued_job
 
 
 async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
-    form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
-    db_session: Session,
-    workflow_run: WorkflowRun,
-    pipeline: str,
-    config_path: str,
-    revision: str | None = None,
-    output_id: str | None = None,
-    prerun_script_path: str | None = None,
-    mode: str,
-    form_data: WorkflowFormData,
-    user_email: str,
-    full_name: str,
-    institute: str,
-    ip_address: str,
-) -> WorkflowLaunchResult:
+    queued_job: QueuedJob,
+    dry_run: bool = False,
+) -> WorkflowLaunchResult | None:
     """Launch a bindflow workflow on the Seqera Platform."""
-    launch_payload = await prepare_bindflow_workflow(
-        form,
-        s3_input_key,
-        db_session=db_session,
-        workflow_run=workflow_run,
-        pipeline=pipeline,
-        config_path=config_path,
-        revision=revision,
-        output_id=output_id,
-        mode=mode,
-        form_data=form_data,
-        user_email=user_email,
-        full_name=full_name,
-        institute=institute,
-        ip_address=ip_address,
-    )
-
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    url = f"{seqera_api_url}/workflow/launch?workspaceId={workspace_id}"
+    launch_payload = queued_job.launch_payload
 
     # Log the complete params being sent
     logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
@@ -163,16 +127,15 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     logger.info(
         "Launching bindflow workflow via Seqera API",
         extra={
-            "url": url,
-            "workspaceId": workspace_id,
-            "computeEnvId": compute_env_id,
+            "workspaceId": launch_payload["workspaceId"],
+            "computeEnvId": launch_payload["computeEnvId"],
             "pipeline": launch_payload["pipeline"],
             "runName": launch_payload["runName"],
         },
     )
 
     prerun_script = get_executor_script(
-        prerun_script_path=prerun_script_path,
+        prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=["singularity", "nextflow"],
         env={
             "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
@@ -184,4 +147,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
         launch_payload=launch_payload, prerun_script=prerun_script
     )
 
-    return await post_seqera_launch(url, {"launch": runtime_payload}, workflow_label="Bindflow")
+    if dry_run:
+        logger.info("Dry run - not launching bindflow workflow")
+        return None
+    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="Bindflow")

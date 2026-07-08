@@ -23,16 +23,14 @@ from ...schemas.workflows import (
     map_pipeline_status_to_ui,
 )
 from ...services.job_utils import (
+    UserJobListRow,
     coerce_workflow_payload,
     ensure_completed_run_score,
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
     get_owned_run,
-    get_owned_runs_by_run_id,
-    get_score_by_seqera_run_id,
-    get_tool_by_seqera_run_id,
-    get_workflow_type_by_seqera_run_id,
+    get_user_job_list_rows,
     parse_submit_datetime,
 )
 from ...services.seqera import describe_workflow
@@ -101,44 +99,68 @@ async def list_jobs(
     db: Session = Depends(get_db),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
-    owned_runs = get_owned_runs_by_run_id(db, current_user_id)
-    score_by_run_id = get_score_by_seqera_run_id(db, current_user_id)
-    workflow_type_by_run_id = get_workflow_type_by_seqera_run_id(db, current_user_id)
-    tool_by_run_id = get_tool_by_seqera_run_id(db, current_user_id)
+    user_runs = get_user_job_list_rows(db, current_user_id)
     search_text = (search or "").strip().lower()
     allowed_statuses = set(status_filter or [])
 
-    async def _fetch_seqera(run_id: str) -> tuple[str, dict[str, object] | None]:
+    async def _fetch_seqera(user_run: UserJobListRow) -> tuple[str, dict[str, object] | None]:
         """None signals a 4xx (skip); empty dict signals a 5xx/network error (DB fallback)."""
+        seqera_run_id = user_run.seqera_run_id
+        if not seqera_run_id:
+            return user_run.run_id, {}
         try:
-            return run_id, await describe_workflow(run_id)
+            return user_run.run_id, await describe_workflow(seqera_run_id)
         except SeqeraAPIError as exc:
             if exc.status_code is not None and exc.status_code < 500:
-                return run_id, None
-            logger.warning("Seqera unavailable for run %s, using DB fallback: %s", run_id, exc)
-            return run_id, {}
+                return user_run.run_id, None
+            logger.warning(
+                "Seqera unavailable for run %s, using DB fallback: %s",
+                seqera_run_id,
+                exc,
+            )
+            return user_run.run_id, {}
         except Exception as exc:
-            logger.warning("Seqera unreachable for run %s, using DB fallback: %s", run_id, exc)
-            return run_id, {}
+            logger.warning(
+                "Seqera unreachable for run %s, using DB fallback: %s",
+                seqera_run_id,
+                exc,
+            )
+            return user_run.run_id, {}
 
-    seqera_results = await asyncio.gather(*(_fetch_seqera(r) for r in owned_runs))
+    seqera_fetch_rows = [
+        user_run
+        for user_run in user_runs
+        if user_run.seqera_run_id and user_run.queued_status not in {"pending", "failed"}
+    ]
+    seqera_results = dict(
+        await asyncio.gather(*(_fetch_seqera(user_run) for user_run in seqera_fetch_rows))
+    )
 
     jobs: list[JobListItem] = []
     seqera_unavailable = False
 
-    for run_id, seqera_payload in seqera_results:
-        if seqera_payload is None:
-            # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-            continue
+    for user_run in user_runs:
+        run_id = user_run.run_id
+        owned_run = user_run.run
+        seqera_run_id = user_run.seqera_run_id
 
-        owned_run = owned_runs[run_id]
-
-        if seqera_payload:
-            pipeline_status = extract_pipeline_status(seqera_payload)
-            ui_status = map_pipeline_status_to_ui(pipeline_status)
-        else:
-            ui_status = "N/A"
-            seqera_unavailable = True
+        seqera_payload: dict[str, object] = {}
+        ui_status = "N/A"
+        if user_run.queued_status == "pending":
+            ui_status = "Pending"
+        elif user_run.queued_status == "failed":
+            ui_status = "Failed"
+        elif seqera_run_id:
+            fetched_payload = seqera_results.get(run_id)
+            if fetched_payload is None:
+                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+                continue
+            if fetched_payload:
+                seqera_payload = fetched_payload
+                pipeline_status = extract_pipeline_status(seqera_payload)
+                ui_status = map_pipeline_status_to_ui(pipeline_status)
+            else:
+                seqera_unavailable = True
 
         if allowed_statuses and ui_status not in allowed_statuses:
             continue
@@ -150,8 +172,8 @@ async def list_jobs(
         if submitted_at is None:
             submitted_at = datetime.now(UTC)
 
-        workflow_type = workflow_type_by_run_id.get(run_id) or "Unknown"
-        tool = tool_by_run_id.get(run_id, "Unknown")
+        workflow_type = user_run.workflow_type
+        tool = user_run.tool
         job_name = _resolve_job_name(run_id, wf, owned_run)
 
         if (
@@ -161,7 +183,7 @@ async def list_jobs(
         ):
             continue
 
-        db_score = score_by_run_id.get(run_id)
+        db_score = user_run.score
 
         # A cached score means the job completed at some point; treat it as Completed
         # when Seqera is unreachable and we cannot get the live status.
@@ -181,7 +203,7 @@ async def list_jobs(
                 status=ui_status,
                 submittedAt=submitted_at,
                 score=score if ui_status == "Completed" else None,
-                finalDesignCount=_resolve_final_design_count(owned_run),
+                finalDesignCount=user_run.final_design_count,
             )
         )
 

@@ -61,7 +61,7 @@ class WorkflowRun(Base):
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     workflow_id: Mapped[UUID | None] = mapped_column(ForeignKey("workflows.id"))
     owner_user_id: Mapped[UUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
-    seqera_run_id: Mapped[str] = mapped_column(Text, nullable=False)
+    seqera_run_id: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     binder_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     sample_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_name: Mapped[str | None] = mapped_column(Text, nullable=True)

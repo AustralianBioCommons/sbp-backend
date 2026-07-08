@@ -42,6 +42,12 @@ FastAPI backend for handling Seqera Platform workflow launches.
    uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
    ```
 
+5. Run the job scheduler locally (you probably want `--dry-run` so jobs aren't submitted to Seqera)
+
+   ```bash
+   uv run python app/run_scheduler.py --dry-run
+   ```
+
 ## API Endpoints
 
 - `GET /health` — Lightweight health probe

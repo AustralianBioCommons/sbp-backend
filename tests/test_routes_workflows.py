@@ -10,13 +10,27 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.db.models import QueuedJob
 from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult
 from app.services.seqera_errors import SeqeraConfigurationError
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
+
+
+async def _queue_job_for_route_prepare(form, _s3_input_key, **kwargs):
+    db_session = kwargs["db_session"]
+    workflow_run = kwargs["workflow_run"]
+    queued_job = QueuedJob(
+        workflow=workflow_run.workflow,
+        workflow_run=workflow_run,
+        launch_payload={"runName": form.runName},
+        status="pending",
+    )
+    db_session.add(queued_job)
+    db_session.flush()
+    return queued_job
 
 
 @pytest.fixture
@@ -69,15 +83,9 @@ def role_check_client(test_engine):
         yield c
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_success_without_dataset(mock_launch, client: TestClient, test_engine):
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
-    mock_launch.return_value = WorkflowLaunchResult(
-        workflow_id="wf_123",
-        status="submitted",
-        message="Success",
-    )
-
     payload = {
         "launch": {
             "workflow": "de-novo-design",
@@ -98,27 +106,29 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
 
     assert response.status_code == 201
     data = response.json()
-    assert data["runId"] == "wf_123"
-    assert data["status"] == "submitted"
+    assert data["message"] == "Workflow queued successfully"
+    assert data["status"] == "pending"
     assert "submitTime" in data
-    launch_form_arg = mock_launch.call_args[0][0]
+    launch_form_arg = mock_prepare.call_args.args[0]
     assert launch_form_arg.tool == "bindcraft"
-    assert mock_launch.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
-    assert mock_launch.call_args.kwargs["revision"] == "dev"
-    assert isinstance(mock_launch.call_args.kwargs["output_id"], str)
+    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
+    assert mock_prepare.call_args.kwargs["revision"] == "dev"
+    assert mock_prepare.call_args.kwargs["output_id"] == data["runId"]
 
     with Session(test_engine) as db:
         created_run = db.execute(
             select(
                 WorkflowRun.id,
+                WorkflowRun.seqera_run_id,
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
                 WorkflowRun.sample_id,
                 WorkflowRun.submitted_form_data,
                 WorkflowRun.submission_timestamp,
-            ).where(WorkflowRun.seqera_run_id == "wf_123")
+            ).where(WorkflowRun.id == UUID(data["runId"]))
         ).first()
         assert created_run is not None
+        assert created_run.seqera_run_id is None
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
         assert created_run.sample_id == "s1"
@@ -131,12 +141,19 @@ def test_launch_success_without_dataset(mock_launch, client: TestClient, test_en
             select(RunMetric).where(RunMetric.run_id == created_run.id)
         ).scalar_one()
         assert metric.final_design_count == 20
+        queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
+        assert queued_job is not None
+        assert queued_job.status == "pending"
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_configuration_error(mock_launch, client: TestClient, test_engine):
-    """Test launch with configuration error."""
-    mock_launch.side_effect = SeqeraConfigurationError("Missing API token")
+@patch("app.routes.workflows.prepare_bindflow_workflow")
+def test_launch_queue_preparation_configuration_error(
+    mock_prepare, client: TestClient, test_engine
+):
+    """Local queue payload configuration errors should return 500."""
+    mock_prepare.side_effect = SeqeraConfigurationError(
+        "Missing required environment variable: WORK_SPACE"
+    )
 
     payload = {
         "launch": {
@@ -151,18 +168,18 @@ def test_launch_configuration_error(mock_launch, client: TestClient, test_engine
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 500
-    assert "Missing API token" in response.json()["detail"]
+    assert "WORK_SPACE" in response.json()["detail"]
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 1
+        assert count == 0
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_service_error(mock_launch, client: TestClient, test_engine):
-    """Test launch with Seqera service error."""
-    mock_launch.side_effect = WorkflowExecutorError("API returned 502")
+@patch("app.routes.workflows.prepare_bindflow_workflow")
+def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
+    """Unexpected queue preparation errors are returned as local queue failures."""
+    mock_prepare.side_effect = RuntimeError("could not build queue payload")
 
     payload = {
         "launch": {
@@ -176,13 +193,13 @@ def test_launch_service_error(mock_launch, client: TestClient, test_engine):
 
     response = client.post("/api/workflows/launch", json=payload)
 
-    assert response.status_code == 502
-    assert "API returned 502" in response.json()["detail"]
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to queue local workflow run."
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
-        assert count == 1
+        assert count == 0
 
 
 def test_launch_invalid_payload(client: TestClient):
@@ -537,15 +554,12 @@ def _add_proteinfold_workflow(test_engine):
             db.commit()
 
 
-@patch("app.routes.workflows.launch_proteinfold_workflow")
-def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine):
+@patch(
+    "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
+)
+def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engine):
     """Test successful proteinfold workflow launch."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.return_value = WorkflowLaunchResult(
-        workflow_id="pf_wf_001",
-        status="submitted",
-        message=None,
-    )
 
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-1"},
@@ -557,17 +571,27 @@ def test_launch_proteinfold_success(mock_launch, client: TestClient, test_engine
 
     assert response.status_code == 201
     data = response.json()
-    assert data["runId"] == "pf_wf_001"
-    assert data["status"] == "submitted"
-    mock_launch.assert_called_once()
-    assert mock_launch.call_args.kwargs["prerun_script_path"] == "/some/proteinfold-prerun.sh"
+    assert data["status"] == "pending"
+    run_id = UUID(data["runId"])
+    mock_prepare.assert_called_once()
+    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/nf-core/proteinfold"
+    assert mock_prepare.call_args.kwargs["revision"] == "dev"
+    assert mock_prepare.call_args.kwargs["output_id"] == str(run_id)
+    with Session(test_engine) as db:
+        queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == run_id))
+        assert queued_job is not None
+        assert queued_job.status == "pending"
 
 
-@patch("app.routes.workflows.launch_proteinfold_workflow")
-def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient, test_engine):
-    """SeqeraConfigurationError should return 500."""
+@patch("app.routes.workflows.prepare_proteinfold_workflow")
+def test_launch_proteinfold_queue_preparation_configuration_error(
+    mock_prepare, client: TestClient, test_engine
+):
+    """Local queue payload configuration errors should return 500."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.side_effect = SeqeraConfigurationError("Missing SEQERA_API_URL")
+    mock_prepare.side_effect = SeqeraConfigurationError(
+        "Missing required environment variable: COMPUTE_ID"
+    )
 
     payload = {
         "launch": {
@@ -581,14 +605,14 @@ def test_launch_proteinfold_configuration_error(mock_launch, client: TestClient,
 
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
-    assert "Missing SEQERA_API_URL" in response.json()["detail"]
+    assert "COMPUTE_ID" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.launch_proteinfold_workflow")
-def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test_engine):
-    """WorkflowExecutorError should return 502."""
+@patch("app.routes.workflows.prepare_proteinfold_workflow")
+def test_launch_proteinfold_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
+    """Unexpected queue preparation errors should return 500."""
     _add_proteinfold_workflow(test_engine)
-    mock_launch.side_effect = WorkflowExecutorError("Seqera API 503")
+    mock_prepare.side_effect = RuntimeError("queue build failed")
 
     payload = {
         "launch": {
@@ -601,8 +625,8 @@ def test_launch_proteinfold_executor_error(mock_launch, client: TestClient, test
     }
 
     response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 502
-    assert "Seqera API 503" in response.json()["detail"]
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to queue local workflow run."
 
 
 # =============================================================================
@@ -617,12 +641,11 @@ _LAUNCH_PAYLOAD = {
 }
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monkeypatch):
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_allowed_with_workflow_role(mock_prepare, role_check_client, monkeypatch):
     """Users holding the workflow execution role can launch."""
     monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
-    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_role_ok", status="submitted")
 
     with patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -635,6 +658,8 @@ def test_launch_allowed_with_workflow_role(mock_launch, role_check_client, monke
         )
 
     assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    mock_prepare.assert_called_once()
 
 
 def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
@@ -802,14 +827,9 @@ def wisps_no_config_client(test_engine):
         yield c
 
 
-@patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClient, test_engine):
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestClient, test_engine):
     """Test successful interaction-screening workflow launch."""
-    mock_wisps.return_value = WorkflowLaunchResult(
-        workflow_id="wisps_wf_001",
-        status="submitted",
-    )
-
     payload = {
         "launch": {
             "workflow": "interaction-screening",
@@ -829,26 +849,35 @@ def test_launch_interaction_screening_success(mock_wisps, wisps_client: TestClie
 
     assert response.status_code == 201
     data = response.json()
-    assert data["runId"] == "wisps_wf_001"
-    mock_wisps.assert_called_once()
-    call_kwargs = mock_wisps.call_args.kwargs
+    assert data["status"] == "pending"
+    run_id = UUID(data["runId"])
+    mock_prepare.assert_called_once()
+    call_kwargs = mock_prepare.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
     assert call_kwargs["form_data"].splitOutputDir == "/data/split"
-    assert call_kwargs["prerun_script_path"] == "/some/wisps-prerun.sh"
+    assert call_kwargs["pipeline"] == "https://github.com/test/wisps"
+    assert call_kwargs["revision"] in {"dev", "main"}
+    assert call_kwargs["output_id"] == str(run_id)
 
     with Session(test_engine) as db:
         created_run = db.execute(
             select(
+                WorkflowRun.id,
+                WorkflowRun.seqera_run_id,
                 WorkflowRun.run_name,
                 WorkflowRun.submitted_form_data,
                 WorkflowRun.submission_timestamp,
-            ).where(WorkflowRun.seqera_run_id == "wisps_wf_001")
+            ).where(WorkflowRun.id == run_id)
         ).first()
         assert created_run is not None
+        assert created_run.seqera_run_id is None
         assert created_run.run_name == "wisps-run"
         assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
         assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
         assert created_run.submission_timestamp is not None
+        queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
+        assert queued_job is not None
+        assert queued_job.status == "pending"
 
 
 def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
@@ -893,12 +922,14 @@ def test_launch_interaction_screening_missing_split_output_dir(wisps_client: Tes
     assert "splitOutputDir" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_config_error(
-    mock_wisps, wisps_client: TestClient, test_engine
+@patch("app.routes.workflows.prepare_wisps_workflow")
+def test_launch_interaction_screening_queue_preparation_configuration_error(
+    mock_prepare, wisps_client: TestClient, test_engine
 ):
-    """SeqeraConfigurationError should return 500."""
-    mock_wisps.side_effect = SeqeraConfigurationError("missing token")
+    """Local queue payload configuration errors should return 500."""
+    mock_prepare.side_effect = SeqeraConfigurationError(
+        "Missing required environment variable: AWS_S3_BUCKET"
+    )
 
     payload = {
         "launch": {
@@ -918,22 +949,22 @@ def test_launch_interaction_screening_config_error(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 500
-    assert "missing token" in response.json()["detail"]
+    assert "AWS_S3_BUCKET" in response.json()["detail"]
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count())
             .select_from(WorkflowRun)
             .where(WorkflowRun.run_name == "wisps-run-cfg-err")
         )
-        assert count == 1
+        assert count == 0
 
 
-@patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_interaction_screening_executor_error(
-    mock_wisps, wisps_client: TestClient, test_engine
+@patch("app.routes.workflows.prepare_wisps_workflow")
+def test_launch_interaction_screening_queue_preparation_error(
+    mock_prepare, wisps_client: TestClient, test_engine
 ):
-    """WorkflowExecutorError should return 502."""
-    mock_wisps.side_effect = WorkflowExecutorError("seqera 502")
+    """Unexpected queue preparation errors should return 500."""
+    mock_prepare.side_effect = RuntimeError("queue build failed")
 
     payload = {
         "launch": {
@@ -952,15 +983,15 @@ def test_launch_interaction_screening_executor_error(
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
-    assert response.status_code == 502
-    assert "seqera 502" in response.json()["detail"]
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to queue local workflow run."
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count())
             .select_from(WorkflowRun)
             .where(WorkflowRun.run_name == "wisps-run-exec-err")
         )
-        assert count == 1
+        assert count == 0
 
 
 def test_launch_interaction_screening_missing_config_path(wisps_no_config_client: TestClient):
@@ -986,14 +1017,9 @@ def test_launch_interaction_screening_missing_config_path(wisps_no_config_client
     assert "config_path" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.launch_wisps_workflow")
-def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClient, test_engine):
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_with_workflow_field_in_launch(mock_prepare, wisps_client: TestClient, test_engine):
     """The new frontend format using launch.workflow is accepted alongside launch.tool."""
-    mock_wisps.return_value = WorkflowLaunchResult(
-        workflow_id="wisps_wf_002",
-        status="submitted",
-    )
-
     payload = {
         "launch": {
             "workflow": "interaction-screening",
@@ -1012,11 +1038,13 @@ def test_launch_with_workflow_field_in_launch(mock_wisps, wisps_client: TestClie
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["runId"] == "wisps_wf_002"
+    run_id = UUID(response.json()["runId"])
+    assert response.json()["status"] == "pending"
+    mock_prepare.assert_called_once()
 
     with Session(test_engine) as db:
         created_run = db.execute(
-            select(WorkflowRun.run_name).where(WorkflowRun.seqera_run_id == "wisps_wf_002")
+            select(WorkflowRun.run_name).where(WorkflowRun.id == run_id)
         ).first()
         assert created_run is not None
         assert created_run.run_name == "wisps-run-workflow-field"
@@ -1072,11 +1100,10 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_deducts_credits_when_enabled(mock_launch, client, test_engine, monkeypatch):
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_deducts_credits_when_enabled(mock_prepare, client, test_engine, monkeypatch):
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
-    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_credit", status="submitted")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1094,14 +1121,16 @@ def test_launch_deducts_credits_when_enabled(mock_launch, client, test_engine, m
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 40  # 100 − (20 × 3)
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
-def test_launch_rejected_when_insufficient_credits(mock_launch, client, test_engine, monkeypatch):
-    """With credits enabled, an unaffordable launch is rejected (402) and not launched."""
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_rejected_when_insufficient_credits(mock_prepare, client, test_engine, monkeypatch):
+    """With credits enabled, an unaffordable launch is rejected (402) and not queued."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=10))
@@ -1120,19 +1149,18 @@ def test_launch_rejected_when_insufficient_credits(mock_launch, client, test_eng
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 402
-    mock_launch.assert_not_called()
+    mock_prepare.assert_not_called()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 10  # unchanged
 
 
-@patch("app.routes.workflows.launch_bindflow_workflow")
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_does_not_deduct_when_credits_disabled(
-    mock_launch, client, test_engine, monkeypatch
+    mock_prepare, client, test_engine, monkeypatch
 ):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
-    mock_launch.return_value = WorkflowLaunchResult(workflow_id="wf_nocredit", status="submitted")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
         db.commit()
@@ -1150,6 +1178,8 @@ def test_launch_does_not_deduct_when_credits_disabled(
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 5  # unchanged

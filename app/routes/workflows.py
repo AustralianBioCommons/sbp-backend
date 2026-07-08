@@ -16,6 +16,7 @@ from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 from unidecode import unidecode
 
+from ..db.models import QueuedJob
 from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
 from ..schemas.workflows import (
     DatasetUploadRequest,
@@ -29,8 +30,9 @@ from ..schemas.workflows import (
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
+    WorkflowUserDetails,
 )
-from ..services.bindflow_executor import _get_required_env, launch_bindflow_workflow
+from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
     WorkflowCreditsResponse,
     compute_cost,
@@ -43,11 +45,10 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
-from ..services.proteinfold_executor import launch_proteinfold_workflow
+from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
-from ..services.seqera import WorkflowExecutorError, WorkflowLaunchResult
 from ..services.seqera_errors import SeqeraConfigurationError
-from ..services.wisps_executor import launch_wisps_workflow
+from ..services.wisps_executor import prepare_wisps_workflow
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -250,6 +251,12 @@ async def launch_workflow(
     full_name = _require_launch_var("full_name", full_name)
     institute = _require_launch_var("institute", institute)
     ip_address = _require_launch_var("ip_address", ip_address)
+    user_details = WorkflowUserDetails(
+        user_email=user_email,
+        full_name=full_name,
+        institute=institute,
+        ip_address=ip_address,
+    )
 
     # Authoritative credit cost (server-side, non-spoofable). Only charged for
     # workflows whose quantity is fully determined by the launch payload
@@ -272,13 +279,12 @@ async def launch_workflow(
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
     submission_timestamp = datetime.now(UTC)
 
-    # Reserve DB row first so a launched workflow always has a DB entry.
-    # Use local run UUID as a temporary seqera_run_id placeholder.
+    # Reserve DB row first so a queued workflow always has a DB entry.
     workflow_run = WorkflowRun(
         id=run_id,
-        workflow_id=workflow.id,
+        workflow=workflow,
         owner_user_id=current_user_id,
-        seqera_run_id=str(run_id),
+        seqera_run_id=None,
         binder_name=binder_name,
         sample_id=sample_id,
         run_name=payload.launch.runName,
@@ -298,7 +304,7 @@ async def launch_workflow(
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
     db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key))
-    db_session.commit()
+    db_session.flush()
 
     workflow_name = workflow.name.lower()
 
@@ -325,14 +331,14 @@ async def launch_workflow(
             ) from exc
 
     try:
-        result: WorkflowLaunchResult
+        queued_job: QueuedJob
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
         if workflow_name in ("single-prediction", "proteinfold"):
             # single-prediction → proteinfold executor.
             # selected_tool carries the chosen algorithm ("colabfold", "alphafold2", "boltz").
             tool_algo = selected_tool
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            result = await launch_proteinfold_workflow(
+            queued_job = await prepare_proteinfold_workflow(
                 proteinfold_launch_form,
                 s3_input_key,
                 db_session=db_session,
@@ -341,20 +347,16 @@ async def launch_workflow(
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
-                prerun_script_path=workflow.prerun_script_path,
                 mode=tool_algo,
                 form_data=payload.formData,
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor.
             # selected_tool carries the chosen algorithm ("bindcraft", "rfdiffusion").
             tool_mode = selected_tool
             bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            result = await launch_bindflow_workflow(
+            queued_job = await prepare_bindflow_workflow(
                 bindcraft_launch_form,
                 s3_input_key,
                 db_session=db_session,
@@ -363,19 +365,15 @@ async def launch_workflow(
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
-                prerun_script_path=workflow.prerun_script_path,
                 mode=tool_mode,
                 form_data=payload.formData,
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
-            launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            result = await launch_wisps_workflow(
-                launch_form,
+            wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            queued_job = await prepare_wisps_workflow(
+                wisps_launch_form,
                 s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
@@ -384,11 +382,7 @@ async def launch_workflow(
                 config_path=workflow.config_path,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
-                prerun_script_path=workflow.prerun_script_path,
-                user_email=user_email,
-                full_name=full_name,
-                institute=institute,
-                ip_address=ip_address,
+                user_details=user_details,
             )
         else:
             db_session.rollback()
@@ -396,10 +390,10 @@ async def launch_workflow(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
-        workflow_run.seqera_run_id = result.workflow_id
-        # Deduct the run's credit cost now that the launch succeeded. Atomic and
+
+        # Deduct the run's credit cost now that the job is accepted into the queue. Atomic and
         # guarded (credit >= cost) so the balance can't go negative; committed
-        # together with the run finalisation.
+        # together with the queued run finalisation.
         if run_credit_cost is not None:
             deducted = cast(
                 CursorResult,
@@ -418,11 +412,15 @@ async def launch_workflow(
             )
             if deducted.rowcount == 0:
                 logger.warning(
-                    "Launched run %s but could not deduct %s credits from user %s "
+                    "Could not queue run %s because %s credits could not be deducted from user %s "
                     "(balance changed since the pre-launch check)",
                     run_id,
                     run_credit_cost,
                     current_user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail="Insufficient credits to launch this workflow.",
                 )
         db_session.commit()
     except HTTPException:
@@ -433,20 +431,17 @@ async def launch_workflow(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    except WorkflowExecutorError as exc:
-        db_session.rollback()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update local workflow run after launch.",
+            detail="Failed to queue local workflow run.",
         ) from exc
 
     return WorkflowLaunchResponse(
-        message="Workflow launched successfully",
-        runId=result.workflow_id,
-        status=result.status,
+        message="Workflow queued successfully",
+        runId=str(run_id),
+        status=queued_job.status,
         submitTime=submission_timestamp,
     )
 

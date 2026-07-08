@@ -2,27 +2,17 @@
 
 from __future__ import annotations
 
-import httpx
-import pytest
+from datetime import UTC, datetime, timedelta
 
+import httpx
+
+from app.db.models.system_status import SystemStatusCache
 from app.schemas.health import (
     COMPONENT_COMPUTE_ENV,
     COMPONENT_SEQERA_API,
     COMPONENT_TOWER_AGENT,
 )
 from app.services import health
-
-
-@pytest.fixture(autouse=True)
-def _clear_status_cache():
-    """Each test starts with an empty probe cache and no stale fallback."""
-    health._status_cache.clear()
-    health._last_status = None
-    health._refresh_task = None
-    yield
-    health._status_cache.clear()
-    health._last_status = None
-    health._refresh_task = None
 
 
 def _component(status: health.SystemStatus, name: str) -> health.ProbeResult:
@@ -183,7 +173,7 @@ async def test_compute_env_read_failure_is_unhealthy(monkeypatch):
     assert "WORK_SPACE" in (ce.message or "")
 
 
-async def test_results_are_cached(monkeypatch):
+async def test_results_are_cached_in_database(monkeypatch, test_db):
     calls = {"count": 0}
 
     async def counting_get(self, url, *args, **kwargs):  # noqa: ANN001
@@ -194,21 +184,17 @@ async def test_results_are_cached(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "get", counting_get)
 
-    first = await health.get_system_status(force_refresh=True)
+    first = await health.get_system_status(test_db, force_refresh=True)
     after_refresh = calls["count"]
     assert after_refresh == 2  # one probe per component
 
-    second = await health.get_system_status()  # served from cache
+    second = await health.get_system_status(test_db)  # served from DB cache
     assert calls["count"] == after_refresh  # no new network calls
-    assert second is first
+    assert second.overall_status == first.overall_status
+    assert second.checked_at == first.checked_at
 
 
-async def test_stale_while_revalidate_serves_immediately(monkeypatch):
-    """An expired cache returns the last status at once and refreshes in the bg.
-
-    The caller must not block on the (~2s) probes once we have a prior result.
-    """
-
+async def test_stale_cache_served_when_another_process_refreshes(monkeypatch, test_db):
     async def ok_get(self, url, *args, **kwargs):  # noqa: ANN001
         if url.endswith("/user-info"):
             return _ok_user_info(url)
@@ -216,19 +202,18 @@ async def test_stale_while_revalidate_serves_immediately(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "get", ok_get)
 
-    first = await health.get_system_status(force_refresh=True)
-    # Simulate the 30s TTL expiring while the stale fallback is retained.
-    health._status_cache.clear()
-    assert health._last_status is first
+    first = await health.get_system_status(test_db, force_refresh=True)
+    row = test_db.get(SystemStatusCache, health._CACHE_KEY)
+    assert row is not None
+    row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    test_db.add(row)
+    test_db.commit()
 
-    # Non-force read returns the stale value immediately and schedules a refresh.
-    stale = await health.get_system_status()
-    assert stale is first
-    assert health._refresh_task is not None
+    monkeypatch.setattr(health, "_try_acquire_cache_refresh_lock", lambda db: False)
 
-    # The background refresh repopulates the fresh cache.
-    await health._refresh_task
-    assert health._status_cache.get(health._CACHE_KEY) is not None
+    stale = await health.get_system_status(test_db)
+    assert stale.overall_status == first.overall_status
+    assert stale.checked_at == first.checked_at
 
 
 def test_overall_status_aggregation():

@@ -16,6 +16,24 @@ COMPONENT_TOWER_AGENT = "seqera_tower_agent"
 HealthStatus = Literal["healthy", "degraded", "unhealthy"]
 
 
+class ProbeResult(BaseModel):
+    """Outcome of probing a single component."""
+
+    name: str
+    status: HealthStatus
+    latency_ms: int | None = None
+    message: str | None = None
+    detail: dict[str, Any] | None = None
+
+
+class SystemStatus(BaseModel):
+    """Aggregated status across all probed components."""
+
+    overall_status: HealthStatus
+    checked_at: datetime
+    components: list[ProbeResult]
+
+
 class ComponentStatus(BaseModel):
     """Coarse, user-safe status for a single monitored component."""
 

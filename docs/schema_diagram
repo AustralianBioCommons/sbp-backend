@@ -195,4 +195,23 @@ digraph {
                          </TR></TABLE>> URL="http://QueuedJob_details.html"]
 	QueuedJob -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and Workflow"]
 	QueuedJob -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and WorkflowRun"]
+	SystemStatusCache [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusCache</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">key</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">payload</TD>
+                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">checked_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">expires_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">updated_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR></TABLE>> URL="http://SystemStatusCache_details.html"]
 }

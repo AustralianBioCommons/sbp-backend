@@ -28,7 +28,7 @@ async def test_seqera_client_post_uses_default_headers(monkeypatch):
 
     with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
         response = await client.post(
-            "https://api.seqera.test/workflow/launch",
+            "/workflow/launch",
             payload={"launch": {"runName": "test"}},
         )
 
@@ -53,7 +53,7 @@ async def test_seqera_client_post_headers_override_defaults(monkeypatch):
 
     with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
         await client.post(
-            "https://api.seqera.test/workflow/launch",
+            "/workflow/launch",
             headers={"Accept": "application/vnd.seqera+json"},
             payload={"launch": {}},
         )
