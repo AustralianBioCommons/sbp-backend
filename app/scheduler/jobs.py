@@ -141,3 +141,7 @@ def submit_pending_jobs(dry_run: bool = False):
         )
 
     logger.info("Finished submitting pending jobs.")
+
+
+def refresh_user_credits(dry_run: bool = False):
+    logger.info("TODO: refresh user credits - not implemented yet")
