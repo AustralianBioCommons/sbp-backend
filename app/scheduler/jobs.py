@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
@@ -62,7 +62,7 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
 
     now = datetime.now(tz=UTC)
     launch_func: LaunchFunction
-    workflow_name: WorkflowName = job.workflow.name
+    workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
     if workflow_name in ("interaction-screening", "bulk-prediction"):
         launch_func = launch_wisps_workflow
     elif workflow_name in ("single-prediction", "proteinfold"):
