@@ -28,6 +28,9 @@ class RecordingScheduler:
         if self.stop_on_start:
             raise SchedulerStopped
 
+    def get_job(self, job_id, **kwargs):
+        return job_id in self.added_jobs
+
     def shutdown(self):
         self.events.append(("shutdown", None))
         self.running = False
