@@ -26,8 +26,12 @@ def main(dry_run: bool = False):
             max_instances=1,
             replace_existing=True,
         )
-        logger.info(f"Adding monthly refresh_user_credits to scheduler: trigger = {MONTHLY_TRIGGER}")
-        logger.info(f"Next refresh at: {MONTHLY_TRIGGER.get_next_fire_time(previous_fire_time=None, now=datetime.now(tz=UTC))}")
+        logger.info(
+            f"Adding monthly refresh_user_credits to scheduler: trigger = {MONTHLY_TRIGGER}"
+        )
+        logger.info(
+            f"Next refresh at: {MONTHLY_TRIGGER.get_next_fire_time(previous_fire_time=None, now=datetime.now(tz=UTC))}"
+        )
         SCHEDULER.add_job(
             refresh_user_credits,
             kwargs={"dry_run": dry_run},
