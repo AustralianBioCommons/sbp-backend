@@ -282,6 +282,7 @@ class JobListItem(BaseModel):
     """Individual job item in the job listing."""
 
     id: str = Field(..., description="Workflow run ID")
+    seqeraRunId: str | None = Field(None, description="Seqera run ID")
     jobName: str = Field(..., description="Human-readable job name")
     workflow: str = Field(..., description="Workflow name from the workflows table")
     tool: str = Field(..., description="Tool used (e.g., BindCraft)")

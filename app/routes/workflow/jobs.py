@@ -197,6 +197,7 @@ async def list_jobs(
         jobs.append(
             JobListItem(
                 id=run_id,
+                seqeraRunId=seqera_run_id,
                 jobName=job_name,
                 workflow=workflow_type,
                 tool=tool,
