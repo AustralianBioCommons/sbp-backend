@@ -3,12 +3,12 @@ from typing import Literal
 from uuid import uuid7
 
 from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, event, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates, Session
 
 from .. import Base
 from . import Workflow, WorkflowRun
 
-JobStatus = Literal["pending", "submitted", "failed"]
+JobStatus = Literal["pending", "submitted", "failed", "cancelled"]
 
 
 class QueuedJob(Base):
@@ -47,6 +47,13 @@ class QueuedJob(Base):
         """
         _raise_if_prerun_script(value)
         return value
+
+    def cancel_pending_job(self, session: Session, commit: bool = False) -> None:
+        self.status = "cancelled"
+        self.next_attempt_at = None
+        session.add(self)
+        if commit:
+            session.commit()
 
 
 def _raise_if_prerun_script(launch_payload: dict) -> None:

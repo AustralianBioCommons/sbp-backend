@@ -14,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, Session
 
 from .. import Base
 
@@ -79,6 +79,15 @@ class WorkflowRun(Base):
     inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
 
+    def get_queued_job(self, session: Session):
+        """Get the latest queued job for this workflow run."""
+        from app.db.models.job_queue import QueuedJob
+        return (
+            session.query(QueuedJob)
+            .filter(QueuedJob.workflow_run_id == self.id)
+            .order_by(QueuedJob.queued_at.desc())
+            .first()
+        )
 
 class S3Object(Base):
     __tablename__ = "s3_objects"
