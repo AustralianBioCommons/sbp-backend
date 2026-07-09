@@ -1,9 +1,17 @@
 name: Build, Push, and Deploy Backend
 
+# Branch == environment. A push to `dev` deploys to the shared dev environment;
+# a push to `staging` deploys to the shared staging environment. The branch ->
+# environment -> deploy-role -> release-Lambda mapping is owned by
+# sbp-infrastructure; this workflow only derives the environment name from the
+# branch. The OIDC trust policy on each per-env role (see
+# sbp-infrastructure/lib/backend-service-stack.ts) enforces that only the
+# matching branch can assume it.
 on:
   push:
     branches:
-      - main
+      - dev
+      - staging
 
 permissions:
   id-token: write
@@ -11,9 +19,8 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-2
+  AWS_ACCOUNT_ID: '456789093900'
   ECR_REPOSITORY: sbp-backend
-  DEPLOY_LAMBDA_NAME: SbpBackendDevReleaseDeployer
-  IMAGE_TAG: dev
 
 jobs:
   build-push-deploy:
@@ -22,10 +29,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve environment from branch
+        id: env
+        run: |
+          set -euo pipefail
+          ENV="${GITHUB_REF_NAME}"            # dev | staging
+          ENV_TITLE="$(tr '[:lower:]' '[:upper:]' <<< "${ENV:0:1}")${ENV:1}"
+          echo "name=${ENV}" >> "$GITHUB_OUTPUT"
+          echo "role=sbp-backend-${ENV}-github-actions-deploy-role" >> "$GITHUB_OUTPUT"
+          echo "lambda=SbpBackend${ENV_TITLE}ReleaseDeployer" >> "$GITHUB_OUTPUT"
+          echo "tag=${ENV}" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::456789093900:role/sbp-backend-github-actions-deploy-role
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ steps.env.outputs.role }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
@@ -35,6 +53,7 @@ jobs:
       - name: Build and push image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.env.outputs.tag }}
         run: |
           set -euo pipefail
           docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
@@ -42,9 +61,12 @@ jobs:
           echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to ECS via Lambda
+        env:
+          DEPLOY_LAMBDA_NAME: ${{ steps.env.outputs.lambda }}
+          IMAGE_TAG: ${{ steps.env.outputs.tag }}
         run: |
           export AWS_MAX_ATTEMPTS=1
-          
+
           set -euo pipefail
           aws lambda invoke \
             --function-name "$DEPLOY_LAMBDA_NAME" \
