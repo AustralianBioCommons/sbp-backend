@@ -8,10 +8,8 @@ from uuid import UUID
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...db.models import QueuedJob
 from ...schemas.workflows import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
@@ -19,7 +17,7 @@ from ...schemas.workflows import (
     ResultReportResponse,
     ResultSnapshotsResponse,
 )
-from ...services.job_utils import get_owned_run_by_seqera_id, get_owned_run_by_id
+from ...services.job_utils import get_owned_run_by_id
 from ...services.results_utils import (
     _format_attachment_content_disposition,
     format_log_entries,

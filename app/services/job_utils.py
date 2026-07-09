@@ -121,7 +121,9 @@ def get_owned_run_by_id(db: Session, user_id: UUID, run_id: str) -> WorkflowRun 
     ).scalar_one_or_none()
 
 
-def get_owned_run_by_seqera_id(db: Session, user_id: UUID, seqera_run_id: str) -> WorkflowRun | None:
+def get_owned_run_by_seqera_id(
+    db: Session, user_id: UUID, seqera_run_id: str
+) -> WorkflowRun | None:
     return db.execute(
         select(WorkflowRun).where(
             WorkflowRun.owner_user_id == user_id,

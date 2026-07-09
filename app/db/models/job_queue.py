@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import uuid7
 
 from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, event, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates, Session
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, validates
 
 from .. import Base
 from . import Workflow, WorkflowRun

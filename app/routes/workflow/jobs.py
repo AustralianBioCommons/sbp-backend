@@ -369,8 +369,11 @@ async def bulk_delete_jobs(
 
         status[run_id] = run_status
 
-    delete_from_seqera = [(run_id, run_status) for run_id, run_status in status.items()
-                          if run_status.get("seqera_cancelled") and run_status.get("seqera_id")]
+    delete_from_seqera = [
+        (run_id, run_status)
+        for run_id, run_status in status.items()
+        if run_status.get("seqera_cancelled") and run_status.get("seqera_id")
+    ]
     if delete_from_seqera:
         try:
             seqera_ids = [run_status["seqera_id"] for run_id, run_status in delete_from_seqera]
@@ -379,8 +382,11 @@ async def bulk_delete_jobs(
             for run_id, _run_status in delete_from_seqera:
                 failed[run_id] = str(exc)
 
-    delete_from_db = [run_id for run_id, run_status in status.items()
-                      if run_status.get("queue_cancelled") or run_status.get("seqera_cancelled")]
+    delete_from_db = [
+        run_id
+        for run_id, run_status in status.items()
+        if run_status.get("queue_cancelled") or run_status.get("seqera_cancelled")
+    ]
     for run_id in delete_from_db:
         # Don't delete if Seqera deletion failed.
         if run_id in failed:
