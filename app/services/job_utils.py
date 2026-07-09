@@ -107,11 +107,25 @@ def get_user_job_list_rows(db: Session, user_id: UUID) -> list[UserJobListRow]:
     ]
 
 
-def get_owned_run(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None:
+def get_owned_run_by_id(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None:
+    try:
+        workflow_run_id = UUID(str(run_id))
+    except ValueError:
+        return None
+
     return db.execute(
         select(WorkflowRun).where(
             WorkflowRun.owner_user_id == user_id,
-            WorkflowRun.seqera_run_id == run_id,
+            WorkflowRun.id == workflow_run_id,
+        )
+    ).scalar_one_or_none()
+
+
+def get_owned_run_by_seqera_id(db: Session, user_id: UUID, seqera_run_id: str) -> WorkflowRun | None:
+    return db.execute(
+        select(WorkflowRun).where(
+            WorkflowRun.owner_user_id == user_id,
+            WorkflowRun.seqera_run_id == seqera_run_id,
         )
     ).scalar_one_or_none()
 
