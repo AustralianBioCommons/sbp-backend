@@ -410,9 +410,10 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
     owned_run.workflow = workflow
     owned_run.tool = None
     owned_run.submitted_form_data = None
+    owned_run.seqera_run_id = "seqera-wf-123"
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -446,7 +447,7 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
 @pytest.mark.asyncio
 async def test_get_job_details_not_found(mock_db, mock_user_id):
     """Test job details when job not found."""
-    with patch("app.routes.workflow.jobs.get_owned_run", return_value=None):
+    with patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=None):
         with pytest.raises(HTTPException) as exc_info:
             await get_job_details(
                 run_id="nonexistent",
@@ -465,9 +466,10 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
     owned_run.workflow = None
     owned_run.tool = None
     owned_run.submitted_form_data = None
+    owned_run.seqera_run_id = "seqera-wf-456"
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -495,9 +497,10 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id, mocker):
     from app.services.seqera_errors import SeqeraAPIError
 
     owned_run = mocker.Mock()
+    owned_run.seqera_run_id = "seqera-wf-789"
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=owned_run),
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,

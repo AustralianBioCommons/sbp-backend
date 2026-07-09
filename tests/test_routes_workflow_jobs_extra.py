@@ -19,6 +19,7 @@ from app.db.models.core import (
     Workflow,
     WorkflowRun,
 )
+from app.db.models.job_queue import QueuedJob
 from app.routes.workflow.jobs import (
     bulk_delete_jobs,
     cancel_workflow,
@@ -27,11 +28,12 @@ from app.routes.workflow.jobs import (
 )
 from app.schemas.workflows import BulkDeleteJobsRequest
 from app.services.seqera_errors import SeqeraAPIError
+from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 
 @pytest.mark.asyncio
 async def test_cancel_workflow_not_owned_raises_404():
-    with patch("app.routes.workflow.jobs.get_owned_run", return_value=None):
+    with patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=None):
         with pytest.raises(HTTPException) as exc:
             await cancel_workflow("wf-1", UUID("11111111-1111-1111-1111-111111111111"), Mock())
     assert exc.value.status_code == 404
@@ -39,8 +41,11 @@ async def test_cancel_workflow_not_owned_raises_404():
 
 @pytest.mark.asyncio
 async def test_cancel_workflow_api_error_maps_502():
+    owned_run = Mock(seqera_run_id="wf-1")
+    owned_run.get_queued_job.return_value = None
+
     with (
-        patch("app.routes.workflow.jobs.get_owned_run", return_value=object()),
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch(
             "app.routes.workflow.jobs.cancel_workflow_raw",
             new_callable=AsyncMock,
@@ -50,6 +55,35 @@ async def test_cancel_workflow_api_error_maps_502():
         with pytest.raises(HTTPException) as exc:
             await cancel_workflow("wf-1", UUID("11111111-1111-1111-1111-111111111111"), Mock())
     assert exc.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_cancel_workflow_cancels_pending_queued_job(test_db, persistent_models):
+    """
+    Test QueuedJob is cancelled if pending
+    """
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-cancel-queued-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="pending",
+    )
+
+    resp = await cancel_workflow(str(run.id), user.id, test_db)
+
+    test_db.refresh(queued_job)
+    assert resp.runId == str(run.id)
+    assert resp.status == "cancelled"
+    assert queued_job.status == "cancelled"
+    assert queued_job.next_attempt_at is None
 
 
 @pytest.mark.asyncio
@@ -91,9 +125,9 @@ async def test_get_job_details_success(test_db):
             return_value=0.912,
         ),
     ):
-        result = await get_job_details("wf-1", user.id, test_db)
+        result = await get_job_details(str(run.id), user.id, test_db)
 
-    assert result.id == "wf-1"
+    assert result.id == str(run.id)
     assert result.jobName == "PDL1"
     assert result.workflow == "Bindcraft"
     assert result.score == 0.912
@@ -147,7 +181,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
             return_value=None,
         ) as mock_delete,
     ):
-        resp = await delete_job("wf-1", user.id, test_db)
+        resp = await delete_job(str(run.id), user.id, test_db)
 
     assert resp.deleted is True
     assert resp.cancelledBeforeDelete is True
@@ -161,14 +195,45 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
 
 
 @pytest.mark.asyncio
+async def test_delete_job_cancels_pending_queued_job(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-queued-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="pending",
+    )
+
+    resp = await delete_job(str(run.id), user.id, test_db)
+
+    assert resp.deleted is True
+    assert resp.cancelledBeforeDelete is False
+    assert test_db.get(QueuedJob, queued_job.id) is None
+    assert test_db.get(WorkflowRun, run.id) is None
+
+
+@pytest.mark.asyncio
 async def test_bulk_delete_jobs_mixed_results():
     db = Mock()
 
     def _owned(_db, _uid, run_id):
-        return None if run_id == "missing" else SimpleNamespace(id=f"id-{run_id}")
+        if run_id == "missing":
+            return None
+        return SimpleNamespace(
+            id=f"id-{run_id}",
+            seqera_run_id=f"seqera-{run_id}",
+            get_queued_job=Mock(return_value=None),
+        )
 
     with (
-        patch("app.routes.workflow.jobs.get_owned_run", side_effect=_owned),
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", side_effect=_owned),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -188,4 +253,44 @@ async def test_bulk_delete_jobs_mixed_results():
 
     assert out.deleted == ["ok"]
     assert out.failed["missing"] == "Job not found"
-    mock_delete.assert_called_once_with(["ok"])
+    mock_delete.assert_called_once_with(["seqera-ok"])
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_jobs_seqera_delete_failure_skips_db_delete(test_db):
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|bulk-delete-user",
+        name="Bulk Delete User",
+        email="bulk-delete-user@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="wf-bulk-delete-1",
+        work_dir="workdir-bulk-delete-1",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with (
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            return_value={"workflow": {"status": "SUCCEEDED"}},
+        ),
+        patch(
+            "app.routes.workflow.jobs.delete_workflows_raw",
+            new_callable=AsyncMock,
+            side_effect=SeqeraAPIError("delete failed"),
+        ),
+    ):
+        out = await bulk_delete_jobs(
+            BulkDeleteJobsRequest(runIds=[str(run.id)]),
+            user.id,
+            test_db,
+        )
+
+    assert out.deleted == []
+    assert out.failed == {str(run.id): "delete failed"}
+    assert test_db.get(WorkflowRun, run.id) is not None

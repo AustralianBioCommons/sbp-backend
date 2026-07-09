@@ -51,9 +51,9 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
     test_db.add(RunMetric(run=run, final_design_count=100))
     test_db.commit()
 
-    result = await get_result_setting_params("wf-1", user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-1"
+    assert result.runId == str(run.id)
     assert result.settingParams == {
         "id": "s1",
         "binder_name": "PDL1",
@@ -80,9 +80,9 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
     test_db.add(RunMetric(run=run, final_design_count=25))
     test_db.commit()
 
-    result = await get_result_setting_params("wf-2", user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-2"
+    assert result.runId == str(run.id)
     assert result.settingParams == {
         "id": "s2",
         "binder_name": "PDL2",
@@ -133,7 +133,7 @@ async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(te
         "app.services.results_utils.generate_presigned_url",
         new=AsyncMock(return_value=presigned),
     ):
-        result = await get_result_setting_params("wf-pdb-1", user.id, test_db)
+        result = await get_result_setting_params(str(run.id), user.id, test_db)
 
     assert result.settingParams["binder_name"] == "PDL1"
     assert result.settingParams["starting_pdb"] == presigned
@@ -161,7 +161,7 @@ async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
         "app.services.results_utils.generate_presigned_url",
         new=AsyncMock(side_effect=S3ServiceError("presign failed")),
     ):
-        result = await get_result_setting_params("wf-pdb-err", user.id, test_db)
+        result = await get_result_setting_params(str(run.id), user.id, test_db)
 
     assert result.settingParams["starting_pdb"] == "s3://my-bucket/uploads/target.pdb"
 
@@ -200,9 +200,9 @@ async def test_get_result_logs_returns_formatted_entries(test_db):
         "app.routes.workflow.results.get_workflow_logs_raw",
         new=AsyncMock(return_value=payload),
     ):
-        result = await get_result_logs("wf-logs-1", user.id, test_db)
+        result = await get_result_logs(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-logs-1"
+    assert result.runId == str(run.id)
     assert result.entries == payload["log"]["entries"]
     assert result.message == "Logs retrieved"
     assert len(result.formattedEntries) == 2
@@ -261,7 +261,7 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(tes
         "app.routes.workflow.results.get_workflow_logs_raw",
         new=AsyncMock(return_value=payload),
     ):
-        result = await get_result_logs("wf-logs-top-level", user.id, test_db)
+        result = await get_result_logs(str(run.id), user.id, test_db)
 
     assert result.truncated is True
     assert result.pending is False
@@ -293,7 +293,7 @@ async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=SeqeraConfigurationError("missing seqera config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_logs("wf-logs-config-error", user.id, test_db)
+            await get_result_logs(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing seqera config"
@@ -319,7 +319,7 @@ async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
         new=AsyncMock(side_effect=SeqeraAPIError("seqera upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_logs("wf-logs-api-error", user.id, test_db)
+            await get_result_logs(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "seqera upstream failed"
@@ -376,9 +376,9 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
             return_value=[],
         ),
     ):
-        result = await get_result_downloads("wf-downloads-1", user.id, test_db)
+        result = await get_result_downloads(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-downloads-1"
+    assert result.runId == str(run.id)
     assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
     assert [item.label for item in result.downloads] == [
         "PDL1_l100_s975117.html",
@@ -422,7 +422,7 @@ async def test_get_result_download_all_returns_valid_zip_file(test_db, persisten
         return output_contents[key]
 
     with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
-        response = await get_result_download_all("wf-download-all-1", user.id, test_db)
+        response = await get_result_download_all(str(run.id), user.id, test_db)
 
     body = b"".join([chunk async for chunk in response.body_iterator])
     returned_zip = BytesIO(body)
@@ -529,9 +529,9 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
             return_value=[],
         ) as mock_list_s3_files,
     ):
-        result = await get_result_downloads(f"wf-proteinfold-downloads-{tool}", user.id, test_db)
+        result = await get_result_downloads(str(run.id), user.id, test_db)
 
-    assert result.runId == f"wf-proteinfold-downloads-{tool}"
+    assert result.runId == str(run.id)
     assert [item.category for item in result.downloads] == [
         category for category, _, _ in expected_outputs
     ]
@@ -583,7 +583,7 @@ async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_downloads("wf-downloads-config-error", user.id, test_db)
+            await get_result_downloads(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
@@ -609,7 +609,7 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_downloads("wf-downloads-service-error", user.id, test_db)
+            await get_result_downloads(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
@@ -658,9 +658,9 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
             return_value=[],
         ),
     ):
-        result = await get_result_snapshots("wf-snapshots-1", user.id, test_db)
+        result = await get_result_snapshots(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-snapshots-1"
+    assert result.runId == str(run.id)
     assert [item.category for item in result.snapshots] == ["snapshot", "snapshot"]
     assert [item.label for item in result.snapshots] == ["demo2_preview.png", "demo2_preview_2.png"]
 
@@ -702,7 +702,7 @@ async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_snapshots("wf-snapshots-config-error", user.id, test_db)
+            await get_result_snapshots(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
@@ -728,7 +728,7 @@ async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_snapshots("wf-snapshots-service-error", user.id, test_db)
+            await get_result_snapshots(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
@@ -770,9 +770,9 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
             return_value=[],
         ),
     ):
-        result = await get_result_report("wf-report-1", user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-report-1"
+    assert result.runId == str(run.id)
     assert result.report is not None
     assert result.report.category == "report"
     assert result.report.key == report_key
@@ -828,7 +828,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
             side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
     ):
-        result = await get_result_report("wf-report-3", user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db)
 
     assert result.report is not None
     assert result.report.key == real_key
@@ -880,7 +880,7 @@ async def test_get_result_report_maps_multiple_reports_to_409(test_db):
         new=AsyncMock(side_effect=ValueError("Multiple report outputs found")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report("wf-report-conflict", user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "Multiple report outputs found"
@@ -906,7 +906,7 @@ async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report("wf-report-config-error", user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
@@ -932,7 +932,7 @@ async def test_get_result_report_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report("wf-report-service-error", user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
@@ -957,9 +957,9 @@ async def test_get_result_report_allows_missing_report_payload(test_db):
         "app.routes.workflow.results.get_result_report_download",
         new=AsyncMock(return_value=None),
     ):
-        result = await get_result_report("wf-report-none", user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-report-none"
+    assert result.runId == str(run.id)
     assert result.report is None
 
 
@@ -994,9 +994,9 @@ async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
     test_db.add(job)
     test_db.commit()
 
-    result = await get_result_setting_params("wf-queued-1", user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db)
 
-    assert result.runId == "wf-queued-1"
+    assert result.runId == str(run.id)
     assert result.settingParams["paramsText"] == {"binder_name": "PDL1", "num_designs": 5}
     assert result.settingParams["configProfiles"] == ["singularity", "gadi"]
 
@@ -1029,7 +1029,7 @@ async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(
     test_db.add(job)
     test_db.commit()
 
-    result = await get_result_setting_params("wf-queued-2", user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db)
 
     assert result.settingParams["paramsText"] == "{\x00invalid yaml"
 
@@ -1071,7 +1071,7 @@ async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_d
         new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_all("wf-download-all-config-err", user.id, test_db)
+            await get_result_download_all(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "s3 config missing"
@@ -1097,7 +1097,7 @@ async def test_get_result_download_all_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_all("wf-download-all-service-err", user.id, test_db)
+            await get_result_download_all(str(run.id), user.id, test_db)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
