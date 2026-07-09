@@ -396,7 +396,7 @@ async def bulk_delete_jobs(
             db.execute(delete(RunMetric).where(RunMetric.run_id == run.id))
             db.execute(delete(RunInput).where(RunInput.run_id == run.id))
             db.execute(delete(RunOutput).where(RunOutput.run_id == run.id))
-            if queued_job := status[run_id].get("pending_job"):
+            if queued_job := run.get_queued_job(session=db):
                 db.delete(queued_job)
             db.delete(run)
             db.commit()
