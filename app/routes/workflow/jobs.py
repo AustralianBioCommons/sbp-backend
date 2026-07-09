@@ -79,7 +79,7 @@ async def cancel_workflow(
 
     if owned_run.seqera_run_id is not None:
         try:
-            await cancel_workflow_raw(run_id)
+            await cancel_workflow_raw(owned_run.seqera_run_id)
         except SeqeraAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
