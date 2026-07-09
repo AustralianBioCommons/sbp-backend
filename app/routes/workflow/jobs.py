@@ -29,7 +29,8 @@ from ...services.job_utils import (
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
-    get_owned_run,
+    get_owned_run_by_id,
+    get_owned_run_by_seqera_id,
     get_user_job_list_rows,
     parse_submit_datetime,
 )
@@ -69,7 +70,7 @@ async def cancel_workflow(
     db: Session = Depends(get_db),
 ) -> CancelWorkflowResponse:
     """Cancel a workflow run."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_seqera_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -228,12 +229,16 @@ async def get_job_details(
     db: Session = Depends(get_db),
 ) -> JobDetailsResponse:
     """Retrieve a single job with normalized status and score."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not owned_run.seqera_run_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
+        )
 
     try:
-        payload = await describe_workflow(run_id)
+        payload = await describe_workflow(owned_run.seqera_run_id)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -281,29 +286,37 @@ async def delete_job(
     db: Session = Depends(get_db),
 ) -> DeleteJobResponse:
     """Delete a single job. Running jobs are cancelled before deletion."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     cancelled = False
-    try:
-        payload = await describe_workflow(run_id)
-        pipeline_status = extract_pipeline_status(payload)
-        if pipeline_status in {"SUBMITTED", "RUNNING"}:
-            await cancel_workflow_raw(run_id)
-            cancelled = True
+    seqera_run_id = owned_run.seqera_run_id
+    # Cancel the queued job if it's still pending.
+    queued_job = owned_run.get_queued_job(session=db)
+    if queued_job and queued_job.status == "pending":
+        queued_job.cancel_pending_job(session=db)
+    if seqera_run_id:
+        try:
+            payload = await describe_workflow(seqera_run_id)
+            pipeline_status = extract_pipeline_status(payload)
+            if pipeline_status in {"SUBMITTED", "RUNNING"}:
+                await cancel_workflow_raw(seqera_run_id)
+                cancelled = True
 
-        await delete_workflow_raw(run_id)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            await delete_workflow_raw(seqera_run_id)
+        except SeqeraConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
+        except SeqeraAPIError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
     db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
     db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
+    if queued_job:
+        db.delete(queued_job)
     db.delete(owned_run)
     db.commit()
 
@@ -327,7 +340,7 @@ async def bulk_delete_jobs(
     to_delete: list[tuple[str, WorkflowRun]] = []
 
     for run_id in payload.runIds:
-        owned_run = get_owned_run(db, current_user_id, run_id)
+        owned_run = get_owned_run_by_seqera_id(db, current_user_id, run_id)
         if not owned_run:
             failed[run_id] = "Job not found"
             continue
