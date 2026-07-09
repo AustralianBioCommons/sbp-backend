@@ -352,10 +352,11 @@ async def bulk_delete_jobs(
         run_status: dict[str, Any] = {"run": owned_run}
 
         queued_job = owned_run.get_queued_job(session=db)
-        if queued_job and queued_job.status == "pending":
-            queued_job.cancel_pending_job(session=db)
-            run_status["queue_cancelled"] = True
-            run_status["pending_job"] = queued_job
+        if queued_job:
+            run_status["queued_job"] = queued_job
+            if queued_job.status == "pending":
+                queued_job.cancel_pending_job(session=db)
+                run_status["queue_cancelled"] = True
 
         if owned_run.seqera_run_id is not None:
             try:
@@ -385,7 +386,7 @@ async def bulk_delete_jobs(
     delete_from_db = [
         run_id
         for run_id, run_status in status.items()
-        if run_status.get("queue_cancelled") or run_status.get("seqera_cancelled")
+        if run_status.get("queued_job") or run_status.get("seqera_cancelled")
     ]
     for run_id in delete_from_db:
         # Don't delete if Seqera deletion failed.

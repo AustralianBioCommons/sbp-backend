@@ -294,3 +294,32 @@ async def test_bulk_delete_jobs_seqera_delete_failure_skips_db_delete(test_db):
     assert out.deleted == []
     assert out.failed == {str(run.id): "delete failed"}
     assert test_db.get(WorkflowRun, run.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_jobs_deletes_failed_local_queued_job(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-bulk-failed-queued-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="failed",
+    )
+
+    out = await bulk_delete_jobs(
+        BulkDeleteJobsRequest(runIds=[str(run.id)]),
+        user.id,
+        test_db,
+    )
+
+    assert out.deleted == [str(run.id)]
+    assert out.failed == {}
+    assert test_db.get(QueuedJob, queued_job.id) is None
+    assert test_db.get(WorkflowRun, run.id) is None
