@@ -166,6 +166,5 @@ def test_m2m_request_does_not_create_app_user(monkeypatch, mocker: MockerFixture
     assert resp.status_code == 200
     assert test_db.query(AppUser).count() == 0
     assert (
-        test_db.query(AppUser).filter(AppUser.auth0_user_id == "m2m-client@clients").first()
-        is None
+        test_db.query(AppUser).filter(AppUser.auth0_user_id == "m2m-client@clients").first() is None
     )
