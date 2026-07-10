@@ -72,6 +72,19 @@ class ComponentsHealthResponse(BaseModel):
     )
 
 
+class AgentHealthResponse(BaseModel):
+    """Tower Agent health result for automated monitoring (M2M-only endpoint).
+
+    Deliberately narrow: no raw Seqera response, credentials, or internal URLs.
+    """
+
+    status: HealthStatus
+    checkedAt: datetime
+    message: str | None = Field(
+        default=None, description="Short human-readable reason when not healthy"
+    )
+
+
 class ComponentStatusDetail(ComponentStatus):
     """Verbose, admin-only status for a single component.
 
