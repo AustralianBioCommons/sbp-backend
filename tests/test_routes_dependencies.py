@@ -12,7 +12,11 @@ from pytest_mock import MockerFixture
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models.core import AppUser
-from app.routes.dependencies import USERINFO_CACHE, get_current_user_id
+from app.routes.dependencies import (
+    USERINFO_CACHE,
+    get_current_user_id,
+    require_agent_health_permission,
+)
 
 
 class _Result:
@@ -202,3 +206,56 @@ def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker
     assert refreshed is not None
     assert refreshed.name == "Updated Name"
     assert refreshed.email == "updated@example.com"
+
+
+def test_require_agent_health_permission_allows_when_present(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "m2m-client@clients", "permissions": ["read:agent-health"]},
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    assert require_agent_health_permission(credentials) is None
+
+
+def test_require_agent_health_permission_rejects_missing_permission(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "m2m-client@clients", "permissions": ["read:something-else"]},
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    with pytest.raises(HTTPException) as exc:
+        require_agent_health_permission(credentials)
+    assert exc.value.status_code == 403
+
+
+def test_require_agent_health_permission_rejects_non_list_claim(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "m2m-client@clients", "permissions": "read:agent-health"},
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    with pytest.raises(HTTPException) as exc:
+        require_agent_health_permission(credentials)
+    assert exc.value.status_code == 403
+
+
+def test_require_agent_health_permission_rejects_missing_claim(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "m2m-client@clients"},
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+    with pytest.raises(HTTPException) as exc:
+        require_agent_health_permission(credentials)
+    assert exc.value.status_code == 403
+
+
+def test_require_agent_health_permission_invalid_token_raises_401(mocker: MockerFixture):
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        side_effect=HTTPException(status_code=401, detail="Invalid token"),
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="bad-token")
+    with pytest.raises(HTTPException) as exc:
+        require_agent_health_permission(credentials)
+    assert exc.value.status_code == 401

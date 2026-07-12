@@ -151,3 +151,20 @@ def require_workflow_execution_role(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Workflow execution role required.",
         )
+
+
+AGENT_HEALTH_PERMISSION = "read:agent-health"
+
+
+def require_agent_health_permission(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> None:
+    """Raise HTTP 403 if the token does not carry the agent-health permission."""
+    claims = verify_access_token_claims(credentials.credentials)
+
+    permissions = claims.get("permissions", [])
+    if not isinstance(permissions, list) or AGENT_HEALTH_PERMISSION not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agent health permission required.",
+        )
