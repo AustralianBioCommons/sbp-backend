@@ -51,6 +51,8 @@ FastAPI backend for handling Seqera Platform workflow launches.
 ## API Endpoints
 
 - `GET /health` — Lightweight health probe
+- `GET /api/health/components` — Coarse, user-facing component health for the portal banner (requires `Authorization: Bearer <access_token>`)
+- `GET /api/health/agent` — Machine-only Tower Agent health for automated monitoring (requires an M2M token with the `read:agent-health` permission)
 - `POST /api/workflows/launch` — Launch a Seqera workflow (requires `Authorization: Bearer <access_token>`)
 - `GET /api/jobs` — List jobs for the authenticated user (requires `Authorization: Bearer <access_token>`)
 - `GET /api/jobs/{run_id}` — Get one job for the authenticated user (requires `Authorization: Bearer <access_token>`)
@@ -238,6 +240,14 @@ Surfaces:
   `ENABLE_DB_ADMIN=true`; auto-refreshes every 30s) rendering a per-component grid
   with status pills and an optional one-click link to the backend CloudWatch log
   group.
+- `GET /api/health/agent` — machine-only Tower Agent health for automated
+  monitoring (e.g. a restart script). Authenticated by an Auth0 M2M token with
+  the `read:agent-health` permission rather than a human workflow role; no
+  `app_users` row is created. Returns the cached agent `status`, `checkedAt`, and
+  a short `message` (no raw probe detail). When the Tower Agent component is
+  absent (agent monitoring disabled) it returns `503` rather than a fabricated
+  `unhealthy`, so callers treat it as a monitoring/config failure, not a restart
+  signal.
 
 Relevant environment variables:
 
