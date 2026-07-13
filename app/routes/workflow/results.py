@@ -8,10 +8,8 @@ from uuid import UUID
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...db.models import QueuedJob
 from ...schemas.workflows import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
@@ -19,7 +17,7 @@ from ...schemas.workflows import (
     ResultReportResponse,
     ResultSnapshotsResponse,
 )
-from ...services.job_utils import get_owned_run
+from ...services.job_utils import get_owned_run_by_id
 from ...services.results_utils import (
     _format_attachment_content_disposition,
     format_log_entries,
@@ -49,13 +47,13 @@ async def get_result_setting_params(
     configProfiles are overlaid from queued_jobs.launch_payload so the result
     page always shows the exact values that were sent to Seqera.
     """
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     form_data: dict[str, Any] = await resolve_run_form_data(owned_run) or {}
 
-    queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == owned_run.id))
+    queued_job = owned_run.get_queued_job(session=db)
     if queued_job:
         payload = queued_job.launch_payload or {}
         raw_params = payload.get("paramsText")
@@ -80,12 +78,16 @@ async def get_result_logs(
     db: Session = Depends(get_db),
 ) -> ResultLogsResponse:
     """Return Seqera workflow logs for a workflow result view."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not owned_run.seqera_run_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
+        )
 
     try:
-        payload = await get_workflow_logs_raw(run_id)
+        payload = await get_workflow_logs_raw(owned_run.seqera_run_id)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -139,7 +141,7 @@ async def get_result_downloads(
     db: Session = Depends(get_db),
 ) -> ResultDownloadsResponse:
     """Return pre-signed output download links for a workflow result view."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -164,7 +166,7 @@ async def get_result_download_all(
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -192,7 +194,7 @@ async def get_result_snapshots(
     db: Session = Depends(get_db),
 ) -> ResultSnapshotsResponse:
     """Return pre-signed snapshot download links for a workflow result view."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -218,7 +220,7 @@ async def get_result_report(
     db: Session = Depends(get_db),
 ) -> ResultReportResponse:
     """Return one pre-signed HTML report link for a workflow result view."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 

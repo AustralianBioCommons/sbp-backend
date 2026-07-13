@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,7 +30,7 @@ from ...services.job_utils import (
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
-    get_owned_run,
+    get_owned_run_by_id,
     get_user_job_list_rows,
     parse_submit_datetime,
 )
@@ -68,16 +69,21 @@ async def cancel_workflow(
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> CancelWorkflowResponse:
-    """Cancel a workflow run."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    """Cancel a pending or running workflow run."""
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    queued_job = owned_run.get_queued_job(session=db)
+    if queued_job and queued_job.status == "pending":
+        queued_job.cancel_pending_job(session=db)
 
-    try:
-        await cancel_workflow_raw(run_id)
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if owned_run.seqera_run_id is not None:
+        try:
+            await cancel_workflow_raw(owned_run.seqera_run_id)
+        except SeqeraAPIError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    db.commit()
     return CancelWorkflowResponse(
         message="Workflow cancelled successfully",
         runId=run_id,
@@ -197,6 +203,7 @@ async def list_jobs(
         jobs.append(
             JobListItem(
                 id=run_id,
+                seqeraRunId=seqera_run_id,
                 jobName=job_name,
                 workflow=workflow_type,
                 tool=tool,
@@ -227,12 +234,16 @@ async def get_job_details(
     db: Session = Depends(get_db),
 ) -> JobDetailsResponse:
     """Retrieve a single job with normalized status and score."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not owned_run.seqera_run_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
+        )
 
     try:
-        payload = await describe_workflow(run_id)
+        payload = await describe_workflow(owned_run.seqera_run_id)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -280,29 +291,37 @@ async def delete_job(
     db: Session = Depends(get_db),
 ) -> DeleteJobResponse:
     """Delete a single job. Running jobs are cancelled before deletion."""
-    owned_run = get_owned_run(db, current_user_id, run_id)
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     cancelled = False
-    try:
-        payload = await describe_workflow(run_id)
-        pipeline_status = extract_pipeline_status(payload)
-        if pipeline_status in {"SUBMITTED", "RUNNING"}:
-            await cancel_workflow_raw(run_id)
-            cancelled = True
+    seqera_run_id = owned_run.seqera_run_id
+    # Cancel the queued job if it's still pending.
+    queued_job = owned_run.get_queued_job(session=db)
+    if queued_job and queued_job.status == "pending":
+        queued_job.cancel_pending_job(session=db)
+    if seqera_run_id:
+        try:
+            payload = await describe_workflow(seqera_run_id)
+            pipeline_status = extract_pipeline_status(payload)
+            if pipeline_status in {"SUBMITTED", "RUNNING"}:
+                await cancel_workflow_raw(seqera_run_id)
+                cancelled = True
 
-        await delete_workflow_raw(run_id)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            await delete_workflow_raw(seqera_run_id)
+        except SeqeraConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
+        except SeqeraAPIError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
     db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
     db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
+    if queued_job:
+        db.delete(queued_job)
     db.delete(owned_run)
     db.commit()
 
@@ -323,41 +342,68 @@ async def bulk_delete_jobs(
     """Delete multiple jobs. Each running job is cancelled before deletion."""
     deleted: list[str] = []
     failed: dict[str, str] = {}
-    to_delete: list[tuple[str, WorkflowRun]] = []
+    status: dict = {}
 
     for run_id in payload.runIds:
-        owned_run = get_owned_run(db, current_user_id, run_id)
+        owned_run = get_owned_run_by_id(db, current_user_id, run_id)
         if not owned_run:
             failed[run_id] = "Job not found"
             continue
+        run_status: dict[str, Any] = {"run": owned_run}
 
-        try:
-            details = await describe_workflow(run_id)
-            if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
-                await cancel_workflow_raw(run_id)
-            to_delete.append((run_id, owned_run))
-        except (SeqeraConfigurationError, SeqeraAPIError) as exc:
-            failed[run_id] = str(exc)
+        queued_job = owned_run.get_queued_job(session=db)
+        if queued_job:
+            run_status["queued_job"] = queued_job
+            if queued_job.status == "pending":
+                queued_job.cancel_pending_job(session=db)
+                run_status["queue_cancelled"] = True
 
-    if to_delete:
-        run_ids = [run_id for run_id, _ in to_delete]
-        try:
-            await delete_workflows_raw(run_ids)
-        except (SeqeraConfigurationError, SeqeraAPIError) as exc:
-            for run_id in run_ids:
-                failed[run_id] = str(exc)
-            return BulkDeleteJobsResponse(deleted=deleted, failed=failed)
-
-        for run_id, owned_run in to_delete:
+        if owned_run.seqera_run_id is not None:
             try:
-                db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
-                db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
-                db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
-                db.delete(owned_run)
-                db.commit()
-                deleted.append(run_id)
-            except Exception as exc:  # pragma: no cover - unexpected DB failures
-                db.rollback()
+                details = await describe_workflow(owned_run.seqera_run_id)
+                if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
+                    await cancel_workflow_raw(owned_run.seqera_run_id)
+                run_status["seqera_cancelled"] = True
+                run_status["seqera_id"] = owned_run.seqera_run_id
+            except (SeqeraConfigurationError, SeqeraAPIError) as exc:
                 failed[run_id] = str(exc)
+
+        status[run_id] = run_status
+
+    delete_from_seqera = [
+        (run_id, run_status)
+        for run_id, run_status in status.items()
+        if run_status.get("seqera_cancelled") and run_status.get("seqera_id")
+    ]
+    if delete_from_seqera:
+        try:
+            seqera_ids = [run_status["seqera_id"] for run_id, run_status in delete_from_seqera]
+            await delete_workflows_raw(seqera_ids)
+        except (SeqeraConfigurationError, SeqeraAPIError) as exc:
+            for run_id, _run_status in delete_from_seqera:
+                failed[run_id] = str(exc)
+
+    delete_from_db = [
+        run_id
+        for run_id, run_status in status.items()
+        if run_status.get("queued_job") or run_status.get("seqera_cancelled")
+    ]
+    for run_id in delete_from_db:
+        # Don't delete if Seqera deletion failed.
+        if run_id in failed:
+            continue
+        run = status[run_id]["run"]
+        try:
+            db.execute(delete(RunMetric).where(RunMetric.run_id == run.id))
+            db.execute(delete(RunInput).where(RunInput.run_id == run.id))
+            db.execute(delete(RunOutput).where(RunOutput.run_id == run.id))
+            if queued_job := run.get_queued_job(session=db):
+                db.delete(queued_job)
+            db.delete(run)
+            db.commit()
+            deleted.append(run_id)
+        except Exception as exc:  # pragma: no cover - unexpected DB failures
+            db.rollback()
+            failed[run_id] = str(exc)
 
     return BulkDeleteJobsResponse(deleted=deleted, failed=failed)
