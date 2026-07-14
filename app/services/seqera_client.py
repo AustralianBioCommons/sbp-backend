@@ -65,11 +65,11 @@ def _get_required_env(key: str) -> str:
     return value
 
 
-def _get_api_context(workspace_id: str | None = None) -> tuple[str, str, dict[str, str]]:
+def _get_api_context(workspace_id: str | None = None) -> tuple[str, str, dict[str, Any]]:
     api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     token = _get_required_env("SEQERA_ACCESS_TOKEN")
     resolved_workspace = workspace_id or os.getenv("WORK_SPACE")
-    params: dict[str, str] = {}
+    params: dict[str, Any] = {}
     if resolved_workspace:
         params["workspaceId"] = resolved_workspace
     return api_url, token, params

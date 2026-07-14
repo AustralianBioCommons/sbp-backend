@@ -19,8 +19,8 @@ from app.services.bindflow_executor import (
     launch_bindflow_workflow,
     prepare_bindflow_workflow,
 )
-from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult, count_active_workflows
+from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
@@ -343,3 +343,59 @@ async def test_launch_with_custom_params_text(persistent_models):
 
     assert "my_custom_param: 42" in params_text
     assert "another_param: test" in params_text
+
+
+def _workflow_list_response(*statuses: str) -> dict:
+    return {
+        "workflows": [
+            {"workflow": {"id": f"wf-{i}", "status": status}} for i, status in enumerate(statuses)
+        ],
+        "totalSize": len(statuses),
+        "hasMore": False,
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_counts_running_and_submitted():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        return_value=httpx.Response(
+            200,
+            json=_workflow_list_response(
+                "RUNNING", "SUBMITTED", "SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"
+            ),
+        )
+    )
+
+    assert await count_active_workflows() == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_requests_the_api_max_page_size():
+    route = respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        return_value=httpx.Response(200, json=_workflow_list_response())
+    )
+
+    await count_active_workflows()
+
+    assert route.calls.last.request.url.params["max"] == "100"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_no_active_runs():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        return_value=httpx.Response(200, json=_workflow_list_response("SUCCEEDED", "FAILED"))
+    )
+
+    assert await count_active_workflows() == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_raises_on_api_error():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(return_value=httpx.Response(500, text="boom"))
+
+    with pytest.raises(SeqeraAPIError):
+        await count_active_workflows()

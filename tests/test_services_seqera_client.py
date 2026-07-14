@@ -92,6 +92,47 @@ async def test_describe_and_list_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_workflows_raw_passes_max_and_search_params(monkeypatch):
+    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
+    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("WORK_SPACE", "ws-1")
+
+    ok = AsyncMock(spec=httpx.Response)
+    ok.is_error = False
+    ok.json.return_value = {"workflows": []}
+
+    with patch("httpx.AsyncClient.get", return_value=ok) as mock_get:
+        result = await list_workflows_raw(search_query="status:RUNNING", max_results=100)
+
+    assert result == {"workflows": []}
+    mock_get.assert_awaited_once_with(
+        "https://api.seqera.test/workflow",
+        params={"workspaceId": "ws-1", "search": "status:RUNNING", "max": 100},
+        headers={"Authorization": "Bearer token", "Accept": "application/json"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_workflows_raw_omits_max_when_not_given(monkeypatch):
+    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
+    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+    monkeypatch.delenv("WORK_SPACE", raising=False)
+
+    ok = AsyncMock(spec=httpx.Response)
+    ok.is_error = False
+    ok.json.return_value = {"workflows": []}
+
+    with patch("httpx.AsyncClient.get", return_value=ok) as mock_get:
+        await list_workflows_raw()
+
+    mock_get.assert_awaited_once_with(
+        "https://api.seqera.test/workflow",
+        params={},
+        headers={"Authorization": "Bearer token", "Accept": "application/json"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancel_and_delete_paths(monkeypatch):
     monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
     monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")

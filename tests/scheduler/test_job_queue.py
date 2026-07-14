@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -24,7 +25,7 @@ def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | N
     workflow_run = WorkflowRunFactory.create_sync(
         owner=user,
         workflow=workflow,
-        work_dir=f"/work/{status}-{next_attempt_at.timestamp() if next_attempt_at else 'none'}",
+        work_dir=f"/work/{status}-{next_attempt_at.timestamp() if next_attempt_at else 'none'}-{uuid4()}",
     )
     return QueuedJobFactory.create_sync(
         workflow=workflow,
@@ -74,7 +75,9 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
     monkeypatch.setattr(
-        scheduler_jobs, "get_available_workflow_capacity", lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS
+        scheduler_jobs,
+        "get_available_workflow_capacity",
+        lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS,
     )
 
     scheduler_jobs.submit_pending_jobs(dry_run=True)
@@ -107,7 +110,9 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
     monkeypatch.setattr(
-        scheduler_jobs, "get_available_workflow_capacity", lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS
+        scheduler_jobs,
+        "get_available_workflow_capacity",
+        lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS,
     )
 
     scheduler_jobs.submit_pending_jobs()
@@ -117,9 +122,7 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     assert scheduled_jobs[0].kwargs == {"job_id": due_job.id, "dry_run": False}
 
 
-def test_submit_pending_jobs_skips_when_no_gadi_capacity(
-    test_db, persistent_models, monkeypatch
-):
+def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_models, monkeypatch):
     _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
     scheduler = _make_scheduler()
 
