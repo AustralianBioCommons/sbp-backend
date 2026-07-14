@@ -23,16 +23,11 @@ from . import SCHEDULER
 LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
 
-# Gadi's gpuhopper PBS queue caps total concurrent jobs at GADI_JOB_LIMIT, and each
-# submitted workflow holds up to GADI_QUEUE_SIZE_PER_WORKFLOW of those jobs for its
-# whole run (Nextflow's queueSize), so at most job_limit / queue_size workflows can
-# run at once (default: 50 / 2 = 25). MAX_CONCURRENT_WORKFLOWS can also be set
-# directly to override that derived value.
-GADI_JOB_LIMIT = int(os.getenv("GADI_JOB_LIMIT", "50"))
-GADI_QUEUE_SIZE_PER_WORKFLOW = int(os.getenv("GADI_QUEUE_SIZE_PER_WORKFLOW", "2"))
-MAX_CONCURRENT_WORKFLOWS = int(
-    os.getenv("MAX_CONCURRENT_WORKFLOWS", str(GADI_JOB_LIMIT // GADI_QUEUE_SIZE_PER_WORKFLOW))
-)
+# Gadi's gpuhopper PBS queue holds 50 job slots and each workflow run occupies approximately 2 of
+# them (Nextflow's queueSize), so 25 workflows can run concurrently. Hardcoded as a
+# temporary MVP value; post-MVP this should be derived from real-time queue
+# capacity instead of a fixed constant.
+MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
 
 
 class LaunchFunction(Protocol):
