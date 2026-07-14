@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
@@ -11,15 +12,27 @@ from sqlalchemy.orm import Session
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows import WorkflowName
-from ..services import health
+from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
+from ..services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..services.wisps_executor import launch_wisps_workflow
 from . import SCHEDULER
 
 LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
+
+# Gadi's gpuhopper PBS queue caps total concurrent jobs at GADI_JOB_LIMIT, and each
+# submitted workflow holds up to GADI_QUEUE_SIZE_PER_WORKFLOW of those jobs for its
+# whole run (Nextflow's queueSize), so at most job_limit / queue_size workflows can
+# run at once (default: 50 / 2 = 25). MAX_CONCURRENT_WORKFLOWS can also be set
+# directly to override that derived value.
+GADI_JOB_LIMIT = int(os.getenv("GADI_JOB_LIMIT", "50"))
+GADI_QUEUE_SIZE_PER_WORKFLOW = int(os.getenv("GADI_QUEUE_SIZE_PER_WORKFLOW", "2"))
+MAX_CONCURRENT_WORKFLOWS = int(
+    os.getenv("MAX_CONCURRENT_WORKFLOWS", str(GADI_JOB_LIMIT // GADI_QUEUE_SIZE_PER_WORKFLOW))
+)
 
 
 class LaunchFunction(Protocol):
@@ -105,6 +118,20 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
         return
 
 
+def get_available_workflow_capacity() -> int:
+    """
+    How many more workflows can be submitted to Gadi right now, per the Seqera API's
+    count of workflows still occupying a job slot there (see MAX_CONCURRENT_WORKFLOWS).
+    """
+    active_workflow_count = asyncio.run(seqera.count_active_workflows())
+    capacity = max(0, MAX_CONCURRENT_WORKFLOWS - active_workflow_count)
+    logger.info(
+        f"{active_workflow_count}/{MAX_CONCURRENT_WORKFLOWS} workflows active on Gadi "
+        f"({capacity} submission slot(s) available)."
+    )
+    return capacity
+
+
 def submit_pending_jobs(dry_run: bool = False):
     # Time between jobs
     job_offset = 10
@@ -115,6 +142,15 @@ def submit_pending_jobs(dry_run: bool = False):
         logger.warning("Skipping pending job submission while system status is unhealthy.")
         return
 
+    try:
+        available_capacity = get_available_workflow_capacity()
+    except (SeqeraAPIError, SeqeraConfigurationError) as e:
+        logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
+        return
+    if available_capacity <= 0:
+        logger.info("Gadi is at its concurrent workflow limit; skipping submission this tick.")
+        return
+
     now = datetime.now(tz=UTC)
 
     pending_query = select(QueuedJob).where(
@@ -123,7 +159,13 @@ def submit_pending_jobs(dry_run: bool = False):
 
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
-    for index, job in enumerate(pending_jobs):
+    jobs_to_submit = pending_jobs[:available_capacity]
+    if len(jobs_to_submit) < len(pending_jobs):
+        logger.info(
+            f"Only submitting {len(jobs_to_submit)} of {len(pending_jobs)} pending jobs "
+            "due to available Gadi capacity."
+        )
+    for index, job in enumerate(jobs_to_submit):
         launch_id = f"launch_job_{job.id}"
         # Ignore if already scheduled
         if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:

@@ -10,10 +10,19 @@ from typing import Any
 import httpx
 import yaml
 
-from .seqera_client import SeqeraClient
+from .seqera_client import SeqeraClient, list_workflows_raw
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from .seqera_parsers import parse_workflow_list_payload
 
 logger = logging.getLogger(__name__)
+
+# Pipeline statuses that still occupy a slot on Gadi (queued or actively running).
+ACTIVE_PIPELINE_STATUSES = frozenset({"SUBMITTED", "RUNNING"})
+
+# 100 is the Seqera API's hard ceiling for this endpoint's `max` param (a higher
+# value gets a 400). The list is returned most-recent-first, so as long as active
+# runs stay under 100 they're guaranteed to be on this single page - no paging.
+_ACTIVE_WORKFLOW_LIST_MAX = 100
 
 
 class WorkflowExecutorError(RuntimeError):
@@ -71,6 +80,17 @@ async def post_seqera_launch(
         status=data.get("status", "submitted"),
         message=data.get("message"),
     )
+
+
+async def count_active_workflows(workspace_id: str | None = None) -> int:
+    """Count Seqera workflow runs that are still queued or running on Gadi.
+
+    Used to cap how many new workflows the scheduler submits at once, since each
+    run holds a slice of Gadi's shared PBS job-slot limit for its whole lifetime.
+    """
+    data = await list_workflows_raw(workspace_id, max_results=_ACTIVE_WORKFLOW_LIST_MAX)
+    items, _total = parse_workflow_list_payload(data)
+    return sum(1 for item in items if item.pipeline_status in ACTIVE_PIPELINE_STATUSES)
 
 
 def _get_required_env(key: str) -> str:

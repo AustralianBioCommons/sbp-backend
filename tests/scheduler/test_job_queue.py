@@ -73,6 +73,9 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(
+        scheduler_jobs, "get_available_workflow_capacity", lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS
+    )
 
     scheduler_jobs.submit_pending_jobs(dry_run=True)
 
@@ -103,9 +106,71 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(
+        scheduler_jobs, "get_available_workflow_capacity", lambda: scheduler_jobs.MAX_CONCURRENT_WORKFLOWS
+    )
 
     scheduler_jobs.submit_pending_jobs()
 
     scheduled_jobs = scheduler.get_jobs(jobstore="memory")
     assert [job.id for job in scheduled_jobs] == [launch_id]
     assert scheduled_jobs[0].kwargs == {"job_id": due_job.id, "dry_run": False}
+
+
+def test_submit_pending_jobs_skips_when_no_gadi_capacity(
+    test_db, persistent_models, monkeypatch
+):
+    _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+    scheduler = _make_scheduler()
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda: 0)
+
+    scheduler_jobs.submit_pending_jobs()
+
+    assert scheduler.get_jobs(jobstore="memory") == []
+
+
+def test_submit_pending_jobs_caps_submissions_to_available_capacity(
+    test_db, persistent_models, monkeypatch
+):
+    now = datetime.now(UTC)
+    due_jobs = [
+        _create_queued_job(status="pending", next_attempt_at=now - timedelta(minutes=1))
+        for _ in range(3)
+    ]
+    scheduler = _make_scheduler()
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda: 2)
+
+    scheduler_jobs.submit_pending_jobs()
+
+    scheduled_jobs = scheduler.get_jobs(jobstore="memory")
+    assert len(scheduled_jobs) == 2
+    scheduled_job_ids = {job.kwargs["job_id"] for job in scheduled_jobs}
+    assert scheduled_job_ids.issubset({job.id for job in due_jobs})
+
+
+def test_get_available_workflow_capacity_uses_seqera_active_count(monkeypatch):
+    async def _count_active_workflows():
+        return 20
+
+    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
+    monkeypatch.setattr(scheduler_jobs, "MAX_CONCURRENT_WORKFLOWS", 25)
+
+    assert scheduler_jobs.get_available_workflow_capacity() == 5
+
+
+def test_get_available_workflow_capacity_floors_at_zero(monkeypatch):
+    async def _count_active_workflows():
+        return 30
+
+    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
+    monkeypatch.setattr(scheduler_jobs, "MAX_CONCURRENT_WORKFLOWS", 25)
+
+    assert scheduler_jobs.get_available_workflow_capacity() == 0
