@@ -2,7 +2,7 @@ name: Check Alembic Migrations
 
 on:
   pull_request:
-    branches: [main]
+    branches: [dev]
     paths:
       - "alembic/**"
       - "alembic.ini"
