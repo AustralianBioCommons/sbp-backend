@@ -258,33 +258,40 @@ def test_get_wisps_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
-            user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
+            email=_USER_DETAILS.user_email,
+            ip_address=_USER_DETAILS.ip_address,
         )
     assert "process {" in result
     assert "clusterOptions" in result
 
 
-def test_get_wisps_config_text_contains_job_fields():
+def test_get_wisps_config_text_contains_email_and_encoded_ip():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
-            user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
+            email=_USER_DETAILS.user_email,
+            ip_address=_USER_DETAILS.ip_address,
         )
-    assert "my-job" in result
     assert "user@ex.com" in result
+    assert "MS4yLjMuNA==" in result
+
+
+def test_get_wisps_config_text_without_ip_uses_email_only():
+    with patch("builtins.open", mock_open(read_data="base_config")):
+        result = get_wisps_config_text(
+            config_file_path="/fake/path.config",
+            email=_USER_DETAILS.user_email,
+        )
+    assert "-A user@ex.com" in result
+    assert ":" not in result.split("clusterOptions = ")[1]
 
 
 def test_get_wisps_config_text_contains_base_config():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
-            user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
+            email=_USER_DETAILS.user_email,
+            ip_address=_USER_DETAILS.ip_address,
         )
     assert "base_config" in result
 

@@ -9,7 +9,6 @@ import httpx
 import pytest
 import respx
 
-from app.schemas.workflows import WorkflowUserDetails
 from app.services.bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -18,12 +17,6 @@ from app.services.bindflow_config import (
 from app.services.launch_payloads import get_executor_script
 
 _SHEET_URL = "https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesheet.csv"
-_USER_DETAILS = WorkflowUserDetails(
-    user_email="user@example.com",
-    full_name="",
-    institute="",
-    ip_address="",
-)
 
 # =============================================================================
 # Tests for get_bindflow_default_params()
@@ -125,9 +118,7 @@ def test_get_bindflow_config_text_includes_base_config():
     with patch("builtins.open", mock_open(read_data="base_config_content")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            job_id="run-1",
-            user_details=_USER_DETAILS,
-            timestamp="20260507_120000",
+            email="user@example.com",
         )
     assert "base_config_content" in result
 
@@ -136,43 +127,39 @@ def test_get_bindflow_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            job_id="run-1",
-            user_details=_USER_DETAILS,
-            timestamp="20260507_120000",
+            email="user@example.com",
         )
     assert "process {" in result
     assert "clusterOptions" in result
 
 
-def test_get_bindflow_config_text_interpolates_job_fields():
+def test_get_bindflow_config_text_interpolates_email():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            job_id="my-run",
-            user_details=_USER_DETAILS.model_copy(update={"user_email": "alice@example.com"}),
-            timestamp="20260507_090000",
+            email="alice@example.com",
         )
-    assert "my-run" in result
-    assert "alice@example.com" in result
-    assert "20260507_090000" in result
+    assert "-A alice@example.com" in result
 
 
-def test_get_bindflow_config_text_optional_fields():
+def test_get_bindflow_config_text_without_ip_address_omits_encoding():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            job_id="run-1",
-            user_details=WorkflowUserDetails(
-                user_email="user@example.com",
-                full_name="Alice Smith",
-                institute="BioCommons",
-                ip_address="1.2.3.4",
-            ),
-            timestamp="ts",
+            email="user@example.com",
         )
-    assert "Alice Smith" in result
-    assert "BioCommons" in result
-    assert "1.2.3.4" in result
+    assert "-A user@example.com" in result
+    assert ":" not in result.split("clusterOptions = ")[1]
+
+
+def test_get_bindflow_config_text_with_ip_address_appends_encoded_ip():
+    with patch("builtins.open", mock_open(read_data="")):
+        result = get_bindflow_config_text(
+            "/fake/bindflow.config",
+            email="user@example.com",
+            ip_address="1.2.3.4",
+        )
+    assert "-A user@example.com:MS4yLjMuNA==" in result
 
 
 def test_get_bindflow_config_text_url_fetching():
@@ -182,9 +169,7 @@ def test_get_bindflow_config_text_url_fetching():
         )
         result = get_bindflow_config_text(
             "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
-            job_id="run-url",
-            user_details=_USER_DETAILS,
-            timestamp="20260507_120000",
+            email="user@example.com",
         )
     assert "remote_base_config" in result
     assert "clusterOptions" in result
@@ -198,7 +183,5 @@ def test_get_bindflow_config_text_url_error_raises():
         with pytest.raises(httpx.HTTPStatusError):
             get_bindflow_config_text(
                 "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
-                job_id="run-1",
-                user_details=_USER_DETAILS,
-                timestamp="ts",
+                email="user@example.com",
             )
