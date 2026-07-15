@@ -25,8 +25,7 @@ RETRY_DELAY_BASE = 5 * 60
 
 # Gadi's gpuhopper PBS queue holds 50 job slots and each workflow run occupies approximately 2 of
 # them (Nextflow's queueSize), so 25 workflows can run concurrently. Hardcoded as a
-# temporary MVP value; post-MVP this should be derived from real-time queue
-# capacity instead of a fixed constant.
+# temporary MVP value, configurable via env var.
 MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
 
 
