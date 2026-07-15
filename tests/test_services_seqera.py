@@ -345,49 +345,48 @@ async def test_launch_with_custom_params_text(persistent_models):
     assert "another_param: test" in params_text
 
 
-def _workflow_list_response(*statuses: str) -> dict:
-    return {
-        "workflows": [
-            {"workflow": {"id": f"wf-{i}", "status": status}} for i, status in enumerate(statuses)
-        ],
-        "totalSize": len(statuses),
-        "hasMore": False,
-    }
+def _totals_by_status_handler(totals: dict[str, int]):
+    """Fake /workflow endpoint: returns totalSize for whichever status:<value> was searched."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        search = request.url.params.get("search", "")
+        status = search.removeprefix("status:")
+        return httpx.Response(
+            200, json={"workflows": [], "totalSize": totals.get(status, 0), "hasMore": False}
+        )
+
+    return _handler
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_count_active_workflows_counts_running_and_submitted():
+async def test_count_active_workflows_sums_running_and_submitted_totals():
     respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
-        return_value=httpx.Response(
-            200,
-            json=_workflow_list_response(
-                "RUNNING", "SUBMITTED", "SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"
-            ),
-        )
+        side_effect=_totals_by_status_handler({"RUNNING": 3, "SUBMITTED": 2})
     )
 
-    assert await count_active_workflows() == 2
+    assert await count_active_workflows() == 5
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_count_active_workflows_requests_the_api_max_page_size():
+async def test_count_active_workflows_queries_each_status_with_a_minimal_page():
     route = respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
-        return_value=httpx.Response(200, json=_workflow_list_response())
+        side_effect=_totals_by_status_handler({})
     )
 
     await count_active_workflows()
 
-    assert route.calls.last.request.url.params["max"] == "100"
+    assert route.call_count == 2
+    searches = {call.request.url.params["search"] for call in route.calls}
+    assert searches == {"status:RUNNING", "status:SUBMITTED"}
+    assert all(call.request.url.params["max"] == "1" for call in route.calls)
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_count_active_workflows_no_active_runs():
-    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
-        return_value=httpx.Response(200, json=_workflow_list_response("SUCCEEDED", "FAILED"))
-    )
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(side_effect=_totals_by_status_handler({}))
 
     assert await count_active_workflows() == 0
 

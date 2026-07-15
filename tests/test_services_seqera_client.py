@@ -107,7 +107,7 @@ async def test_list_workflows_raw_passes_max_and_search_params(monkeypatch):
     assert result == {"workflows": []}
     mock_get.assert_awaited_once_with(
         "https://api.seqera.test/workflow",
-        params={"workspaceId": "ws-1", "search": "status:RUNNING", "max": 100},
+        params={"workspaceId": "ws-1", "search": "status:RUNNING", "max": "100"},
         headers={"Authorization": "Bearer token", "Accept": "application/json"},
     )
 

@@ -65,11 +65,11 @@ def _get_required_env(key: str) -> str:
     return value
 
 
-def _get_api_context(workspace_id: str | None = None) -> tuple[str, str, dict[str, Any]]:
+def _get_api_context(workspace_id: str | None = None) -> tuple[str, str, dict[str, str]]:
     api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
     token = _get_required_env("SEQERA_ACCESS_TOKEN")
     resolved_workspace = workspace_id or os.getenv("WORK_SPACE")
-    params: dict[str, Any] = {}
+    params: dict[str, str] = {}
     if resolved_workspace:
         params["workspaceId"] = resolved_workspace
     return api_url, token, params
@@ -91,7 +91,7 @@ async def list_workflows_raw(
     if search_query:
         params["search"] = search_query
     if max_results is not None:
-        params["max"] = max_results
+        params["max"] = str(max_results)
 
     url = f"{api_url}/workflow"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
