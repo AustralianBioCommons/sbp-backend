@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import base64
+import os
+
+GADI_PROJECT: str = os.getenv("GADI_PROJECT", "yz52")
 
 
 def encode_ip(ip_address: str) -> str:

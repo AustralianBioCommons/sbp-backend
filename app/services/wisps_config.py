@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .cluster_utils import encode_ip
+from .cluster_utils import GADI_PROJECT, encode_ip
 from .workflow_config_fetcher import fetch_workflow_config
 
 WispsMode = Literal["g1-g2", "manual"]
@@ -50,6 +50,6 @@ def get_wisps_config_text(
     base = fetch_workflow_config(config_file_path)
 
     account = f"{email}:{encode_ip(ip_address)}" if ip_address else email
-    cluster_opts = f"-P yz52 -A {account}"
+    cluster_opts = f"-P {GADI_PROJECT} -A {account}"
     override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
     return base + override

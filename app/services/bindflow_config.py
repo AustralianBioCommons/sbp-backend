@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from .cluster_utils import encode_ip
+from .cluster_utils import GADI_PROJECT, encode_ip
 from .workflow_config_fetcher import fetch_workflow_config
 
 
 def get_bindflow_default_params(out_dir: str, samplesheet_url: str) -> dict[str, Any]:
     """Get default parameters for bindflow workflow."""
     return {
-        "project": "yz52",
+        "project": GADI_PROJECT,
         "outdir": out_dir,
         "input": samplesheet_url,
     }
