@@ -10,10 +10,13 @@ from typing import Any
 import httpx
 import yaml
 
-from .seqera_client import SeqeraClient
+from .seqera_client import SeqeraClient, list_workflows_raw
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
+
+# Pipeline statuses that still occupy a slot on Gadi (queued or actively running).
+ACTIVE_PIPELINE_STATUSES = frozenset({"SUBMITTED", "RUNNING"})
 
 
 class WorkflowExecutorError(RuntimeError):
@@ -71,6 +74,28 @@ async def post_seqera_launch(
         status=data.get("status", "submitted"),
         message=data.get("message"),
     )
+
+
+async def count_active_workflows(workspace_id: str | None = None) -> int:
+    """Count Seqera workflow runs that are still queued or running on Gadi.
+
+    Used to cap how many new workflows the scheduler submits at once, since each
+    run holds a slice of Gadi's shared PBS job-slot limit for its whole lifetime.
+
+    Queries each active status separately via the API's `search=status:<value>`
+    filter and reads the server-computed `totalSize`, rather than fetching a page
+    of workflows and counting client-side - `totalSize` reflects the full filtered
+    count regardless of the page size, so this is exact even if there are more
+    matching runs than fit on one page.
+    """
+    total = 0
+    for status in ACTIVE_PIPELINE_STATUSES:
+        data = await list_workflows_raw(
+            workspace_id, search_query=f"status:{status}", max_results=1
+        )
+        if isinstance(data, dict):
+            total += data.get("totalSize") or 0
+    return total
 
 
 def _get_required_env(key: str) -> str:
