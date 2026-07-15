@@ -91,9 +91,8 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "configProfiles": get_bindflow_config_profiles(),
         "configText": get_bindflow_config_text(
             config_path,
-            job_id=run_name,
-            user_details=user_details,
-            timestamp=timestamp,
+            email=user_details.user_email,
+            ip_address=user_details.ip_address,
         ),
         "resume": False,
     }

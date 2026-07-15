@@ -54,7 +54,6 @@ async def prepare_wisps_workflow(
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     job_id = (form.runName or "").strip()
     if not job_id:
         raise SeqeraConfigurationError("Missing run name for workflow launch")
@@ -72,9 +71,8 @@ async def prepare_wisps_workflow(
 
     config_text = get_wisps_config_text(
         config_path,
-        job_id=job_id,
-        user_details=user_details,
-        timestamp=timestamp,
+        email=user_details.user_email,
+        ip_address=user_details.ip_address,
     )
 
     launch_payload: dict[str, Any] = {
