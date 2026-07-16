@@ -109,8 +109,7 @@ async def prepare_proteinfold_workflow(
         "configProfiles": get_proteinfold_config_profiles(),
         "configText": get_proteinfold_config_text(
             config_path,
-            email=user_details.user_email,
-            ip_address=user_details.ip_address,
+            user_details=user_details,
         ),
         "resume": False,
     }

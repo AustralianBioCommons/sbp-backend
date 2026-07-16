@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from ..schemas.workflows import WorkflowUserDetails
 from .cluster_utils import GADI_PROJECT, encode_ip
 from .workflow_config_fetcher import fetch_workflow_config
 
@@ -39,8 +40,7 @@ def get_wisps_config_profiles() -> list[str]:
 def get_wisps_config_text(
     config_file_path: str,
     *,
-    email: str,
-    ip_address: str = "",
+    user_details: WorkflowUserDetails,
 ) -> str:
     """Read wisps config and append a process override block with runtime values.
 
@@ -49,7 +49,11 @@ def get_wisps_config_text(
     """
     base = fetch_workflow_config(config_file_path)
 
-    account = f"{email}:{encode_ip(ip_address)}" if ip_address else email
+    account = (
+        f"{user_details.user_email}:{encode_ip(user_details.ip_address)}"
+        if user_details.ip_address
+        else user_details.user_email
+    )
     cluster_opts = f"-P {GADI_PROJECT} -A {account}"
     override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
     return base + override

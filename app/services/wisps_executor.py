@@ -71,8 +71,7 @@ async def prepare_wisps_workflow(
 
     config_text = get_wisps_config_text(
         config_path,
-        email=user_details.user_email,
-        ip_address=user_details.ip_address,
+        user_details=user_details,
     )
 
     launch_payload: dict[str, Any] = {
