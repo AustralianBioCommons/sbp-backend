@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
-from unidecode import unidecode
 
 from ..db.models import QueuedJob
 from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
@@ -234,28 +233,16 @@ async def launch_workflow(
         )
 
     user = db_session.execute(
-        select(AppUser.email, AppUser.name).where(AppUser.id == current_user_id)
+        select(AppUser.email).where(AppUser.id == current_user_id)
     ).one_or_none()
     if not user or not user.email:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not retrieve user details required for workflow launch.",
         )
-    user_email = user.email
-    # removes everything that isn't a letter, digit, or space
-    name = unidecode(user.name or "")
-    full_name = re.sub(r"[^a-zA-Z0-9 ]", "", name).replace(" ", "_")
-    institute = user_email.split("@")[-1] if "@" in user_email else None
-    ip_address: str | None = launch_ip or None
-
-    full_name = _require_launch_var("full_name", full_name)
-    institute = _require_launch_var("institute", institute)
-    ip_address = _require_launch_var("ip_address", ip_address)
     user_details = WorkflowUserDetails(
-        user_email=user_email,
-        full_name=full_name,
-        institute=institute,
-        ip_address=ip_address,
+        user_email=user.email,
+        ip_address=_require_launch_var("ip_address", launch_ip or None),
     )
 
     # Authoritative credit cost (server-side, non-spoofable). Only charged for
@@ -406,7 +393,7 @@ async def launch_workflow(
                     .values(
                         credit=AppUser.credit - run_credit_cost,
                         credit_updated_at=datetime.now(UTC),
-                        credit_updated_by=user_email,
+                        credit_updated_by=user_details.user_email,
                     )
                 ),
             )

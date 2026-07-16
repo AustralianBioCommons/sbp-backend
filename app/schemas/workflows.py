@@ -97,8 +97,6 @@ class WorkflowUserDetails(BaseModel):
     """
 
     user_email: str = Field(..., description="Email address of the user")
-    full_name: str = Field(..., description="Full name of the user")
-    institute: str = Field(..., description="Institute of the user")
     ip_address: str = Field(..., description="IP address of the user")
 
 
