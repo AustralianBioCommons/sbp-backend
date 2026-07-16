@@ -21,9 +21,8 @@ _SHEET_URL = "https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesh
 
 
 def _user_details(email: str, ip_address: str = "") -> WorkflowUserDetails:
-    return WorkflowUserDetails(
-        user_email=email, ip_address=ip_address
-    )
+    return WorkflowUserDetails(user_email=email, ip_address=ip_address)
+
 
 # =============================================================================
 # Tests for get_bindflow_default_params()
