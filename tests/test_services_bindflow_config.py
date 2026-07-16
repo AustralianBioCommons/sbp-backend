@@ -9,6 +9,7 @@ import httpx
 import pytest
 import respx
 
+from app.schemas.workflows import WorkflowUserDetails
 from app.services.bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -17,6 +18,12 @@ from app.services.bindflow_config import (
 from app.services.launch_payloads import get_executor_script
 
 _SHEET_URL = "https://api.seqera.test/workspaces/ws1/datasets/ds1/v/1/n/samplesheet.csv"
+
+
+def _user_details(email: str, ip_address: str = "") -> WorkflowUserDetails:
+    return WorkflowUserDetails(
+        user_email=email, ip_address=ip_address
+    )
 
 # =============================================================================
 # Tests for get_bindflow_default_params()
@@ -118,7 +125,7 @@ def test_get_bindflow_config_text_includes_base_config():
     with patch("builtins.open", mock_open(read_data="base_config_content")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            email="user@example.com",
+            user_details=_user_details("user@example.com"),
         )
     assert "base_config_content" in result
 
@@ -127,7 +134,7 @@ def test_get_bindflow_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            email="user@example.com",
+            user_details=_user_details("user@example.com"),
         )
     assert "process {" in result
     assert "clusterOptions" in result
@@ -137,7 +144,7 @@ def test_get_bindflow_config_text_interpolates_email():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            email="alice@example.com",
+            user_details=_user_details("alice@example.com"),
         )
     assert "-A alice@example.com" in result
 
@@ -146,7 +153,7 @@ def test_get_bindflow_config_text_without_ip_address_omits_encoding():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            email="user@example.com",
+            user_details=_user_details("user@example.com"),
         )
     assert "-A user@example.com" in result
     assert ":" not in result.split("clusterOptions = ")[1]
@@ -156,8 +163,7 @@ def test_get_bindflow_config_text_with_ip_address_appends_encoded_ip():
     with patch("builtins.open", mock_open(read_data="")):
         result = get_bindflow_config_text(
             "/fake/bindflow.config",
-            email="user@example.com",
-            ip_address="1.2.3.4",
+            user_details=_user_details("user@example.com", ip_address="1.2.3.4"),
         )
     assert "-A user@example.com:MS4yLjMuNA==" in result
 
@@ -169,7 +175,7 @@ def test_get_bindflow_config_text_url_fetching():
         )
         result = get_bindflow_config_text(
             "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
-            email="user@example.com",
+            user_details=_user_details("user@example.com"),
         )
     assert "remote_base_config" in result
     assert "clusterOptions" in result
@@ -183,5 +189,5 @@ def test_get_bindflow_config_text_url_error_raises():
         with pytest.raises(httpx.HTTPStatusError):
             get_bindflow_config_text(
                 "https://raw.githubusercontent.com/org/repo/main/bindflow.config",
-                email="user@example.com",
+                user_details=_user_details("user@example.com"),
             )

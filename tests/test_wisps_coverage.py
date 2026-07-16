@@ -41,8 +41,6 @@ from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, Wor
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
-    full_name="Test User",
-    institute="USYD",
     ip_address="1.2.3.4",
 )
 
@@ -258,8 +256,7 @@ def test_get_wisps_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            email=_USER_DETAILS.user_email,
-            ip_address=_USER_DETAILS.ip_address,
+            user_details=_USER_DETAILS,
         )
     assert "process {" in result
     assert "clusterOptions" in result
@@ -269,8 +266,7 @@ def test_get_wisps_config_text_contains_email_and_encoded_ip():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            email=_USER_DETAILS.user_email,
-            ip_address=_USER_DETAILS.ip_address,
+            user_details=_USER_DETAILS,
         )
     assert "user@ex.com" in result
     assert "MS4yLjMuNA==" in result
@@ -280,7 +276,7 @@ def test_get_wisps_config_text_without_ip_uses_email_only():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            email=_USER_DETAILS.user_email,
+            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
         )
     assert "-A user@ex.com" in result
     assert ":" not in result.split("clusterOptions = ")[1]
@@ -290,8 +286,7 @@ def test_get_wisps_config_text_contains_base_config():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            email=_USER_DETAILS.user_email,
-            ip_address=_USER_DETAILS.ip_address,
+            user_details=_USER_DETAILS,
         )
     assert "base_config" in result
 
