@@ -3,10 +3,13 @@ from datetime import UTC, datetime
 import typer
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from dotenv import load_dotenv
 from loguru import logger
 
-from app.scheduler import SCHEDULER
-from app.scheduler.jobs import refresh_user_credits, submit_pending_jobs
+load_dotenv()
+
+from app.scheduler import SCHEDULER  # noqa: E402
+from app.scheduler.jobs import refresh_user_credits, submit_pending_jobs  # noqa: E402
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=1, minute=0, timezone="UTC")
