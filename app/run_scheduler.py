@@ -6,6 +6,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from loguru import logger
 
+# Load .env before importing scheduler modules, which read required env vars (e.g.
+# SEQERA_API_URL) at call time. Unlike app/main.py, this entrypoint runs standalone
+# (`python -m app.run_scheduler`) and never imports main.py, so without this call
+# .env values are never loaded into the process environment.
 load_dotenv()
 
 from app.scheduler import SCHEDULER  # noqa: E402
