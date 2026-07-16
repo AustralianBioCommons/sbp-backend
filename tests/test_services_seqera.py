@@ -26,8 +26,6 @@ from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, Wor
 _CONFIG_PATH = "/some/bindflow.config"
 _USER_DETAILS = WorkflowUserDetails(
     user_email="test@example.com",
-    full_name="Test_User",
-    institute="example.com",
     ip_address="127.0.0.1",
 )
 
