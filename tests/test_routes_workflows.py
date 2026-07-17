@@ -60,6 +60,7 @@ def role_check_client(test_engine):
         Workflow(
             id=uuid4(),
             name="de-novo-design",
+            tool="bindcraft",
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
@@ -200,6 +201,24 @@ def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_e
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
         assert count == 0
+
+
+def test_launch_de_novo_design_tool_mismatch_returns_500(client: TestClient):
+    """de-novo-design is matched on tool; an unconfigured tool for it is a 500."""
+    payload = {
+        "launch": {
+            "workflow": "de-novo-design",
+            "tool": "rfdiffusion",
+            "runName": "test-run",
+        },
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {"workflow": "de-novo-design", "tool": "rfdiffusion"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 500
+    assert "rfdiffusion" in response.json()["detail"]
 
 
 def test_launch_invalid_payload(client: TestClient):
