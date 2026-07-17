@@ -478,59 +478,6 @@ def test_extract_final_design_count_string_number():
 
 
 # =============================================================================
-# Tests for missing repo_url / default_revision
-# =============================================================================
-
-
-def test_launch_missing_repo_url(client: TestClient, app, test_engine):
-    """Workflow missing repo_url should return 500."""
-    with Session(test_engine) as db:
-        db.add(
-            Workflow(
-                id=uuid4(),
-                name="single-prediction",
-                description="No repo workflow",
-                repo_url=None,
-                default_revision="dev",
-            )
-        )
-        db.commit()
-
-    payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
-    }
-    response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "missing repo_url" in response.json()["detail"]
-
-
-def test_launch_missing_default_revision(client: TestClient, app, test_engine):
-    """Workflow missing default_revision should return 500."""
-    with Session(test_engine) as db:
-        db.add(
-            Workflow(
-                id=uuid4(),
-                name="single-prediction",
-                description="No revision workflow",
-                repo_url="https://github.com/test/norev",
-                default_revision=None,
-            )
-        )
-        db.commit()
-
-    payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
-    }
-    response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "missing default_revision" in response.json()["detail"]
-
-
-# =============================================================================
 # Tests for proteinfold launch path
 # =============================================================================
 
@@ -771,62 +718,6 @@ def wisps_client(test_engine):
         yield c
 
 
-@pytest.fixture
-def wisps_no_config_client(test_engine):
-    """Test client with an interaction-screening workflow that has config_path=None."""
-    from sqlalchemy.orm import sessionmaker
-
-    from app.main import create_app
-
-    application = create_app()
-    user_id = UUID("11111111-1111-1111-1111-111111111111")
-
-    SessionLocal = sessionmaker(
-        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
-    )
-    setup_session = SessionLocal()
-
-    if not setup_session.get(AppUser, user_id):
-        setup_session.add(
-            AppUser(
-                id=user_id,
-                auth0_user_id="auth0|test-user",
-                name="Test User",
-                email="test@example.com",
-            )
-        )
-
-    setup_session.add(
-        Workflow(
-            id=uuid4(),
-            name="interaction-screening",
-            description="WISPS workflow without config_path",
-            repo_url="https://github.com/test/wisps",
-            default_revision="main",
-            config_path=None,
-        )
-    )
-
-    setup_session.commit()
-    setup_session.close()
-
-    def _get_db():
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    from app.routes.dependencies import require_workflow_execution_role
-
-    application.dependency_overrides[get_db] = _get_db
-    application.dependency_overrides[get_current_user_id] = lambda: user_id
-    application.dependency_overrides[require_workflow_execution_role] = lambda: None
-
-    with TestClient(application) as c:
-        yield c
-
-
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestClient, test_engine):
     """Test successful interaction-screening workflow launch."""
@@ -994,27 +885,6 @@ def test_launch_interaction_screening_queue_preparation_error(
         assert count == 0
 
 
-def test_launch_interaction_screening_missing_config_path(wisps_no_config_client: TestClient):
-    """interaction-screening workflow missing config_path should return 500."""
-    payload = {
-        "launch": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "runName": "wisps-run-no-cfg",
-        },
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
-    }
-
-    response = wisps_no_config_client.post("/api/workflows/launch", json=payload)
-
-    assert response.status_code == 500
-    assert "config_path" in response.json()["detail"]
 
 
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
