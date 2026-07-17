@@ -58,14 +58,9 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-
     dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
     default_params = get_bindflow_default_params(out_dir, dataset_url)
 
-    default_params["job_id"] = run_name
-    default_params["user_name"] = user_details.user_email
-    default_params["timestamp"] = timestamp
     default_params["mode"] = mode
 
     # Merge any tool-specific params forwarded from the frontend form
@@ -91,9 +86,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "configProfiles": get_bindflow_config_profiles(),
         "configText": get_bindflow_config_text(
             config_path,
-            job_id=run_name,
             user_details=user_details,
-            timestamp=timestamp,
         ),
         "resume": False,
     }

@@ -50,14 +50,11 @@ def _build_params_text(
     mode: str,
     form_data: WorkflowFormData | None,
     custom_params: str | None,
-    extra_params: dict[str, Any] | None = None,
 ) -> str:
     """Build the YAML params string for the Seqera launch payload."""
     params = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
     if form_data:
         params.update(_tool_params(form_data))
-    if extra_params:
-        params.update(extra_params)
     params_text = params_to_yaml_text(params)
     if custom_params and custom_params.strip():
         params_text = f"{params_text}\n{custom_params.rstrip()}"
@@ -89,9 +86,7 @@ async def prepare_proteinfold_workflow(
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    job_id = (form.runName or "").strip()
-    if not job_id:
+    if not form.runName or not form.runName.strip():
         raise SeqeraConfigurationError("Missing run name for workflow launch")
 
     sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
@@ -101,11 +96,6 @@ async def prepare_proteinfold_workflow(
         mode,
         form_data,
         form.paramsText,
-        extra_params={
-            "job_id": job_id,
-            "user_name": user_details.user_email,
-            "timestamp": timestamp,
-        },
     )
 
     launch_payload: dict[str, Any] = {
@@ -119,9 +109,7 @@ async def prepare_proteinfold_workflow(
         "configProfiles": get_proteinfold_config_profiles(),
         "configText": get_proteinfold_config_text(
             config_path,
-            job_id=job_id,
             user_details=user_details,
-            timestamp=timestamp,
         ),
         "resume": False,
     }
