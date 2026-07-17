@@ -885,8 +885,6 @@ def test_launch_interaction_screening_queue_preparation_error(
         assert count == 0
 
 
-
-
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_with_workflow_field_in_launch(mock_prepare, wisps_client: TestClient, test_engine):
     """The new frontend format using launch.workflow is accepted alongside launch.tool."""
