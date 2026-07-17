@@ -438,6 +438,9 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
         f"{run.id}/boltz/top_ranked_structures/T1024.pdb", "T1024"
     ) == ClassifiedOutput("pdb", "T1024.pdb")
     assert classify_boltz_proteinfold_output(
+        f"{run.id}/boltz/top_ranked_structures/T1024.cif", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.cif")
+    assert classify_boltz_proteinfold_output(
         f"{run.id}/boltz/T1024/abcd1234.tsv", "T1024"
     ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
     assert classify_boltz_proteinfold_output(
@@ -491,6 +494,9 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
     assert classify_alphafold2_proteinfold_output(
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/T1024.pdb", "T1024"
     ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_alphafold2_proteinfold_output(
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/T1024.cif", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.cif")
     assert classify_alphafold2_proteinfold_output(
         f"{run.id}/alphafold2/split_msa_prediction/T1024/abcd1234.tsv", "T1024"
     ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")
@@ -546,6 +552,9 @@ def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
     assert classify_colabfold_proteinfold_output(
         f"{run.id}/colabfold/top_ranked_structures/T1024.pdb", "T1024"
     ) == ClassifiedOutput("pdb", "T1024.pdb")
+    assert classify_colabfold_proteinfold_output(
+        f"{run.id}/colabfold/top_ranked_structures/T1024.cif", "T1024"
+    ) == ClassifiedOutput("pdb", "T1024.cif")
     assert classify_colabfold_proteinfold_output(
         f"{run.id}/colabfold/T1024/abcd1234.tsv", "T1024"
     ) == ClassifiedOutput("stats_csv", "abcd1234.tsv")

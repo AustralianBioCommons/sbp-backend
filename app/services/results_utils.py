@@ -474,7 +474,7 @@ def classify_boltz_proteinfold_output(
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=rf"/boltz/top_ranked_structures/{sample_id_pattern}\.pdb",
+        pdb_pattern=rf"/boltz/top_ranked_structures/{sample_id_pattern}\.(?:cif|pdb)",
         # Find across all subfolders
         stats_pattern=rf"/boltz/{sample_id_pattern}/.+\.tsv",
         alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
@@ -487,7 +487,7 @@ def classify_alphafold2_proteinfold_output(
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=rf"/alphafold2/split_msa_prediction/top_ranked_structures/{sample_id_pattern}\.pdb",
+        pdb_pattern=rf"/alphafold2/split_msa_prediction/top_ranked_structures/{sample_id_pattern}\.(?:cif|pdb)",
         stats_pattern=rf"/alphafold2/split_msa_prediction/{sample_id_pattern}/.+\.tsv",
     )
 
@@ -498,7 +498,7 @@ def classify_colabfold_proteinfold_output(
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=rf"/colabfold/top_ranked_structures/{sample_id_pattern}\.pdb",
+        pdb_pattern=rf"/colabfold/top_ranked_structures/{sample_id_pattern}\.(?:cif|pdb)",
         stats_pattern=rf"/colabfold/{sample_id_pattern}/.+\.tsv",
         alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
     )
