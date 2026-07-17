@@ -126,6 +126,7 @@ class WorkflowAdmin(ModelView):
     fields = [
         "id",
         "name",
+        "tool",
         "description",
         "repo_url",
         "default_revision",
@@ -135,6 +136,7 @@ class WorkflowAdmin(ModelView):
 
     _NULLABLE_FIELDS = (
         "description",
+        "tool",
         "prerun_script_path",
     )
 

@@ -21,7 +21,7 @@ def _get_db_override(db):
 
 def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | None = None):
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    workflow = WorkflowFactory.create_sync()
     workflow_run = WorkflowRunFactory.create_sync(
         owner=user,
         workflow=workflow,

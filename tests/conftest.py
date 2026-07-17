@@ -182,6 +182,7 @@ def app(test_engine):
         Workflow(
             id=uuid4(),
             name="de-novo-design",
+            tool="bindcraft",
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",

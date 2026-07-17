@@ -24,7 +24,12 @@ from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
-    run.workflow = Workflow(name="de-novo-design")
+    run.workflow = Workflow(
+        name="de-novo-design",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
     run.submitted_form_data = {"mode": "bindcraft"}
 
 
@@ -332,7 +337,12 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         name="Results User 5",
         email="results5@example.com",
     )
-    workflow = Workflow(name="de-novo-design")
+    workflow = Workflow(
+        name="de-novo-design",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -492,7 +502,12 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
         name=f"Proteinfold Downloads {tool}",
         email=f"results-proteinfold-downloads-{tool}@example.com",
     )
-    workflow = Workflow(name="single-prediction")
+    workflow = Workflow(
+        name="single-prediction",
+        repo_url="https://github.com/test/single-prediction",
+        default_revision="main",
+        config_path="/config/single-prediction.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -622,7 +637,12 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
         name="Results User Snapshots 1",
         email="results-snapshots1@example.com",
     )
-    workflow = Workflow(name="de-novo-design")
+    workflow = Workflow(
+        name="de-novo-design",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
     run = WorkflowRun(
         workflow=workflow,
         owner=user,
@@ -973,7 +993,12 @@ async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
         name="Queued Job User",
         email="queued-job@example.com",
     )
-    workflow = Workflow(name="de-novo-design-queued")
+    workflow = Workflow(
+        name="de-novo-design-queued",
+        repo_url="https://github.com/test/de-novo-design-queued",
+        default_revision="main",
+        config_path="/config/de-novo-design-queued.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -1011,7 +1036,12 @@ async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(
         name="Queued Job User 2",
         email="queued-job2@example.com",
     )
-    workflow = Workflow(name="de-novo-design-queued-2")
+    workflow = Workflow(
+        name="de-novo-design-queued-2",
+        repo_url="https://github.com/test/de-novo-design-queued-2",
+        default_revision="main",
+        config_path="/config/de-novo-design-queued-2.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,

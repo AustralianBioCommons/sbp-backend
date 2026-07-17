@@ -234,7 +234,12 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     user = AppUserFactory.create_sync()
     run = WorkflowRunFactory.create_sync(
         owner=user,
-        workflow=Workflow(name="de-novo-design"),
+        workflow=Workflow(
+            name="de-novo-design",
+            repo_url="https://github.com/test/de-novo-design",
+            default_revision="main",
+            config_path="/config/de-novo-design.config",
+        ),
         tool="bindcraft",
         seqera_run_id="wf-zip-results",
     )

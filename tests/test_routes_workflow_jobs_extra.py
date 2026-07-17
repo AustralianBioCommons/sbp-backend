@@ -94,7 +94,14 @@ async def test_get_job_details_success(test_db):
         name="User",
         email="user@example.com",
     )
-    workflow = Workflow(id=uuid4(), name="BindCraft", description="Binding workflow")
+    workflow = Workflow(
+        id=uuid4(),
+        name="BindCraft",
+        description="Binding workflow",
+        repo_url="https://github.com/test/bindcraft",
+        default_revision="main",
+        config_path="/config/bindcraft.config",
+    )
     run = WorkflowRun(
         id=uuid4(),
         owner_user_id=user.id,

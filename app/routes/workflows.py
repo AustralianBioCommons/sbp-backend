@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob
@@ -207,16 +207,27 @@ async def launch_workflow(
         )
 
     # Workflow repo_url and revision come from the DB entry for this workflow name
-    # ("single-prediction", "de-novo-design", etc.).
+    # ("single-prediction", "de-novo-design", etc.). A workflow's tool column is
+    # NULL for a single row shared by all of its tools (e.g. single-prediction),
+    # or set on multiple rows when each tool needs its own repo_url/config_path/
+    # default_revision (e.g. de-novo-design: bindcraft vs rfdiffusion). An exact
+    # tool match is preferred over the generic NULL-tool row when both exist.
+    tool_matches = func.lower(Workflow.tool) == selected_tool.lower()
     workflow = db_session.scalar(
-        select(Workflow).where(func.lower(Workflow.name) == requested_workflow)
+        select(Workflow)
+        .where(
+            func.lower(Workflow.name) == requested_workflow,
+            or_(Workflow.tool.is_(None), tool_matches),
+        )
+        .order_by(tool_matches.desc())
+        .limit(1)
     )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{payload.launch.workflow}' is not configured in workflows table. "
-                "Seed the workflows catalog before launching."
+                f"Workflow '{payload.launch.workflow}' with tool '{selected_tool}' is not "
+                "configured in workflows table. Seed the workflows catalog before launching."
             ),
         )
 

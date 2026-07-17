@@ -43,7 +43,12 @@ class _DB:
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
-    run.workflow = Workflow(name="de-novo-design")
+    run.workflow = Workflow(
+        name="de-novo-design",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
     run.tool = "bindcraft"
     run.submitted_form_data = {"mode": "bindcraft"}
 
@@ -69,8 +74,20 @@ def test_get_user_job_list_rows_returns_current_user_run_metadata(test_db):
         name="Other User",
         email="other-jobs@example.com",
     )
-    workflow = Workflow(name="de-novo-design", description="Design workflow")
-    other_workflow = Workflow(name="other-workflow", description="Other workflow")
+    workflow = Workflow(
+        name="de-novo-design",
+        description="Design workflow",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
+    other_workflow = Workflow(
+        name="other-workflow",
+        description="Other workflow",
+        repo_url="https://github.com/test/other-workflow",
+        default_revision="main",
+        config_path="/config/other-workflow.config",
+    )
     test_db.add_all([user, other_user, workflow, other_workflow])
     test_db.commit()
 
@@ -243,7 +260,12 @@ async def test_ensure_completed_run_score_persists_spec_score(test_db):
         name="Score User",
         email="score-user@example.com",
     )
-    workflow = Workflow(name="de-novo-design")
+    workflow = Workflow(
+        name="de-novo-design",
+        repo_url="https://github.com/test/de-novo-design",
+        default_revision="main",
+        config_path="/config/de-novo-design.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
@@ -472,7 +494,12 @@ async def test_get_result_snapshot_downloads_skips_s3_for_proteinfold_workflows(
         name="Proteinfold No Snapshot User",
         email="proteinfold-no-snapshot-user@example.com",
     )
-    workflow = Workflow(name="single-prediction")
+    workflow = Workflow(
+        name="single-prediction",
+        repo_url="https://github.com/test/single-prediction",
+        default_revision="main",
+        config_path="/config/single-prediction.config",
+    )
     run = WorkflowRun(
         owner=user,
         workflow=workflow,
