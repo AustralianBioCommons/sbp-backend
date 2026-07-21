@@ -33,6 +33,22 @@ async def _queue_job_for_route_prepare(form, _s3_input_key, **kwargs):
     return queued_job
 
 
+async def _queue_job_for_proteindj_route_prepare(form, **kwargs):
+    # proteindj has no samplesheet, so prepare_proteindj_workflow takes no
+    # s3_input_key positional arg (unlike prepare_bindflow_workflow above).
+    db_session = kwargs["db_session"]
+    workflow_run = kwargs["workflow_run"]
+    queued_job = QueuedJob(
+        workflow=workflow_run.workflow,
+        workflow_run=workflow_run,
+        launch_payload={"runName": form.runName},
+        status="pending",
+    )
+    db_session.add(queued_job)
+    db_session.flush()
+    return queued_job
+
+
 @pytest.fixture
 def role_check_client(test_engine):
     """Test client with auth bypassed but require_workflow_execution_role active."""
@@ -219,6 +235,63 @@ def test_launch_de_novo_design_tool_mismatch_returns_500(client: TestClient):
 
     assert response.status_code == 500
     assert "rfdiffusion" in response.json()["detail"]
+
+
+def _add_rfdiffusion_workflow(test_engine):
+    """Helper to add a de-novo-design/rfdiffusion workflow row to the test DB."""
+    with Session(test_engine) as db:
+        existing = db.scalar(
+            select(Workflow).where(
+                Workflow.name == "de-novo-design", Workflow.tool == "rfdiffusion"
+            )
+        )
+        if not existing:
+            db.add(
+                Workflow(
+                    id=uuid4(),
+                    name="de-novo-design",
+                    tool="rfdiffusion",
+                    description="ProteinDJ workflow",
+                    repo_url="https://github.com/test/proteindj",
+                    default_revision="dev",
+                    config_path="/some/proteindj.config",
+                )
+            )
+            db.commit()
+
+
+@patch("app.routes.workflows.prepare_bindflow_workflow")
+@patch(
+    "app.routes.workflows.prepare_proteindj_workflow",
+    side_effect=_queue_job_for_proteindj_route_prepare,
+)
+def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
+    mock_prepare_proteindj, mock_prepare_bindflow, client: TestClient, test_engine
+):
+    """tool='rfdiffusion' on de-novo-design must dispatch to the proteindj executor."""
+    _add_rfdiffusion_workflow(test_engine)
+
+    payload = {
+        "launch": {
+            "workflow": "de-novo-design",
+            "tool": "rfdiffusion",
+            "runName": "rfd-run-1",
+        },
+        "s3InputKey": "inputs/pdb/target.pdb",
+        "formData": {"workflow": "de-novo-design", "tool": "rfdiffusion"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "pending"
+    mock_prepare_proteindj.assert_called_once()
+    mock_prepare_bindflow.assert_not_called()
+    assert (
+        mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
+    )
+    assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
 
 
 def test_launch_invalid_payload(client: TestClient):

@@ -15,7 +15,6 @@ def get_proteindj_default_params(
     hotspot_residues: str | None = None,
     num_designs: int | None = None,
     design_length: str | None = None,
-    rfd_length: str | None = None,
 ) -> dict[str, Any]:
     """Get default parameters for proteindj workflow.
 
@@ -31,8 +30,6 @@ def get_proteindj_default_params(
         params["num_designs"] = num_designs
     if design_length is not None:
         params["design_length"] = design_length
-    if rfd_length is not None:
-        params["rfd_length"] = rfd_length
     return params
 
 
