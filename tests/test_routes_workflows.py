@@ -719,9 +719,7 @@ def test_launch_single_prediction_requires_protein(client: TestClient, test_engi
 
 def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClient, test_engine):
     _add_proteinfold_workflow(test_engine)
-    payload = _single_prediction_payload(
-        [_protein_entity(sequence="A" * 2000)], tool="alphafold2"
-    )
+    payload = _single_prediction_payload([_protein_entity(sequence="A" * 2000)], tool="alphafold2")
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 422
     assert "less than 2000" in response.json()["detail"]
