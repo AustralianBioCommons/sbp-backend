@@ -69,12 +69,14 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     extra = form_data.extra_fields
+    length_range = _design_length(form_data)
     default_params = get_proteindj_default_params(
         out_dir,
         input_pdb=extra.get("starting_pdb"),
         hotspot_residues=extra.get("target_hotspot_residues"),
         num_designs=extra.get("number_of_final_designs"),
-        design_length=_design_length(form_data),
+        design_length=length_range,
+        rfd_length=length_range,
     )
 
     # Serialize to YAML
