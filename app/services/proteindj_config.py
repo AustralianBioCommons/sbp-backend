@@ -21,7 +21,7 @@ def get_proteindj_default_params(
     ProteinDJ (rfdiffusion) takes a single PDB plus design params directly —
     no samplesheet — so these are passed straight through as paramsText keys.
     """
-    params: dict[str, Any] = {"outdir": out_dir}
+    params: dict[str, Any] = {"out_dir": out_dir}
     if input_pdb is not None:
         params["input_pdb"] = input_pdb
     if hotspot_residues is not None:
