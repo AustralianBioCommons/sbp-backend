@@ -564,7 +564,18 @@ def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engin
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-1"},
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
+        "formData": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "entities": [
+                {
+                    "id": "seq1",
+                    "moleculeType": "protein",
+                    "copyNumber": 1,
+                    "sequence": "ACDEFGHIK",
+                }
+            ],
+        },
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -600,7 +611,18 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
             "runName": "pf-run-cfg-err",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
+        "formData": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "entities": [
+                {
+                    "id": "seq1",
+                    "moleculeType": "protein",
+                    "copyNumber": 1,
+                    "sequence": "ACDEFGHIK",
+                }
+            ],
+        },
     }
 
     response = client.post("/api/workflows/launch", json=payload)
@@ -621,12 +643,110 @@ def test_launch_proteinfold_queue_preparation_error(mock_prepare, client: TestCl
             "runName": "pf-run-exec-err",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
+        "formData": {
+            "workflow": "single-prediction",
+            "tool": "colabfold",
+            "entities": [
+                {
+                    "id": "seq1",
+                    "moleculeType": "protein",
+                    "copyNumber": 1,
+                    "sequence": "ACDEFGHIK",
+                }
+            ],
+        },
     }
 
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
     assert response.json()["detail"] == "Failed to queue local workflow run."
+
+
+# =============================================================================
+# Tests for single-prediction entity validation
+# =============================================================================
+
+
+def _single_prediction_payload(entities, tool="colabfold", **form_extra):
+    form_data = {"workflow": "single-prediction", "tool": tool, "entities": entities}
+    form_data.update(form_extra)
+    return {
+        "launch": {"workflow": "single-prediction", "tool": tool, "runName": "sp-val"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": form_data,
+    }
+
+
+def _protein_entity(sequence="ACDEFGHIK", copy_number=1):
+    return {
+        "id": "seq1",
+        "moleculeType": "protein",
+        "copyNumber": copy_number,
+        "sequence": sequence,
+    }
+
+
+def test_launch_single_prediction_rejects_missing_entities(client: TestClient, test_engine):
+    _add_proteinfold_workflow(test_engine)
+    payload = {
+        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "sp-no-ent"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 422
+    assert "entities" in response.json()["detail"]
+
+
+def test_launch_single_prediction_rejects_too_many_entities(client: TestClient, test_engine):
+    _add_proteinfold_workflow(test_engine)
+    payload = _single_prediction_payload([_protein_entity(copy_number=53)])
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 422
+    assert "Too many entities" in response.json()["detail"]
+
+
+def test_launch_single_prediction_requires_protein(client: TestClient, test_engine):
+    _add_proteinfold_workflow(test_engine)
+    entities = [
+        {"id": "seq1", "moleculeType": "dna", "copyNumber": 1, "sequence": "ACGT"},
+    ]
+    payload = _single_prediction_payload(entities, tool="boltz")
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 422
+    assert "must be a protein" in response.json()["detail"]
+
+
+def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClient, test_engine):
+    _add_proteinfold_workflow(test_engine)
+    payload = _single_prediction_payload(
+        [_protein_entity(sequence="A" * 2000)], tool="alphafold2"
+    )
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 422
+    assert "less than 2000" in response.json()["detail"]
+
+
+@patch(
+    "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
+)
+def test_launch_single_prediction_boltz_potentials_reduces_limit(
+    mock_prepare, client: TestClient, test_engine
+):
+    _add_proteinfold_workflow(test_engine)
+
+    ok_payload = _single_prediction_payload(
+        [_protein_entity(sequence="A" * 1999)], tool="boltz", boltz_use_potentials=True
+    )
+    assert client.post("/api/workflows/launch", json=ok_payload).status_code == 201
+
+    over_payload = _single_prediction_payload(
+        [_protein_entity(sequence="A" * 2000)], tool="boltz", boltz_use_potentials=True
+    )
+    response = client.post("/api/workflows/launch", json=over_payload)
+    assert response.status_code == 422
+    assert "less than 2000" in response.json()["detail"]
+    mock_prepare.assert_called_once()
 
 
 # =============================================================================
