@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -98,6 +99,18 @@ class WorkflowUserDetails(BaseModel):
 
     user_email: str = Field(..., description="Email address of the user")
     ip_address: str = Field(..., description="IP address of the user")
+
+    def get_encoded_account_details(self) -> str:
+        """Return the `-A` account string for cluster job submission.
+
+        Encodes email and IP as base64 (colon-joined) so the account string
+        never leaks the user's raw email/IP into cluster logs or job metadata.
+        """
+        encoded_email = base64.b64encode(self.user_email.encode()).decode()
+        if not self.ip_address:
+            return encoded_email
+        encoded_ip = base64.b64encode(self.ip_address.encode()).decode()
+        return f"{encoded_email}:{encoded_ip}"
 
 
 class WispsFormData(WorkflowFormData):

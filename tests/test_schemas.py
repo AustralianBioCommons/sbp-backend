@@ -23,6 +23,7 @@ from app.schemas.workflows import (
     WorkflowLaunchForm,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
+    WorkflowUserDetails,
     map_pipeline_status_to_ui,
 )
 
@@ -462,3 +463,13 @@ def test_interaction_screening_request_extra_fields_forbidden():
             runId="run-1",
             extra="bad",
         )
+
+
+def test_get_encoded_account_details_encodes_email_and_ip():
+    details = WorkflowUserDetails(user_email="user@example.com", ip_address="1.2.3.4")
+    assert details.get_encoded_account_details() == "dXNlckBleGFtcGxlLmNvbQ==:MS4yLjMuNA=="
+
+
+def test_get_encoded_account_details_without_ip_encodes_email_only():
+    details = WorkflowUserDetails(user_email="user@example.com", ip_address="")
+    assert details.get_encoded_account_details() == "dXNlckBleGFtcGxlLmNvbQ=="
