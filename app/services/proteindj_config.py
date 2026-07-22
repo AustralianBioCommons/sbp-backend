@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..schemas.workflows import WorkflowUserDetails
-from .cluster_utils import encode_ip
+from .cluster_utils import encode_value
 from .workflow_config_fetcher import fetch_workflow_config
 
 
@@ -44,9 +44,9 @@ def get_proteindj_config_text(
     base = fetch_workflow_config(config_file_path)
 
     account = (
-        f"{user_details.user_email}:{encode_ip(user_details.ip_address)}"
+        f"{encode_value(user_details.user_email)}:{encode_value(user_details.ip_address)}"
         if user_details.ip_address
-        else user_details.user_email
+        else encode_value(user_details.user_email)
     )
     cluster_opts = f"-A {account}"
     override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
