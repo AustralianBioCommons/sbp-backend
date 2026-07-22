@@ -5,14 +5,24 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    StringConstraints,
+    field_validator,
+)
 
 WorkflowName = Literal[
     "single-prediction", "de-novo-design", "bulk-prediction", "interaction-screening"
 ]
 WorkflowTool = Literal["alphafold2", "bindcraft", "boltz", "colabfold", "rfdiffusion"]
+MoleculeType = Literal["protein", "rna", "dna", "ligand", "ccd"]
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 SINGLE_PREDICTION_MAX_ENTITIES = 52
 SINGLE_PREDICTION_LIGAND_SIZE = 30
@@ -126,10 +136,10 @@ class SinglePredictionEntity(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    id: str | None = None
-    moleculeType: str
-    copyNumber: int = 1
-    sequence: str = ""
+    id: NonEmptyStr | None = None
+    moleculeType: MoleculeType
+    copyNumber: PositiveInt = 1
+    sequence: Annotated[str, StringConstraints(strip_whitespace=True)] = ""
 
 
 def _entity_prediction_size(entity: SinglePredictionEntity) -> int:
@@ -163,8 +173,6 @@ def validate_single_prediction_entities(
     total_size = 0
     has_protein = False
     for entity in entities:
-        if entity.copyNumber < 1:
-            raise ValueError("Each entity must have a copy number of at least 1.")
         total_copies += entity.copyNumber
         if entity.moleculeType == "protein":
             has_protein = True

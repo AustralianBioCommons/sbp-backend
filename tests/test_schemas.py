@@ -507,10 +507,19 @@ def test_validate_single_prediction_requires_protein():
         validate_single_prediction_entities([dna], "boltz")
 
 
-def test_validate_single_prediction_rejects_copy_number_below_one():
-    entity = SinglePredictionEntity(id="p", moleculeType="protein", copyNumber=0, sequence="ACD")
-    with pytest.raises(ValueError, match="copy number of at least 1"):
-        validate_single_prediction_entities([entity], "colabfold")
+def test_single_prediction_entity_rejects_copy_number_below_one():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="p", moleculeType="protein", copyNumber=0, sequence="ACD")
+
+
+def test_single_prediction_entity_rejects_unknown_molecule_type():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="p", moleculeType="peptide", copyNumber=1, sequence="ACD")
+
+
+def test_single_prediction_entity_rejects_empty_id():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="", moleculeType="protein", copyNumber=1, sequence="ACD")
 
 
 def test_validate_single_prediction_ligand_uses_fixed_size():
