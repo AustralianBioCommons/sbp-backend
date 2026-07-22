@@ -124,12 +124,8 @@ class ProteinDjFormData(WorkflowFormData):
         ..., description="Comma-separated hotspot residues, e.g. 'A20,A21'"
     )
     number_of_final_designs: int = Field(..., ge=1, description="Number of designs to generate")
-    min_length: int = Field(
-        ..., ge=MIN_DESIGN_LENGTH, description="Minimum binder length"
-    )
-    max_length: int = Field(
-        ..., le=MAX_DESIGN_LENGTH, description="Maximum binder length"
-    )
+    min_length: int = Field(..., ge=MIN_DESIGN_LENGTH, description="Minimum binder length")
+    max_length: int = Field(..., le=MAX_DESIGN_LENGTH, description="Maximum binder length")
 
     @field_validator("starting_pdb")
     @classmethod
@@ -154,7 +150,7 @@ class ProteinDjFormData(WorkflowFormData):
         return stripped
 
     @model_validator(mode="after")
-    def _validate_length_range(self) -> "ProteinDjFormData":
+    def _validate_length_range(self) -> ProteinDjFormData:
         if self.min_length > self.max_length:
             raise ValueError("min_length must not exceed max_length")
         return self

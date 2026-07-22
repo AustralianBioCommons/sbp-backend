@@ -136,9 +136,7 @@ def test_proteindj_form_data_accepts_valid_fields():
 def test_proteindj_form_data_rejects_too_many_hotspot_residues():
     with pytest.raises(ValueError, match="Too many hotspot residues"):
         ProteinDjFormData(
-            **_proteindj_form_kwargs(
-                target_hotspot_residues="A1,A2,A3,A4,A5,A6,A7,A8,A9"
-            )
+            **_proteindj_form_kwargs(target_hotspot_residues="A1,A2,A3,A4,A5,A6,A7,A8,A9")
         )
 
 
