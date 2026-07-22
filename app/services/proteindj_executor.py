@@ -45,10 +45,13 @@ def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData
     try:
         return ProteinDjFormData.model_validate(form_data.model_dump())
     except ValidationError as exc:
-        missing = next(
-            (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
-            "formData",
-        )
+        missing = "formData"
+        for error in exc.errors():
+            loc = error.get("loc")
+            if loc:
+                *_, field_name = loc  # last element of the location path is the field name
+                missing = str(field_name)
+                break
         raise SeqeraConfigurationError(
             f"'{missing}' is required in formData for ProteinDJ workflow launch"
         ) from exc
