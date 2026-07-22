@@ -141,8 +141,8 @@ def test_tool_params_with_int():
 
 
 def test_tool_params_with_str():
-    result = _tool_params(_form_data(alphafold2_random_seed="42"))
-    assert result == {"alphafold2_random_seed": "42"}
+    result = _tool_params(_form_data(random_seed="42"))
+    assert result == {"random_seed": "42"}
 
 
 def test_tool_params_none_value_excluded():
