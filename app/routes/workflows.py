@@ -44,6 +44,7 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
+from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
 from ..services.seqera_errors import SeqeraConfigurationError
@@ -350,23 +351,36 @@ async def launch_workflow(
                 user_details=user_details,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-            # de-novo-design → bindflow executor.
-            # selected_tool carries the chosen algorithm ("bindcraft", "rfdiffusion").
+            # de-novo-design → bindflow executor (bindcraft) or proteindj executor
+            # (rfdiffusion), depending on the chosen algorithm.
             tool_mode = selected_tool
-            bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            queued_job = await prepare_bindflow_workflow(
-                bindcraft_launch_form,
-                s3_input_key,
-                db_session=db_session,
-                workflow_run=workflow_run,
-                pipeline=workflow.repo_url,
-                config_path=workflow.config_path,
-                revision=workflow.default_revision,
-                output_id=str(run_id),
-                mode=tool_mode,
-                form_data=payload.formData,
-                user_details=user_details,
-            )
+            de_novo_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            if tool_mode.lower() == "rfdiffusion":
+                queued_job = await prepare_proteindj_workflow(
+                    de_novo_launch_form,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
+            else:
+                queued_job = await prepare_bindflow_workflow(
+                    de_novo_launch_form,
+                    s3_input_key,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    mode=tool_mode,
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
