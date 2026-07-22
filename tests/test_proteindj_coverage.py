@@ -221,20 +221,20 @@ def test_get_proteindj_config_text_appends_process_block():
     assert "clusterOptions" in result
 
 
-def test_get_proteindj_config_text_contains_email_and_encoded_ip():
+def test_get_proteindj_config_text_contains_encoded_email_and_encoded_ip():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "user@ex.com" in result
+    assert "dXNlckBleC5jb20=" in result
     assert "MS4yLjMuNA==" in result
 
 
-def test_get_proteindj_config_text_without_ip_uses_email_only():
+def test_get_proteindj_config_text_without_ip_uses_encoded_email_only():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_proteindj_config_text(
             "/fake/proteindj.config",
             user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
         )
-    assert "-A user@ex.com" in result
+    assert "-A dXNlckBleC5jb20=" in result
     assert ":" not in result.split("clusterOptions = ")[1]
 
 

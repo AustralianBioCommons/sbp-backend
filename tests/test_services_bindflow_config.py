@@ -145,7 +145,7 @@ def test_get_bindflow_config_text_interpolates_email():
             "/fake/bindflow.config",
             user_details=_user_details("alice@example.com"),
         )
-    assert "-A alice@example.com" in result
+    assert "-A YWxpY2VAZXhhbXBsZS5jb20=" in result
 
 
 def test_get_bindflow_config_text_without_ip_address_omits_encoding():
@@ -154,7 +154,7 @@ def test_get_bindflow_config_text_without_ip_address_omits_encoding():
             "/fake/bindflow.config",
             user_details=_user_details("user@example.com"),
         )
-    assert "-A user@example.com" in result
+    assert "-A dXNlckBleGFtcGxlLmNvbQ==" in result
     assert ":" not in result.split("clusterOptions = ")[1]
 
 
@@ -164,7 +164,7 @@ def test_get_bindflow_config_text_with_ip_address_appends_encoded_ip():
             "/fake/bindflow.config",
             user_details=_user_details("user@example.com", ip_address="1.2.3.4"),
         )
-    assert "-A user@example.com:MS4yLjMuNA==" in result
+    assert "-A dXNlckBleGFtcGxlLmNvbQ==:MS4yLjMuNA==" in result
 
 
 def test_get_bindflow_config_text_url_fetching():
