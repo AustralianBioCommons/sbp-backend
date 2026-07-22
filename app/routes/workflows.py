@@ -24,12 +24,14 @@ from ..schemas.workflows import (
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
+    SinglePredictionEntity,
     WispsDatasetUploadRequest,
     WispsFormData,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     WorkflowUserDetails,
+    validate_single_prediction_entities,
 )
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
@@ -135,6 +137,43 @@ def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | Non
     except TypeError, ValueError:
         return None
     return parsed if parsed >= 1 else None
+
+
+def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> None:
+    """Validate single-prediction entity limits; raise HTTPException on failure.
+
+    Guards against jobs with too many entities or has no protein input
+    """
+    raw_entities = form_data.extra_fields.get("entities")
+    if not isinstance(raw_entities, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'entities' is required in formData for single-prediction.",
+        )
+    try:
+        entities = [SinglePredictionEntity.model_validate(item) for item in raw_entities]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid entity data in formData for single-prediction.",
+        ) from exc
+
+    raw_potentials = form_data.extra_fields.get("boltz_use_potentials")
+    boltz_use_potentials = (
+        raw_potentials.strip().lower() in ("true", "1", "yes")
+        if isinstance(raw_potentials, str)
+        else bool(raw_potentials)
+    )
+
+    try:
+        validate_single_prediction_entities(
+            entities, tool, boltz_use_potentials=boltz_use_potentials
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post("/me/sync")
@@ -328,6 +367,9 @@ async def launch_workflow(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"'{missing}' is required in formData for {workflow_name}.",
             ) from exc
+
+    if workflow_name in ("single-prediction", "proteinfold"):
+        _validate_single_prediction_form(payload.formData, selected_tool)
 
     try:
         queued_job: QueuedJob

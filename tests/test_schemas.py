@@ -17,6 +17,7 @@ from app.schemas.workflows import (
     ListRunsResponse,
     PipelineStatus,
     RunInfo,
+    SinglePredictionEntity,
     UIStatus,
     WispsDatasetUploadRequest,
     WispsSequenceItem,
@@ -24,6 +25,8 @@ from app.schemas.workflows import (
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     map_pipeline_status_to_ui,
+    single_prediction_size_limit,
+    validate_single_prediction_entities,
 )
 
 
@@ -462,3 +465,79 @@ def test_interaction_screening_request_extra_fields_forbidden():
             runId="run-1",
             extra="bad",
         )
+
+
+# =============================================================================
+# Single-prediction entity validation
+# =============================================================================
+
+
+def _protein(sequence="ACDEFGHIK", copy_number=1):
+    return SinglePredictionEntity(
+        id="seq1", moleculeType="protein", copyNumber=copy_number, sequence=sequence
+    )
+
+
+def test_size_limit_defaults_and_boltz_potentials():
+    assert single_prediction_size_limit("colabfold", False) == 4000
+    assert single_prediction_size_limit("boltz", False) == 4000
+    assert single_prediction_size_limit("alphafold2", False) == 2000
+    assert single_prediction_size_limit("boltz", True) == 2000
+    assert single_prediction_size_limit("colabfold", True) == 4000
+
+
+def test_validate_single_prediction_accepts_valid_input():
+    validate_single_prediction_entities([_protein()], "colabfold")
+
+
+def test_validate_single_prediction_requires_entities():
+    with pytest.raises(ValueError, match="At least one entity"):
+        validate_single_prediction_entities([], "colabfold")
+
+
+def test_validate_single_prediction_counts_copies_toward_limit():
+    validate_single_prediction_entities([_protein(copy_number=52)], "colabfold")
+    with pytest.raises(ValueError, match="Too many entities"):
+        validate_single_prediction_entities([_protein(copy_number=53)], "colabfold")
+
+
+def test_validate_single_prediction_requires_protein():
+    dna = SinglePredictionEntity(id="d", moleculeType="dna", copyNumber=1, sequence="ACGT")
+    with pytest.raises(ValueError, match="must be a protein"):
+        validate_single_prediction_entities([dna], "boltz")
+
+
+def test_single_prediction_entity_rejects_copy_number_below_one():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="p", moleculeType="protein", copyNumber=0, sequence="ACD")
+
+
+def test_single_prediction_entity_rejects_unknown_molecule_type():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="p", moleculeType="peptide", copyNumber=1, sequence="ACD")
+
+
+def test_single_prediction_entity_rejects_empty_id():
+    with pytest.raises(ValidationError):
+        SinglePredictionEntity(id="", moleculeType="protein", copyNumber=1, sequence="ACD")
+
+
+def test_validate_single_prediction_ligand_uses_fixed_size():
+    protein = _protein(sequence="A" * 3960)
+    ligand = SinglePredictionEntity(
+        id="lig", moleculeType="ligand", copyNumber=1, sequence="CC(=O)O"
+    )
+    # 3960 + 30 (ligand) = 3990 < 4000
+    validate_single_prediction_entities([protein, ligand], "colabfold")
+    # Two ligand copies: 3960 + 60 = 4020 >= 4000
+    ligand_two = SinglePredictionEntity(
+        id="lig", moleculeType="ligand", copyNumber=2, sequence="CC(=O)O"
+    )
+    with pytest.raises(ValueError, match="less than 4000"):
+        validate_single_prediction_entities([protein, ligand_two], "colabfold")
+
+
+def test_validate_single_prediction_size_limit_is_exclusive():
+    with pytest.raises(ValueError, match="less than 2000"):
+        validate_single_prediction_entities([_protein(sequence="A" * 2000)], "alphafold2")
+    validate_single_prediction_entities([_protein(sequence="A" * 1999)], "alphafold2")
