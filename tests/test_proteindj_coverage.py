@@ -108,6 +108,68 @@ def seqera_env(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
 
 
+def _proteindj_form_kwargs(**overrides) -> dict:
+    defaults = {
+        "workflow": "de-novo-design",
+        "tool": "rfdiffusion",
+        "starting_pdb": "s3://bucket/in.pdb",
+        "target_hotspot_residues": "A20,A21",
+        "number_of_final_designs": 5,
+        "min_length": 100,
+        "max_length": 150,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+# =============================================================================
+# Tests for ProteinDjFormData validation
+# =============================================================================
+
+
+def test_proteindj_form_data_accepts_valid_fields():
+    fields = ProteinDjFormData(**_proteindj_form_kwargs())
+    assert fields.min_length == 100
+    assert fields.max_length == 150
+
+
+def test_proteindj_form_data_rejects_too_many_hotspot_residues():
+    with pytest.raises(ValueError, match="Too many hotspot residues"):
+        ProteinDjFormData(
+            **_proteindj_form_kwargs(
+                target_hotspot_residues="A1,A2,A3,A4,A5,A6,A7,A8,A9"
+            )
+        )
+
+
+def test_proteindj_form_data_allows_exactly_max_hotspot_residues():
+    fields = ProteinDjFormData(
+        **_proteindj_form_kwargs(target_hotspot_residues="A1,A2,A3,A4,A5,A6,A7,A8")
+    )
+    assert fields.target_hotspot_residues == "A1,A2,A3,A4,A5,A6,A7,A8"
+
+
+def test_proteindj_form_data_rejects_min_length_below_floor():
+    with pytest.raises(ValueError, match="min_length"):
+        ProteinDjFormData(**_proteindj_form_kwargs(min_length=64, max_length=150))
+
+
+def test_proteindj_form_data_rejects_max_length_above_ceiling():
+    with pytest.raises(ValueError, match="max_length"):
+        ProteinDjFormData(**_proteindj_form_kwargs(min_length=65, max_length=151))
+
+
+def test_proteindj_form_data_rejects_min_length_above_max_length():
+    with pytest.raises(ValueError, match="min_length must not exceed max_length"):
+        ProteinDjFormData(**_proteindj_form_kwargs(min_length=150, max_length=100))
+
+
+def test_proteindj_form_data_allows_boundary_lengths():
+    fields = ProteinDjFormData(**_proteindj_form_kwargs(min_length=65, max_length=150))
+    assert fields.min_length == 65
+    assert fields.max_length == 150
+
+
 # =============================================================================
 # Tests for get_proteindj_default_params()
 # =============================================================================
