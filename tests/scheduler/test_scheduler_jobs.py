@@ -20,7 +20,9 @@ async def _failing_launch(**_kwargs):
     raise RuntimeError("Seqera launch failed")
 
 
-def _create_queued_job(*, attempts: int = 0, workflow_name: str = "de-novo-design"):
+def _create_queued_job(
+    *, attempts: int = 0, workflow_name: str = "de-novo-design", tool: str | None = None
+):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name=workflow_name)
     workflow_run = WorkflowRunFactory.create_sync(
@@ -28,6 +30,7 @@ def _create_queued_job(*, attempts: int = 0, workflow_name: str = "de-novo-desig
         workflow=workflow,
         work_dir=f"/work/{workflow_name}-{attempts}-{uuid4()}",
         seqera_run_id=None,
+        tool=tool,
     )
     return QueuedJobFactory.create_sync(
         workflow_run=workflow_run,
@@ -123,6 +126,56 @@ def test_launch_job_dry_run_does_not_update_job(test_db, persistent_models, monk
     assert queued_job.submitted_at is None
     assert queued_job.last_attempt_at is None
     assert queued_job.next_attempt_at is not None
+
+
+def test_launch_job_dispatches_proteindj_for_rfdiffusion_tool(
+    test_db, persistent_models, monkeypatch
+):
+    queued_job = _create_queued_job(tool="rfdiffusion")
+    calls = []
+
+    async def _successful_launch(**kwargs):
+        calls.append(kwargs)
+        return WorkflowLaunchResult(workflow_id="seqera-run-rfd", status="submitted")
+
+    async def _unexpected_bindflow_launch(**_kwargs):
+        raise AssertionError("launch_bindflow_workflow should not be called for rfdiffusion")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _successful_launch)
+    monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _unexpected_bindflow_launch)
+
+    scheduler_jobs.launch_job(queued_job.id)
+
+    test_db.refresh(queued_job)
+    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert queued_job.workflow_run.seqera_run_id == "seqera-run-rfd"
+    assert queued_job.status == "submitted"
+
+
+def test_launch_job_dispatches_bindflow_for_bindcraft_tool(test_db, persistent_models, monkeypatch):
+    queued_job = _create_queued_job(tool="bindcraft")
+    calls = []
+
+    async def _successful_launch(**kwargs):
+        calls.append(kwargs)
+        return WorkflowLaunchResult(workflow_id="seqera-run-bc", status="submitted")
+
+    async def _unexpected_proteindj_launch(**_kwargs):
+        raise AssertionError("launch_proteindj_workflow should not be called for bindcraft")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
+    monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _unexpected_proteindj_launch)
+
+    scheduler_jobs.launch_job(queued_job.id)
+
+    test_db.refresh(queued_job)
+    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert queued_job.workflow_run.seqera_run_id == "seqera-run-bc"
+    assert queued_job.status == "submitted"
 
 
 def test_launch_job_dispatches_wisps_workflows(test_db, persistent_models, monkeypatch):

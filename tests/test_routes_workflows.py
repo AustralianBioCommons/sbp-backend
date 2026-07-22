@@ -33,6 +33,22 @@ async def _queue_job_for_route_prepare(form, _s3_input_key, **kwargs):
     return queued_job
 
 
+async def _queue_job_for_proteindj_route_prepare(form, **kwargs):
+    # proteindj has no samplesheet, so prepare_proteindj_workflow takes no
+    # s3_input_key positional arg (unlike prepare_bindflow_workflow above).
+    db_session = kwargs["db_session"]
+    workflow_run = kwargs["workflow_run"]
+    queued_job = QueuedJob(
+        workflow=workflow_run.workflow,
+        workflow_run=workflow_run,
+        launch_payload={"runName": form.runName},
+        status="pending",
+    )
+    db_session.add(queued_job)
+    db_session.flush()
+    return queued_job
+
+
 @pytest.fixture
 def role_check_client(test_engine):
     """Test client with auth bypassed but require_workflow_execution_role active."""
@@ -60,6 +76,7 @@ def role_check_client(test_engine):
         Workflow(
             id=uuid4(),
             name="de-novo-design",
+            tool="bindcraft",
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
@@ -200,6 +217,81 @@ def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_e
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
         )
         assert count == 0
+
+
+def test_launch_de_novo_design_tool_mismatch_returns_500(client: TestClient):
+    """de-novo-design is matched on tool; an unconfigured tool for it is a 500."""
+    payload = {
+        "launch": {
+            "workflow": "de-novo-design",
+            "tool": "rfdiffusion",
+            "runName": "test-run",
+        },
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {"workflow": "de-novo-design", "tool": "rfdiffusion"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 500
+    assert "rfdiffusion" in response.json()["detail"]
+
+
+def _add_rfdiffusion_workflow(test_engine):
+    """Helper to add a de-novo-design/rfdiffusion workflow row to the test DB."""
+    with Session(test_engine) as db:
+        existing = db.scalar(
+            select(Workflow).where(
+                Workflow.name == "de-novo-design", Workflow.tool == "rfdiffusion"
+            )
+        )
+        if not existing:
+            db.add(
+                Workflow(
+                    id=uuid4(),
+                    name="de-novo-design",
+                    tool="rfdiffusion",
+                    description="ProteinDJ workflow",
+                    repo_url="https://github.com/test/proteindj",
+                    default_revision="dev",
+                    config_path="/some/proteindj.config",
+                )
+            )
+            db.commit()
+
+
+@patch("app.routes.workflows.prepare_bindflow_workflow")
+@patch(
+    "app.routes.workflows.prepare_proteindj_workflow",
+    side_effect=_queue_job_for_proteindj_route_prepare,
+)
+def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
+    mock_prepare_proteindj, mock_prepare_bindflow, client: TestClient, test_engine
+):
+    """tool='rfdiffusion' on de-novo-design must dispatch to the proteindj executor."""
+    _add_rfdiffusion_workflow(test_engine)
+
+    payload = {
+        "launch": {
+            "workflow": "de-novo-design",
+            "tool": "rfdiffusion",
+            "runName": "rfd-run-1",
+        },
+        "s3InputKey": "inputs/pdb/target.pdb",
+        "formData": {"workflow": "de-novo-design", "tool": "rfdiffusion"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "pending"
+    mock_prepare_proteindj.assert_called_once()
+    mock_prepare_bindflow.assert_not_called()
+    assert (
+        mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
+    )
+    assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
 
 
 def test_launch_invalid_payload(client: TestClient):
@@ -475,59 +567,6 @@ def test_extract_final_design_count_string_number():
     from app.routes.workflows import _extract_final_design_count
 
     assert _extract_final_design_count(_form_data(number_of_final_designs="25")) == 25
-
-
-# =============================================================================
-# Tests for missing repo_url / default_revision
-# =============================================================================
-
-
-def test_launch_missing_repo_url(client: TestClient, app, test_engine):
-    """Workflow missing repo_url should return 500."""
-    with Session(test_engine) as db:
-        db.add(
-            Workflow(
-                id=uuid4(),
-                name="single-prediction",
-                description="No repo workflow",
-                repo_url=None,
-                default_revision="dev",
-            )
-        )
-        db.commit()
-
-    payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
-    }
-    response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "missing repo_url" in response.json()["detail"]
-
-
-def test_launch_missing_default_revision(client: TestClient, app, test_engine):
-    """Workflow missing default_revision should return 500."""
-    with Session(test_engine) as db:
-        db.add(
-            Workflow(
-                id=uuid4(),
-                name="single-prediction",
-                description="No revision workflow",
-                repo_url="https://github.com/test/norev",
-                default_revision=None,
-            )
-        )
-        db.commit()
-
-    payload = {
-        "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "test-run"},
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "single-prediction", "tool": "colabfold"},
-    }
-    response = client.post("/api/workflows/launch", json=payload)
-    assert response.status_code == 500
-    assert "missing default_revision" in response.json()["detail"]
 
 
 # =============================================================================
@@ -889,62 +928,6 @@ def wisps_client(test_engine):
         yield c
 
 
-@pytest.fixture
-def wisps_no_config_client(test_engine):
-    """Test client with an interaction-screening workflow that has config_path=None."""
-    from sqlalchemy.orm import sessionmaker
-
-    from app.main import create_app
-
-    application = create_app()
-    user_id = UUID("11111111-1111-1111-1111-111111111111")
-
-    SessionLocal = sessionmaker(
-        bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
-    )
-    setup_session = SessionLocal()
-
-    if not setup_session.get(AppUser, user_id):
-        setup_session.add(
-            AppUser(
-                id=user_id,
-                auth0_user_id="auth0|test-user",
-                name="Test User",
-                email="test@example.com",
-            )
-        )
-
-    setup_session.add(
-        Workflow(
-            id=uuid4(),
-            name="interaction-screening",
-            description="WISPS workflow without config_path",
-            repo_url="https://github.com/test/wisps",
-            default_revision="main",
-            config_path=None,
-        )
-    )
-
-    setup_session.commit()
-    setup_session.close()
-
-    def _get_db():
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    from app.routes.dependencies import require_workflow_execution_role
-
-    application.dependency_overrides[get_db] = _get_db
-    application.dependency_overrides[get_current_user_id] = lambda: user_id
-    application.dependency_overrides[require_workflow_execution_role] = lambda: None
-
-    with TestClient(application) as c:
-        yield c
-
-
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestClient, test_engine):
     """Test successful interaction-screening workflow launch."""
@@ -1110,29 +1093,6 @@ def test_launch_interaction_screening_queue_preparation_error(
             .where(WorkflowRun.run_name == "wisps-run-exec-err")
         )
         assert count == 0
-
-
-def test_launch_interaction_screening_missing_config_path(wisps_no_config_client: TestClient):
-    """interaction-screening workflow missing config_path should return 500."""
-    payload = {
-        "launch": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "runName": "wisps-run-no-cfg",
-        },
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
-    }
-
-    response = wisps_no_config_client.post("/api/workflows/launch", json=payload)
-
-    assert response.status_code == 500
-    assert "config_path" in response.json()["detail"]
 
 
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)

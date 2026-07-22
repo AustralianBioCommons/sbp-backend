@@ -14,6 +14,7 @@ from ..routes.dependencies import get_db
 from ..schemas.workflows import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
 from ..services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
@@ -75,7 +76,12 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     elif workflow_name in ("single-prediction", "proteinfold"):
         launch_func = launch_proteinfold_workflow
     elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-        launch_func = launch_bindflow_workflow
+        # de-novo-design covers two algorithms (bindcraft vs rfdiffusion), each
+        # with its own executor; workflow_run.tool holds the one selected at launch.
+        tool = (job.workflow_run.tool or "").lower()
+        launch_func = (
+            launch_proteindj_workflow if tool == "rfdiffusion" else launch_bindflow_workflow
+        )
     else:
         raise ValueError(f"Unsupported workflow: {job.workflow.name}")
     try:

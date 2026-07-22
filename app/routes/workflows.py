@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob
@@ -46,6 +46,7 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
+from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
 from ..services.seqera_errors import SeqeraConfigurationError
@@ -246,16 +247,27 @@ async def launch_workflow(
         )
 
     # Workflow repo_url and revision come from the DB entry for this workflow name
-    # ("single-prediction", "de-novo-design", etc.).
+    # ("single-prediction", "de-novo-design", etc.). A workflow's tool column is
+    # NULL for a single row shared by all of its tools (e.g. single-prediction),
+    # or set on multiple rows when each tool needs its own repo_url/config_path/
+    # default_revision (e.g. de-novo-design: bindcraft vs rfdiffusion). An exact
+    # tool match is preferred over the generic NULL-tool row when both exist.
+    tool_matches = func.lower(Workflow.tool) == selected_tool.lower()
     workflow = db_session.scalar(
-        select(Workflow).where(func.lower(Workflow.name) == requested_workflow)
+        select(Workflow)
+        .where(
+            func.lower(Workflow.name) == requested_workflow,
+            or_(Workflow.tool.is_(None), tool_matches),
+        )
+        .order_by(tool_matches.desc())
+        .limit(1)
     )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{payload.launch.workflow}' is not configured in workflows table. "
-                "Seed the workflows catalog before launching."
+                f"Workflow '{payload.launch.workflow}' with tool '{selected_tool}' is not "
+                "configured in workflows table. Seed the workflows catalog before launching."
             ),
         )
 
@@ -381,23 +393,36 @@ async def launch_workflow(
                 user_details=user_details,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-            # de-novo-design → bindflow executor.
-            # selected_tool carries the chosen algorithm ("bindcraft", "rfdiffusion").
+            # de-novo-design → bindflow executor (bindcraft) or proteindj executor
+            # (rfdiffusion), depending on the chosen algorithm.
             tool_mode = selected_tool
-            bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            queued_job = await prepare_bindflow_workflow(
-                bindcraft_launch_form,
-                s3_input_key,
-                db_session=db_session,
-                workflow_run=workflow_run,
-                pipeline=workflow.repo_url,
-                config_path=workflow.config_path,
-                revision=workflow.default_revision,
-                output_id=str(run_id),
-                mode=tool_mode,
-                form_data=payload.formData,
-                user_details=user_details,
-            )
+            de_novo_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            if tool_mode.lower() == "rfdiffusion":
+                queued_job = await prepare_proteindj_workflow(
+                    de_novo_launch_form,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
+            else:
+                queued_job = await prepare_bindflow_workflow(
+                    de_novo_launch_form,
+                    s3_input_key,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    mode=tool_mode,
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
