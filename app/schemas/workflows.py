@@ -111,6 +111,26 @@ class WispsFormData(WorkflowFormData):
     )
 
 
+class ProteinDjFormData(WorkflowFormData):
+    """Form data for the ProteinDJ (rfdiffusion) de-novo-design workflow."""
+
+    starting_pdb: str = Field(..., description="S3 URI of the uploaded starting PDB file")
+    target_hotspot_residues: str = Field(
+        ..., description="Comma-separated hotspot residues, e.g. 'A20,A21'"
+    )
+    number_of_final_designs: int = Field(..., ge=1, description="Number of designs to generate")
+    min_length: int = Field(..., description="Minimum binder length")
+    max_length: int = Field(..., description="Maximum binder length")
+
+    @field_validator("starting_pdb", "target_hotspot_residues")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("This field is required")
+        return stripped
+
+
 class WorkflowLaunchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
