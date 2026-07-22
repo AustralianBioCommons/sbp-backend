@@ -9,7 +9,12 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from app.schemas.workflows import (
+    ProteinDjFormData,
+    WorkflowFormData,
+    WorkflowLaunchForm,
+    WorkflowUserDetails,
+)
 from app.services.proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
@@ -108,11 +113,6 @@ def seqera_env(monkeypatch):
 # =============================================================================
 
 
-def test_get_proteindj_default_params_only_outdir():
-    params = get_proteindj_default_params("s3://bucket/out")
-    assert params == {"outdir": "s3://bucket/out"}
-
-
 def test_get_proteindj_default_params_all_fields():
     params = get_proteindj_default_params(
         "s3://bucket/out",
@@ -130,9 +130,9 @@ def test_get_proteindj_default_params_all_fields():
     }
 
 
-def test_get_proteindj_default_params_partial_fields():
-    params = get_proteindj_default_params("s3://bucket/out", num_designs=3)
-    assert params == {"outdir": "s3://bucket/out", "num_designs": 3}
+def test_get_proteindj_default_params_missing_required_field_raises():
+    with pytest.raises(TypeError):
+        get_proteindj_default_params("s3://bucket/out", num_designs=3)  # type: ignore[call-arg]
 
 
 # =============================================================================
@@ -189,20 +189,17 @@ def test_get_proteindj_config_text_contains_base_config():
 # =============================================================================
 
 
-def test_design_length_both_present():
-    assert _design_length(_form_data(min_length=100, max_length=150)) == "100-150"
-
-
-def test_design_length_missing_min():
-    assert _design_length(_form_data(max_length=150)) is None
-
-
-def test_design_length_missing_max():
-    assert _design_length(_form_data(min_length=100)) is None
-
-
-def test_design_length_missing_both():
-    assert _design_length(_form_data()) is None
+def test_design_length_formats_min_max_range():
+    fields = ProteinDjFormData(
+        workflow="de-novo-design",
+        tool="rfdiffusion",
+        starting_pdb="s3://bucket/in.pdb",
+        target_hotspot_residues="A20",
+        number_of_final_designs=5,
+        min_length=100,
+        max_length=150,
+    )
+    assert _design_length(fields) == "100-150"
 
 
 # =============================================================================
@@ -302,7 +299,13 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
             pipeline="https://github.com/org/proteindj",
             config_path="/fake/proteindj.config",
             output_id="run-output-id",
-            form_data=_form_data(),
+            form_data=_form_data(
+                starting_pdb="s3://my-bucket/inputs/test.pdb",
+                target_hotspot_residues="A20,A21",
+                number_of_final_designs=5,
+                min_length=100,
+                max_length=150,
+            ),
             user_details=_USER_DETAILS,
         )
 
@@ -366,6 +369,101 @@ async def test_prepare_proteindj_workflow_empty_output_id(seqera_env):
             config_path="/fake/proteindj.config",
             output_id="   ",
             form_data=_form_data(),
+            user_details=_USER_DETAILS,
+        )
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_missing_starting_pdb(seqera_env):
+    form = _make_launch_form()
+    with (
+        _mock_proteindj_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(SeqeraConfigurationError, match="starting_pdb"),
+    ):
+        await prepare_proteindj_workflow(
+            form=form,
+            db_session=db_session,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=_form_data(
+                target_hotspot_residues="A20,A21",
+                number_of_final_designs=5,
+                min_length=100,
+                max_length=150,
+            ),
+            user_details=_USER_DETAILS,
+        )
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_missing_hotspot_residues(seqera_env):
+    form = _make_launch_form()
+    with (
+        _mock_proteindj_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(SeqeraConfigurationError, match="target_hotspot_residues"),
+    ):
+        await prepare_proteindj_workflow(
+            form=form,
+            db_session=db_session,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=_form_data(
+                starting_pdb="s3://my-bucket/inputs/test.pdb",
+                number_of_final_designs=5,
+                min_length=100,
+                max_length=150,
+            ),
+            user_details=_USER_DETAILS,
+        )
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_missing_num_designs(seqera_env):
+    form = _make_launch_form()
+    with (
+        _mock_proteindj_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(SeqeraConfigurationError, match="number_of_final_designs"),
+    ):
+        await prepare_proteindj_workflow(
+            form=form,
+            db_session=db_session,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=_form_data(
+                starting_pdb="s3://my-bucket/inputs/test.pdb",
+                target_hotspot_residues="A20,A21",
+                min_length=100,
+                max_length=150,
+            ),
+            user_details=_USER_DETAILS,
+        )
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_missing_design_length(seqera_env):
+    form = _make_launch_form()
+    with (
+        _mock_proteindj_db_context() as (db_session, workflow_run, *_),
+        pytest.raises(SeqeraConfigurationError, match="min_length"),
+    ):
+        await prepare_proteindj_workflow(
+            form=form,
+            db_session=db_session,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=_form_data(
+                starting_pdb="s3://my-bucket/inputs/test.pdb",
+                target_hotspot_residues="A20,A21",
+                number_of_final_designs=5,
+            ),
             user_details=_USER_DETAILS,
         )
 

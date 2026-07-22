@@ -7,10 +7,16 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from ..schemas.workflows import (
+    ProteinDjFormData,
+    WorkflowFormData,
+    WorkflowLaunchForm,
+    WorkflowUserDetails,
+)
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .proteindj_config import (
     get_proteindj_config_profiles,
@@ -28,16 +34,24 @@ from .seqera_errors import SeqeraConfigurationError
 logger = logging.getLogger(__name__)
 
 
-def _design_length(form_data: WorkflowFormData) -> str | None:
+def _design_length(fields: ProteinDjFormData) -> str:
     # The frontend's Input Configuration step (shared with bindcraft) sends
     # min_length/max_length as separate fields; ProteinDJ expects them as a
     # single "min-max" range.
-    extra = form_data.extra_fields
-    min_length = extra.get("min_length")
-    max_length = extra.get("max_length")
-    if min_length is None or max_length is None:
-        return None
-    return f"{min_length}-{max_length}"
+    return f"{fields.min_length}-{fields.max_length}"
+
+
+def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData:
+    try:
+        return ProteinDjFormData.model_validate(form_data.model_dump())
+    except ValidationError as exc:
+        missing = next(
+            (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
+            "formData",
+        )
+        raise SeqeraConfigurationError(
+            f"'{missing}' is required in formData for ProteinDJ workflow launch"
+        ) from exc
 
 
 async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
@@ -68,13 +82,13 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    extra = form_data.extra_fields
+    proteindj_fields = _parse_proteindj_form_data(form_data)
     default_params = get_proteindj_default_params(
         out_dir,
-        input_pdb=extra.get("starting_pdb"),
-        hotspot_residues=extra.get("target_hotspot_residues"),
-        num_designs=extra.get("number_of_final_designs"),
-        design_length=_design_length(form_data),
+        input_pdb=proteindj_fields.starting_pdb,
+        hotspot_residues=proteindj_fields.target_hotspot_residues,
+        num_designs=proteindj_fields.number_of_final_designs,
+        design_length=_design_length(proteindj_fields),
     )
 
     # Serialize to YAML

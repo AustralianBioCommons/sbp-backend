@@ -11,26 +11,23 @@ from .workflow_config_fetcher import fetch_workflow_config
 
 def get_proteindj_default_params(
     out_dir: str,
-    input_pdb: str | None = None,
-    hotspot_residues: str | None = None,
-    num_designs: int | None = None,
-    design_length: str | None = None,
+    input_pdb: str,
+    hotspot_residues: str,
+    num_designs: int,
+    design_length: str,
 ) -> dict[str, Any]:
     """Get default parameters for proteindj workflow.
 
     ProteinDJ (rfdiffusion) takes a single PDB plus design params directly —
     no samplesheet — so these are passed straight through as paramsText keys.
     """
-    params: dict[str, Any] = {"outdir": out_dir}
-    if input_pdb is not None:
-        params["input_pdb"] = input_pdb
-    if hotspot_residues is not None:
-        params["hotspot_residues"] = hotspot_residues
-    if num_designs is not None:
-        params["num_designs"] = num_designs
-    if design_length is not None:
-        params["design_length"] = design_length
-    return params
+    return {
+        "outdir": out_dir,
+        "input_pdb": input_pdb,
+        "hotspot_residues": hotspot_residues,
+        "num_designs": num_designs,
+        "design_length": design_length,
+    }
 
 
 def get_proteindj_config_profiles() -> list[str]:
