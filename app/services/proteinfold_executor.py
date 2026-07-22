@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Params forwarded from the frontend's Tool Settings (step 2)
 _TOOL_PARAM_KEYS = frozenset(
     {
-        "alphafold2_random_seed",
+        "random_seed",
         "alphafold2_full_dbs",
         "colabfold_num_recycles",
         "colabfold_use_templates",
