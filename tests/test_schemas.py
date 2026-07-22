@@ -476,6 +476,8 @@ def test_get_encoded_account_details_encodes_email_and_ip():
 def test_get_encoded_account_details_without_ip_encodes_email_only():
     details = WorkflowUserDetails(user_email="user@example.com", ip_address="")
     assert details.get_encoded_account_details() == "dXNlckBleGFtcGxlLmNvbQ=="
+
+
 # =============================================================================
 # Single-prediction entity validation
 # =============================================================================
