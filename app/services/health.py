@@ -23,10 +23,10 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from ..db.models.system_status import SystemStatusCache
+from ..db.models.system_status import SystemStatusCache, SystemStatusIncident
 from ..schemas.health import (
     COMPONENT_COMPUTE_ENV,
     COMPONENT_SEQERA_API,
@@ -487,8 +487,57 @@ def _try_acquire_cache_refresh_lock(db: Session) -> bool:
     return bool(db.execute(select(func.pg_try_advisory_xact_lock(_CACHE_LOCK_ID))).scalar_one())
 
 
+def _open_incident(db: Session, status: SystemStatus, component: ProbeResult) -> None:
+    db.add(
+        SystemStatusIncident(
+            component=component.name,
+            status=component.status,
+            started_at=status.checked_at,
+            message=component.message,
+        )
+    )
+
+
+def _update_incidents(db: Session, status: SystemStatus) -> None:
+    """Open/close/split incident rows so only downtime periods are stored.
+
+    Healthy checks are never recorded. A component's most recent incident with
+    ``ended_at IS NULL`` (if any) is its currently-open outage:
+
+    - Recovers to healthy -> close it.
+    - Still down at the same severity -> leave it open (refresh the message).
+    - Still down but severity changed (e.g. degraded -> unhealthy) -> close it
+      and open a new one, so each row represents a single severity level.
+    - No open incident and still down -> open a new one.
+    """
+    for component in status.components:
+        open_incident = db.execute(
+            select(SystemStatusIncident)
+            .where(SystemStatusIncident.component == component.name)
+            .where(SystemStatusIncident.ended_at.is_(None))
+            .order_by(SystemStatusIncident.started_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if component.status == "healthy":
+            if open_incident is not None:
+                open_incident.ended_at = status.checked_at
+                db.add(open_incident)
+            continue
+
+        if open_incident is None:
+            _open_incident(db, status, component)
+        elif open_incident.status != component.status:
+            open_incident.ended_at = status.checked_at
+            db.add(open_incident)
+            _open_incident(db, status, component)
+        elif component.message != open_incident.message:
+            open_incident.message = component.message
+            db.add(open_incident)
+
+
 async def refresh_db_cache(db: Session) -> SystemStatus:
-    """Run probes and replace the single shared DB cache row."""
+    """Run probes, replace the single shared DB cache row, and log incidents."""
     status = await collect_system_status()
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=_CACHE_TTL_SECONDS)
@@ -510,6 +559,7 @@ async def refresh_db_cache(db: Session) -> SystemStatus:
         row.updated_at = now
 
     db.add(row)
+    _update_incidents(db, status)
     db.commit()
     return status
 
@@ -608,6 +658,95 @@ def to_public_dict(status: SystemStatus) -> dict[str, Any]:
             for c in status.components
         ],
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def get_incidents(
+    db: Session,
+    *,
+    since: datetime,
+    until: datetime,
+    component: str | None = None,
+) -> list[SystemStatusIncident]:
+    """Return incidents overlapping ``[since, until]``, oldest first.
+
+    An incident overlaps the window if it started at/before ``until`` and
+    either is still open (``ended_at IS NULL``) or ended at/after ``since``.
+    """
+    stmt = select(SystemStatusIncident).where(
+        SystemStatusIncident.started_at <= until,
+        or_(
+            SystemStatusIncident.ended_at.is_(None),
+            SystemStatusIncident.ended_at >= since,
+        ),
+    )
+    if component:
+        stmt = stmt.where(SystemStatusIncident.component == component)
+    stmt = stmt.order_by(SystemStatusIncident.component, SystemStatusIncident.started_at)
+    return list(db.execute(stmt).scalars())
+
+
+def _clipped_downtime_seconds(
+    incident: SystemStatusIncident, *, since: datetime, until: datetime
+) -> float:
+    """Downtime contributed by ``incident`` within ``[since, until]``.
+
+    Incidents that started before ``since`` or are still ongoing (``ended_at``
+    is None, so it counts as down through ``until``) are clipped to the window
+    so a long-running outage doesn't over-count time outside the query range.
+    """
+    start = max(_as_utc(incident.started_at), since)
+    end = min(_as_utc(incident.ended_at) if incident.ended_at is not None else until, until)
+    return max((end - start).total_seconds(), 0.0)
+
+
+def _summarize_downtime(
+    incidents: list[SystemStatusIncident], *, since: datetime, until: datetime
+) -> dict[str, Any]:
+    downtime_seconds = sum(
+        _clipped_downtime_seconds(incident, since=since, until=until) for incident in incidents
+    )
+    window_seconds = max((until - since).total_seconds(), 0.0)
+    uptime_percent = (
+        round(max(window_seconds - downtime_seconds, 0.0) / window_seconds * 100, 2)
+        if window_seconds
+        else 100.0
+    )
+    return {
+        "incidentCount": len(incidents),
+        "downtimeSeconds": round(downtime_seconds, 2),
+        "uptimePercent": uptime_percent,
+    }
+
+
+def to_downtime_dict(
+    incidents: list[SystemStatusIncident], *, since: datetime, until: datetime, hours: int
+) -> dict[str, Any]:
+    """Group flat incident rows by component into the admin downtime response shape."""
+    by_component: dict[str, list[SystemStatusIncident]] = {}
+    for incident in incidents:
+        by_component.setdefault(incident.component, []).append(incident)
+
+    components = [
+        {
+            "name": name,
+            "summary": _summarize_downtime(rows, since=since, until=until),
+            "incidents": [
+                {
+                    "status": row.status,
+                    "startedAt": row.started_at,
+                    "endedAt": row.ended_at,
+                    "message": row.message,
+                }
+                for row in rows
+            ],
+        }
+        for name, rows in by_component.items()
+    ]
+    return {"windowHours": hours, "since": since, "until": until, "components": components}
 
 
 def to_admin_dict(status: SystemStatus) -> dict[str, Any]:

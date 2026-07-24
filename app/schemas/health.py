@@ -108,3 +108,41 @@ class SystemStatusAdminResponse(BaseModel):
         default=None,
         description="One-click link to the backend CloudWatch log group, if configured",
     )
+
+
+class ComponentIncident(BaseModel):
+    """A single downtime period for one component (never ``healthy``)."""
+
+    status: HealthStatus
+    startedAt: datetime
+    endedAt: datetime | None = Field(
+        default=None, description="Null while the incident is still ongoing"
+    )
+    message: str | None = None
+
+
+class ComponentDowntimeSummary(BaseModel):
+    """Downtime aggregates for a component over the requested time window."""
+
+    incidentCount: int
+    downtimeSeconds: float
+    uptimePercent: float = Field(
+        description="Share of the window the component was healthy, as a percentage"
+    )
+
+
+class ComponentDowntime(BaseModel):
+    """Downtime incidents and summary for a single component."""
+
+    name: str
+    summary: ComponentDowntimeSummary
+    incidents: list[ComponentIncident]
+
+
+class SystemStatusDowntimeResponse(BaseModel):
+    """Verbose per-component downtime returned by GET /admin/api/system-status/history."""
+
+    windowHours: int
+    since: datetime
+    until: datetime
+    components: list[ComponentDowntime]
