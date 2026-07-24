@@ -56,6 +56,28 @@
   </div>
 </div>
 
+<div class="col-12 mt-3">
+  <div class="card">
+    <div class="card-header d-flex align-items-center">
+      <h3 class="card-title mb-0">History</h3>
+      <div class="ms-auto btn-group" role="group" aria-label="History window">
+        <button type="button" class="btn btn-sm btn-outline-secondary history-window-btn" data-hours="24">24h</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary history-window-btn" data-hours="168">7d</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary history-window-btn" data-hours="720">30d</button>
+      </div>
+    </div>
+    <div class="card-body" id="history-body">
+      <div class="text-muted">Loading…</div>
+    </div>
+    <div class="card-footer">
+      <span class="text-muted small">
+        Only downtime is recorded: a colored segment marks a period the component was degraded (yellow)
+        or unhealthy (red). An all-green bar means no downtime in the selected window.
+      </span>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   // The verbose admin status API is mounted alongside the admin app.
@@ -259,6 +281,185 @@
   initTooltips(document); // static tooltips (e.g. the Latency column header)
   load();
   setInterval(load, REFRESH_MS);
+
+  // -------------------------------------------------------------------------
+  // History: per-component downtime incidents (only degraded/unhealthy
+  // periods are recorded, so this only ever highlights when something was
+  // actually down, not every successful check).
+  // -------------------------------------------------------------------------
+  var HISTORY_ENDPOINT = "/admin/api/system-status/history";
+  var HISTORY_INCIDENT_LIST_LIMIT = 5;
+  var historyWindowHours = 24;
+
+  function formatDuration(totalSeconds) {
+    var seconds = Math.max(Math.round(totalSeconds), 0);
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    var secs = seconds % 60;
+    if (days > 0) return days + "d " + hours + "h";
+    if (hours > 0) return hours + "h " + minutes + "m";
+    if (minutes > 0) return minutes + "m " + secs + "s";
+    return secs + "s";
+  }
+
+  function incidentBar(incidents, sinceMs, untilMs) {
+    var windowMs = Math.max(untilMs - sinceMs, 1);
+    var bar = document.createElement("div");
+    bar.className = "bg-success-lt";
+    bar.style.position = "relative";
+    bar.style.height = "20px";
+    bar.style.borderRadius = "4px";
+    bar.style.flex = "1";
+    bar.style.overflow = "hidden";
+
+    incidents.forEach(function (incident) {
+      var startMs = Math.max(new Date(incident.startedAt).getTime(), sinceMs);
+      var endMs = Math.min(
+        incident.endedAt ? new Date(incident.endedAt).getTime() : untilMs,
+        untilMs
+      );
+      if (endMs <= startMs) return;
+
+      var seg = document.createElement("div");
+      seg.className = incident.status === "unhealthy" ? "bg-danger" : "bg-warning";
+      seg.style.position = "absolute";
+      seg.style.top = "0";
+      seg.style.bottom = "0";
+      seg.style.left = ((startMs - sinceMs) / windowMs) * 100 + "%";
+      seg.style.width = Math.max(((endMs - startMs) / windowMs) * 100, 0.5) + "%";
+      seg.style.cursor = "help";
+      seg.setAttribute("data-bs-toggle", "tooltip");
+      seg.setAttribute("data-bs-placement", "top");
+      var label =
+        (incident.status === "unhealthy" ? "Unhealthy" : "Degraded") +
+        ": " + new Date(incident.startedAt).toLocaleString() +
+        " → " + (incident.endedAt ? new Date(incident.endedAt).toLocaleString() : "ongoing") +
+        (incident.message ? " (" + incident.message + ")" : "");
+      seg.setAttribute("title", label);
+      bar.appendChild(seg);
+    });
+
+    return bar;
+  }
+
+  function incidentListItem(incident) {
+    var durationSeconds =
+      (incident.endedAt ? new Date(incident.endedAt).getTime() : Date.now()) -
+      new Date(incident.startedAt).getTime();
+    var li = document.createElement("li");
+    li.className = "small";
+    li.innerHTML =
+      badge(incident.status) + " " +
+      escapeHtml(new Date(incident.startedAt).toLocaleString()) +
+      " → " + (incident.endedAt
+        ? escapeHtml(new Date(incident.endedAt).toLocaleString())
+        : '<span class="text-warning">ongoing</span>') +
+      ' <span class="text-muted">(' + formatDuration(durationSeconds / 1000) + ")</span>" +
+      (incident.message
+        ? ' <span class="text-muted">— ' + escapeHtml(incident.message) + "</span>"
+        : "");
+    return li;
+  }
+
+  function renderHistory(data) {
+    var body = document.getElementById("history-body");
+    disposeTooltips(body);
+    body.innerHTML = "";
+
+    if (!data.components || !data.components.length) {
+      body.innerHTML =
+        '<div class="text-muted">No downtime recorded for any component in this window.</div>';
+      return;
+    }
+
+    var sinceMs = new Date(data.since).getTime();
+    var untilMs = new Date(data.until).getTime();
+
+    data.components.forEach(function (component) {
+      var summary = component.summary || {};
+      var incidents = component.incidents || [];
+
+      var row = document.createElement("div");
+      row.className = "py-2 border-bottom";
+
+      var topRow = document.createElement("div");
+      topRow.className = "d-flex align-items-center";
+
+      var nameCol = document.createElement("div");
+      nameCol.style.width = "220px";
+      nameCol.style.flexShrink = "0";
+      nameCol.innerHTML =
+        "<strong>" + escapeHtml(component.name) + "</strong>" + infoIcon(component.name) +
+        '<div class="text-muted small">' +
+        summary.uptimePercent + "% uptime · " + summary.incidentCount + " incident" +
+        (summary.incidentCount === 1 ? "" : "s") +
+        (summary.downtimeSeconds > 0 ? " · " + formatDuration(summary.downtimeSeconds) + " down" : "") +
+        "</div>";
+
+      topRow.appendChild(nameCol);
+      topRow.appendChild(incidentBar(incidents, sinceMs, untilMs));
+      row.appendChild(topRow);
+
+      if (incidents.length) {
+        var list = document.createElement("ul");
+        list.className = "mt-2 mb-0 ps-3";
+        incidents
+          .slice()
+          .reverse()
+          .slice(0, HISTORY_INCIDENT_LIST_LIMIT)
+          .forEach(function (incident) {
+            list.appendChild(incidentListItem(incident));
+          });
+        row.appendChild(list);
+        if (incidents.length > HISTORY_INCIDENT_LIST_LIMIT) {
+          var more = document.createElement("div");
+          more.className = "text-muted small ps-3";
+          more.textContent = "+" + (incidents.length - HISTORY_INCIDENT_LIST_LIMIT) + " more";
+          row.appendChild(more);
+        }
+      }
+
+      body.appendChild(row);
+    });
+
+    initTooltips(body);
+  }
+
+  function renderHistoryError(message) {
+    var body = document.getElementById("history-body");
+    body.innerHTML =
+      '<div class="text-danger">Failed to load history: ' + escapeHtml(message) + "</div>";
+  }
+
+  function loadHistory() {
+    var url = HISTORY_ENDPOINT + "?hours=" + historyWindowHours;
+    fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(renderHistory)
+      .catch(function (err) {
+        renderHistoryError(err.message || String(err));
+      });
+  }
+
+  document.querySelectorAll(".history-window-btn").forEach(function (btn) {
+    if (parseInt(btn.dataset.hours, 10) === historyWindowHours) {
+      btn.classList.add("active");
+    }
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".history-window-btn").forEach(function (b) {
+        b.classList.remove("active");
+      });
+      btn.classList.add("active");
+      historyWindowHours = parseInt(btn.dataset.hours, 10);
+      loadHistory();
+    });
+  });
+
+  loadHistory();
 })();
 </script>
 {% endblock %}
