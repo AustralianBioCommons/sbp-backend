@@ -311,9 +311,7 @@ async def test_severity_change_splits_the_incident(monkeypatch, test_db):
     )
     await health.get_system_status(test_db, force_refresh=True)
 
-    rows = sorted(
-        _incidents(test_db, COMPONENT_COMPUTE_ENV), key=lambda r: r.started_at
-    )
+    rows = sorted(_incidents(test_db, COMPONENT_COMPUTE_ENV), key=lambda r: r.started_at)
     assert len(rows) == 2
     assert rows[0].status == "degraded"
     assert rows[0].ended_at is not None  # closed when severity changed
@@ -348,9 +346,7 @@ def test_get_incidents_filters_by_window_and_component(test_db):
     all_recent = health.get_incidents(test_db, since=since, until=now)
     assert {row.component for row in all_recent} == {COMPONENT_SEQERA_API, COMPONENT_COMPUTE_ENV}
 
-    api_only = health.get_incidents(
-        test_db, since=since, until=now, component=COMPONENT_SEQERA_API
-    )
+    api_only = health.get_incidents(test_db, since=since, until=now, component=COMPONENT_SEQERA_API)
     assert len(api_only) == 1
     assert api_only[0].ended_at is not None
 

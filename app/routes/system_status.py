@@ -52,9 +52,7 @@ async def get_admin_system_status_history(
         le=_MAX_HISTORY_HOURS,
         description="How many hours of downtime history to return",
     ),
-    component: str | None = Query(
-        default=None, description="Restrict to a single component name"
-    ),
+    component: str | None = Query(default=None, description="Restrict to a single component name"),
     db: Session = Depends(get_db),
 ) -> SystemStatusDowntimeResponse:
     """Return per-component downtime incidents, so admins can see how frequently
