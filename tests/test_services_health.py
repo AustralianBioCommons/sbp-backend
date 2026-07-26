@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from app.db.models.system_status import SystemStatusCache, SystemStatusIncident
@@ -14,6 +15,19 @@ from app.schemas.health import (
     COMPONENT_TOWER_AGENT,
 )
 from app.services import health
+
+
+@pytest.fixture(autouse=True)
+def _agent_healthcheck_disabled_by_default(monkeypatch):
+    """Keep these tests hermetic regardless of a developer's local .env.
+
+    The Tower Agent probe is opt-in via ENABLE_AGENT_HEALTHCHECK, and app.main
+    loads .env at import time, so a developer with it set locally would
+    otherwise get an unmocked probe_tower_agent() running in every test here.
+    Tests that specifically exercise the agent probe re-enable it themselves
+    (see _install_agent_mock).
+    """
+    monkeypatch.delenv("ENABLE_AGENT_HEALTHCHECK", raising=False)
 
 
 def _component(status: health.SystemStatus, name: str) -> health.ProbeResult:
@@ -517,7 +531,6 @@ def _install_agent_mock(
 
 
 async def test_agent_probe_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("ENABLE_AGENT_HEALTHCHECK", raising=False)
     _mock_response(
         monkeypatch,
         user_info=_ok_user_info,

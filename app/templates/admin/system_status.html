@@ -11,6 +11,12 @@
 {% endblock %}
 
 {% block content %}
+<style>
+  .help-cursor { cursor: help; }
+  .status-bar { position: relative; height: 20px; border-radius: 4px; flex: 1; overflow: hidden; }
+  .status-bar-segment { position: absolute; top: 0; bottom: 0; cursor: help; }
+  .history-name-col { min-width: 220px; flex-shrink: 0; margin-right: 1rem; }
+</style>
 <div class="col-12">
   <div class="card">
     <div class="card-header d-flex align-items-center">
@@ -33,7 +39,7 @@
             <th>Status</th>
             <th>
               Latency
-              <i class="fa-solid fa-circle-info text-muted ms-1" style="cursor: help"
+              <i class="fa-solid fa-circle-info text-muted ms-1 help-cursor"
                  data-bs-toggle="tooltip" data-bs-placement="top"
                  title="Round-trip time for the probe (measured server-side). The Tower Agent check is much slower because it creates and deletes a throwaway compute env to validate the agent."></i>
             </th>
@@ -143,15 +149,18 @@
     return base + note;
   }
 
+  // Common `data-bs-toggle="tooltip" ... title="..."` attribute string, shared by
+  // every element below that shows a hover tooltip.
+  function tooltipAttrs(title) {
+    if (!title) return "";
+    return ' data-bs-toggle="tooltip" data-bs-placement="top" title="' + escapeHtml(title) + '"';
+  }
+
   function latencyCell(component) {
     var ms = component.latencyMs;
     if (ms === null || ms === undefined) return "—";
     return (
-      '<span style="cursor:help" data-bs-toggle="tooltip" data-bs-placement="top" title="' +
-      escapeHtml(latencyTooltip(component)) +
-      '">' +
-      ms +
-      " ms</span>"
+      '<span class="help-cursor"' + tooltipAttrs(latencyTooltip(component)) + ">" + ms + " ms</span>"
     );
   }
 
@@ -159,10 +168,7 @@
     var desc = DESCRIPTIONS[name];
     if (!desc) return "";
     return (
-      ' <i class="fa-solid fa-circle-info text-muted ms-1" style="cursor:help"' +
-      ' data-bs-toggle="tooltip" data-bs-placement="top" title="' +
-      escapeHtml(desc) +
-      '"></i>'
+      ' <i class="fa-solid fa-circle-info text-muted ms-1 help-cursor"' + tooltipAttrs(desc) + "></i>"
     );
   }
 
@@ -191,12 +197,8 @@
     var cls = pillClass[status] || DEFAULT_PILL;
     var label = status ? status.charAt(0).toUpperCase() + status.slice(1) : "Unknown";
     var desc = STATUS_DESCRIPTIONS[status];
-    var tip = desc
-      ? ' style="cursor:help" data-bs-toggle="tooltip" data-bs-placement="top" title="' +
-        escapeHtml(desc) +
-        '"'
-      : "";
-    return '<span class="badge ' + cls + '"' + tip + ">" + label + "</span>";
+    var helpClass = desc ? " help-cursor" : "";
+    return '<span class="badge ' + cls + helpClass + '"' + tooltipAttrs(desc) + ">" + label + "</span>";
   }
 
   function escapeHtml(value) {
@@ -306,12 +308,7 @@
   function incidentBar(incidents, sinceMs, untilMs) {
     var windowMs = Math.max(untilMs - sinceMs, 1);
     var bar = document.createElement("div");
-    bar.className = "bg-success-lt";
-    bar.style.position = "relative";
-    bar.style.height = "20px";
-    bar.style.borderRadius = "4px";
-    bar.style.flex = "1";
-    bar.style.overflow = "hidden";
+    bar.className = "bg-success-lt status-bar";
 
     incidents.forEach(function (incident) {
       var startMs = Math.max(new Date(incident.startedAt).getTime(), sinceMs);
@@ -322,13 +319,9 @@
       if (endMs <= startMs) return;
 
       var seg = document.createElement("div");
-      seg.className = incident.status === "unhealthy" ? "bg-danger" : "bg-warning";
-      seg.style.position = "absolute";
-      seg.style.top = "0";
-      seg.style.bottom = "0";
+      seg.className = (incident.status === "unhealthy" ? "bg-danger" : "bg-warning") + " status-bar-segment";
       seg.style.left = ((startMs - sinceMs) / windowMs) * 100 + "%";
       seg.style.width = Math.max(((endMs - startMs) / windowMs) * 100, 0.5) + "%";
-      seg.style.cursor = "help";
       seg.setAttribute("data-bs-toggle", "tooltip");
       seg.setAttribute("data-bs-placement", "top");
       var label =
@@ -387,9 +380,7 @@
       topRow.className = "d-flex align-items-center";
 
       var nameCol = document.createElement("div");
-      nameCol.style.minWidth = "220px";
-      nameCol.style.flexShrink = "0";
-      nameCol.style.marginRight = "1rem";
+      nameCol.className = "history-name-col";
       nameCol.innerHTML =
         "<strong>" + escapeHtml(component.name) + "</strong>" + infoIcon(component.name) +
         '<div class="text-muted small text-nowrap">' +
