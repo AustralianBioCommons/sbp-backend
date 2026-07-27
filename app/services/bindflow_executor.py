@@ -16,7 +16,12 @@ from .bindflow_config import (
     get_bindflow_config_text,
     get_bindflow_default_params,
 )
-from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .launch_payloads import (
+    DEFAULT_MODULE_LOADS,
+    get_executor_script,
+    inject_prerun_script,
+    without_prerun_script,
+)
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
@@ -129,7 +134,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
 
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        module_loads=["singularity", "nextflow"],
+        module_loads=DEFAULT_MODULE_LOADS,
         env={
             "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
             "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),

@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .launch_payloads import (
+    DEFAULT_MODULE_LOADS,
+    get_executor_script,
+    inject_prerun_script,
+    without_prerun_script,
+)
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
@@ -149,7 +154,7 @@ async def launch_proteinfold_workflow(
 
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        module_loads=["singularity", "nextflow"],
+        module_loads=DEFAULT_MODULE_LOADS,
         env={
             "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
             "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
