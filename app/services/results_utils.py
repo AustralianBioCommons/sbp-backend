@@ -173,7 +173,7 @@ async def resolve_fasta_form_data(
                 expiration=3600,
                 response_content_disposition=_format_attachment_content_disposition(filename),
             )
-        except S3ConfigurationError, S3ServiceError:
+        except (S3ConfigurationError, S3ServiceError):
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -213,7 +213,7 @@ async def resolve_pdb_presigned_urls(
             response_content_disposition=_format_attachment_content_disposition(filename),
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except S3ConfigurationError, S3ServiceError:
+    except (S3ConfigurationError, S3ServiceError):
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
@@ -654,6 +654,35 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
     return prefixes
 
 
+def classify_rfdiffusion_output_key(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+    basename = normalized.rsplit("/", 1)[-1]
+    if "/results/" in normalized.lower() and basename == "ranked_designs.csv":
+        return ClassifiedOutput(category="stats_csv", label=basename)
+    return None
+
+
+def get_rfdiffusion_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    return None
+
+
+async def extract_rfdiffusion_max_score(score_file: str) -> float | None:
+    # get_rfdiffusion_score_file always returns None (ranked_designs.csv's score
+    # column isn't documented yet), so this is never actually invoked.
+    return None
+
+
+def build_rfdiffusion_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+    return [f"{run_uuid}/results/"]
+
+
 def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
     return WorkflowResultsSpec(
         kind="interaction-screening",
@@ -689,6 +718,15 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             extract_max_score=extract_bindcraft_max_score,
             classify=classify_bindcraft_output_key,
             supports_snapshots=True,
+        ),
+        "rfdiffusion": WorkflowResultsSpec(
+            kind="de-novo-design",
+            tool="rfdiffusion",
+            required_categories={"stats_csv"},
+            get_prefixes=build_rfdiffusion_output_listing_prefixes,
+            get_score_file=get_rfdiffusion_score_file,
+            extract_max_score=extract_rfdiffusion_max_score,
+            classify=classify_rfdiffusion_output_key,
         ),
     },
     "single-prediction": {
