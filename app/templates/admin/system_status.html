@@ -52,7 +52,9 @@
       </table>
     </div>
     <div class="card-footer d-flex align-items-center">
-      <span class="text-muted small">Auto-refreshes every 30s.</span>
+      <span class="text-muted small">
+        Auto-refreshes every 30s. Times shown in <span id="components-tz"></span>.
+      </span>
       <span id="cloudwatch-link-wrap" class="ms-auto" hidden>
         <a id="cloudwatch-link" href="#" target="_blank" rel="noopener">
           Open backend CloudWatch logs →
@@ -79,6 +81,7 @@
       <span class="text-muted small">
         Only downtime is recorded: a colored segment marks a period the component was degraded (yellow)
         or unhealthy (red). An all-green bar means no downtime in the selected window.
+        Times shown in <span id="history-tz"></span>.
       </span>
     </div>
   </div>
@@ -89,6 +92,33 @@
   // The verbose admin status API is mounted alongside the admin app.
   var ENDPOINT = "/admin/api/system-status";
   var REFRESH_MS = 30000;
+
+  // All timestamps below are rendered with toLocaleString(), i.e. in whatever
+  // timezone the viewer's own browser/OS is set to (not a fixed timezone like
+  // the rest of the admin dashboard). Label it explicitly so it's unambiguous
+  // when cross-referencing against UTC-timestamped CloudWatch logs.
+  var DETECTED_TZ = (function () {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "your browser's local time";
+    } catch (e) {
+      return "your browser's local time";
+    }
+  })();
+  document.getElementById("components-tz").textContent = DETECTED_TZ;
+  document.getElementById("history-tz").textContent = DETECTED_TZ;
+
+  // Short zone abbreviation (e.g. "AEST"/"AEDT") for a given instant, so each
+  // individual timestamp is unambiguous without having to check the footer.
+  // Computed per-date (not just once) since it can change across a DST boundary.
+  function tzAbbrev(date) {
+    try {
+      var parts = Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(date);
+      var part = parts.find(function (p) { return p.type === "timeZoneName"; });
+      return part ? part.value : "";
+    } catch (e) {
+      return "";
+    }
+  }
 
   // text-white + fw-semibold keeps the label readable on the colored fill
   // (Tabler badges default to a muted text color, which washed out on green).
@@ -232,7 +262,12 @@
       : "Unknown";
 
     var checkedAt = document.getElementById("checked-at");
-    checkedAt.textContent = data.checkedAt ? new Date(data.checkedAt).toLocaleString() : "—";
+    if (data.checkedAt) {
+      var checkedAtDate = new Date(data.checkedAt);
+      checkedAt.textContent = checkedAtDate.toLocaleString() + " " + tzAbbrev(checkedAtDate);
+    } else {
+      checkedAt.textContent = "—";
+    }
 
     var body = document.getElementById("components-body");
     disposeTooltips(body); // tear down tooltips on the rows we're replacing
@@ -324,10 +359,12 @@
       seg.style.width = Math.max(((endMs - startMs) / windowMs) * 100, 0.5) + "%";
       seg.setAttribute("data-bs-toggle", "tooltip");
       seg.setAttribute("data-bs-placement", "top");
+      var incidentStart = new Date(incident.startedAt);
       var label =
         (incident.status === "unhealthy" ? "Unhealthy" : "Degraded") +
-        ": " + new Date(incident.startedAt).toLocaleString() +
+        ": " + incidentStart.toLocaleString() +
         " → " + (incident.endedAt ? new Date(incident.endedAt).toLocaleString() : "ongoing") +
+        " " + tzAbbrev(incidentStart) +
         (incident.message ? " (" + incident.message + ")" : "");
       seg.setAttribute("title", label);
       bar.appendChild(seg);
@@ -337,17 +374,18 @@
   }
 
   function incidentListItem(incident) {
+    var startDate = new Date(incident.startedAt);
     var durationSeconds =
-      (incident.endedAt ? new Date(incident.endedAt).getTime() : Date.now()) -
-      new Date(incident.startedAt).getTime();
+      (incident.endedAt ? new Date(incident.endedAt).getTime() : Date.now()) - startDate.getTime();
     var li = document.createElement("li");
     li.className = "small";
     li.innerHTML =
       badge(incident.status) + " " +
-      escapeHtml(new Date(incident.startedAt).toLocaleString()) +
+      escapeHtml(startDate.toLocaleString()) +
       " → " + (incident.endedAt
         ? escapeHtml(new Date(incident.endedAt).toLocaleString())
         : '<span class="text-warning">ongoing</span>') +
+      ' <span class="text-muted">' + escapeHtml(tzAbbrev(startDate)) + "</span>" +
       ' <span class="text-muted">(' + formatDuration(durationSeconds / 1000) + ")</span>" +
       (incident.message
         ? ' <span class="text-muted">— ' + escapeHtml(incident.message) + "</span>"
