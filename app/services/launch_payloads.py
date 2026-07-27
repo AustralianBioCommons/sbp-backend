@@ -7,7 +7,7 @@ from typing import Any
 
 from .workflow_config_fetcher import fetch_workflow_config
 
-DEFAULT_MODULE_LOADS = ["singularity", "nextflow/25.10.3"]
+DEFAULT_MODULE_LOADS = ["singularity", "nextflow/25.10.4"]
 
 
 def without_prerun_script(launch_payload: dict[str, Any]) -> dict[str, Any]:
