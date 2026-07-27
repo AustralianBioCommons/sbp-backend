@@ -17,7 +17,12 @@ from ..schemas.workflows import (
     WorkflowLaunchForm,
     WorkflowUserDetails,
 )
-from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .launch_payloads import (
+    DEFAULT_MODULE_LOADS,
+    get_executor_script,
+    inject_prerun_script,
+    without_prerun_script,
+)
 from .proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
@@ -155,7 +160,7 @@ async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
 
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        module_loads=["singularity", "nextflow"],
+        module_loads=DEFAULT_MODULE_LOADS,
         env={
             "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
             "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
