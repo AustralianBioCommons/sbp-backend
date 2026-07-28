@@ -33,6 +33,7 @@ from ...services.job_utils import (
     get_owned_run_by_id,
     get_user_job_list_rows,
     parse_submit_datetime,
+    sync_service_usage,
 )
 from ...services.seqera import describe_workflow
 from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, delete_workflows_raw
@@ -200,6 +201,10 @@ async def list_jobs(
         if score is None:
             score = await ensure_completed_run_score(db, owned_run, ui_status)
 
+        # Also sync service usage for runs, if needed
+        if owned_run.service_usage is None:
+            await sync_service_usage(db, run=owned_run, ui_status=ui_status)
+
         jobs.append(
             JobListItem(
                 id=run_id,
@@ -259,6 +264,9 @@ async def get_job_details(
     score = await ensure_completed_run_score(db, owned_run, ui_status)
     if ui_status != "Completed":
         score = None
+    # Sync service usage - not returned to user but currently this is where
+    #   we trigger syncs
+    await sync_service_usage(db, run=owned_run, ui_status=ui_status)
 
     raw_tool: str | None = getattr(owned_run, "tool", None) or None
     if not raw_tool:
