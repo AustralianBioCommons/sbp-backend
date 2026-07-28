@@ -173,7 +173,7 @@ async def resolve_fasta_form_data(
                 expiration=3600,
                 response_content_disposition=_format_attachment_content_disposition(filename),
             )
-        except (S3ConfigurationError, S3ServiceError):
+        except S3ConfigurationError, S3ServiceError:
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -213,7 +213,7 @@ async def resolve_pdb_presigned_urls(
             response_content_disposition=_format_attachment_content_disposition(filename),
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except (S3ConfigurationError, S3ServiceError):
+    except S3ConfigurationError, S3ServiceError:
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
