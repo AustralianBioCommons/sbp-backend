@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     text,
+    Float,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
@@ -92,6 +93,7 @@ class WorkflowRun(Base):
         DateTime(timezone=True), nullable=True
     )
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
