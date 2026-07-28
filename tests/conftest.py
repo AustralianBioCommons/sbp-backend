@@ -140,6 +140,7 @@ def persistent_models(test_db):
         datagen.WorkflowRunFactory,
         datagen.RunInputFactory,
         datagen.RunOutputFactory,
+        datagen.S3ObjectFactory,
         datagen.QueuedJobFactory,
     ]
 
