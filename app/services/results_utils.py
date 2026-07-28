@@ -654,6 +654,52 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
     return prefixes
 
 
+def classify_rfdiffusion_output_key(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+    basename = normalized.rsplit("/", 1)[-1]
+    if "/results/" not in normalized.lower():
+        return None
+    if basename == "ranked_designs.csv":
+        return ClassifiedOutput(category="stats_csv", label=basename)
+    if basename == "ranked_designs.tar.gz":
+        return ClassifiedOutput(category="pdb", label=basename)
+    return None
+
+
+def get_rfdiffusion_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    for key in keys:
+        normalized = key.strip()
+        if not normalized:
+            continue
+        basename = normalized.rsplit("/", 1)[-1]
+        if basename == "ranked_designs.csv":
+            return normalized
+    return None
+
+
+async def extract_rfdiffusion_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    row = next(csv_reader, None)
+    if row is None:
+        return None
+    value = row.get("af2_plddt_overall")
+    if value and value.strip():
+        return float(value) / 100
+    return None
+
+
+def build_rfdiffusion_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+    return [f"{run_uuid}/results/"]
+
+
 def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
     return WorkflowResultsSpec(
         kind="interaction-screening",
@@ -689,6 +735,15 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             extract_max_score=extract_bindcraft_max_score,
             classify=classify_bindcraft_output_key,
             supports_snapshots=True,
+        ),
+        "rfdiffusion": WorkflowResultsSpec(
+            kind="de-novo-design",
+            tool="rfdiffusion",
+            required_categories={"stats_csv", "pdb"},
+            get_prefixes=build_rfdiffusion_output_listing_prefixes,
+            get_score_file=get_rfdiffusion_score_file,
+            extract_max_score=extract_rfdiffusion_max_score,
+            classify=classify_rfdiffusion_output_key,
         ),
     },
     "single-prediction": {
