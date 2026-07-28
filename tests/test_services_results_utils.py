@@ -43,7 +43,7 @@ from app.services.results_utils import (
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
-from tests.datagen import AppUserFactory, WorkflowRunFactory
+from tests.datagen import AppUserFactory, RunOutputFactory, S3ObjectFactory, WorkflowRunFactory
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -430,6 +430,50 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
 
     assert await spec.get_max_score(test_db, run) == 0.91
     extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+
+
+@pytest.mark.asyncio
+async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
+    test_db, persistent_models
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        work_dir="workdir-usage-selected",
+    )
+    ignored = S3ObjectFactory.create_sync(
+        object_key="run-1/boltz/T1024/T1024_ptm.tsv",
+        uri="s3://bucket/run-1/boltz/T1024/T1024_ptm.tsv",
+    )
+    usage_object = S3ObjectFactory.create_sync(
+        object_key="run-1/UsageReport.csv",
+        uri="s3://bucket/run-1/UsageReport.csv",
+    )
+    RunOutputFactory.create_sync(run_id=run.id, s3_object_id=ignored.object_key)
+    RunOutputFactory.create_sync(
+        run_id=run.id,
+        s3_object_id=usage_object.object_key,
+    )
+
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classifier=lambda _key, _sample_id: None,
+        get_score_file=get_proteinfold_score_file,
+        extract_max_score=AsyncMock(return_value=0.91),
+    )
+
+    with patch(
+        "app.services.results_utils.get_run_service_usage",
+        new_callable=AsyncMock,
+        return_value=3.45,
+    ) as get_run_service_usage_mock:
+        service_units = await spec.get_service_units(test_db, run)
+
+    assert service_units == 3.45
+    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv")
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
