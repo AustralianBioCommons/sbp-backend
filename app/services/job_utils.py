@@ -211,7 +211,7 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
 async def sync_service_usage(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
     if ui_status != "Completed":
         return None
-    if run.service_usage:
+    if run.service_usage is not None:
         return run.service_usage
 
     try:
