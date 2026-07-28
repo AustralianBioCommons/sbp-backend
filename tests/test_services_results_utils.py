@@ -33,6 +33,7 @@ from app.services.results_utils import (
     get_all_downloads_zipped,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
+    get_run_service_usage,
     get_sample_id_for_result,
     get_tool_name,
     get_wisps_score_file,
@@ -892,6 +893,31 @@ async def test_extract_wisps_max_score_skips_non_numeric_iptm():
         score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
 
     assert score == 0.75
+
+
+# ---------------------------------------------------------------------------
+# get_run_service_usage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_run_service_usage():
+    csv_text = (
+        "Name,Queue,Service Units\n"
+        "prepare,normalbw,0.00\n"
+        "search,normalbw,0.20\n"
+        "predict,gpuhopper,3.25\n"
+    )
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as mock_read:
+        service_usage = await get_run_service_usage("run-1/UsageReport.csv")
+
+    assert service_usage == 3.45
+    mock_read.assert_awaited_once_with("run-1/UsageReport.csv")
 
 
 # ---------------------------------------------------------------------------
