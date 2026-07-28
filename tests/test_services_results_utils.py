@@ -210,6 +210,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
 
     prefixes = build_bindcraft_output_listing_prefixes(run)
     assert prefixes == [
+        f"{run.id}/",
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
         f"{run.id}/bindcraft/sampleZ_0_output/",
@@ -217,6 +218,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
 
     run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
     assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
+        f"{run.id}/",
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
     ]
@@ -374,7 +376,7 @@ async def test_workflow_results_spec_get_max_score_returns_none_without_score_fi
         tool="boltz",
         required_categories=set(),
         get_prefixes=lambda _run: [],
-        classify=lambda _key, _sample_id: None,
+        classifier=lambda _key, _sample_id: None,
         get_score_file=lambda _keys, _sample_id: None,
         extract_max_score=extractor,
     )
@@ -420,7 +422,7 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
         tool="boltz",
         required_categories=set(),
         get_prefixes=lambda _run: [],
-        classify=lambda _key, _sample_id: None,
+        classifier=lambda _key, _sample_id: None,
         get_score_file=get_proteinfold_score_file,
         extract_max_score=extractor,
     )
@@ -482,6 +484,7 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("alignment", "single_prediction.a3m")
 
     assert build_boltz_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/boltz/top_ranked_structures/",
         f"{run.id}/mmseqs/",
@@ -538,6 +541,7 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
 
     assert build_alphafold2_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
         f"{run.id}/alphafold2/split_msa_prediction/T1024/",
@@ -597,6 +601,7 @@ def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("alignment", "single_prediction.a3m")
 
     assert build_colabfold_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/colabfold/top_ranked_structures/",
         f"{run.id}/mmseqs/",
@@ -894,10 +899,11 @@ async def test_extract_wisps_max_score_skips_non_numeric_iptm():
 # ---------------------------------------------------------------------------
 
 
-def test_build_wisps_output_listing_prefixes_returns_three_prefixes():
+def test_build_wisps_output_listing_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
     prefixes = build_wisps_output_listing_prefixes(run)
-    assert len(prefixes) == 3
+    assert len(prefixes) == 4
+    assert f"{run.id}/" in prefixes
     assert f"{run.id}/multiqc/" in prefixes
     assert f"{run.id}/collect/" in prefixes
     assert f"{run.id}/ipsae/" in prefixes
