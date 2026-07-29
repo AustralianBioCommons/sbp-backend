@@ -168,8 +168,9 @@ class WorkflowRunAdmin(ModelView):
         HasOne("owner", identity="app-user"),
         "seqera_run_id",
         "run_name",
-        "binder_name",
+        "service_usage",
         JSONField("submitted_form_data"),
+        "binder_name",
         "work_dir",
         "submission_timestamp",
     ]
