@@ -96,7 +96,7 @@ async def test_get_job_details_success(test_db):
     )
     workflow = Workflow(
         id=uuid4(),
-        name="BindCraft",
+        name="de-novo-design",
         description="Binding workflow",
         repo_url="https://github.com/test/bindcraft",
         default_revision="main",
@@ -136,7 +136,7 @@ async def test_get_job_details_success(test_db):
 
     assert result.id == str(run.id)
     assert result.jobName == "PDL1"
-    assert result.workflow == "Bindcraft"
+    assert result.workflow == "De Novo Design"
     assert result.score == 0.912
 
 

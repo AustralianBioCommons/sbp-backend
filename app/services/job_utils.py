@@ -206,3 +206,27 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         db.add(RunMetric(run_id=run.id, max_score=bounded_score))
     db.commit()
     return _round_score(bounded_score)
+
+
+async def sync_service_usage(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+    if ui_status != "Completed":
+        return None
+    if run.service_usage is not None:
+        return run.service_usage
+
+    try:
+        spec = get_output_spec(run)
+    except ValueError as exc:
+        logger.warning(f"Can't get service usage for run {run.id} - can't get output spec: {exc}")
+        return None
+
+    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+
+    usage = await spec.get_service_units(db, run)
+    if usage is None:
+        return None
+    else:
+        run.service_usage = usage
+        db.add(run)
+        db.commit()
+        return usage

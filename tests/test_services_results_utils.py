@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zipfile import ZipFile
 
@@ -20,29 +20,36 @@ from app.services.results_utils import (
     build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
     build_colabfold_proteinfold_output_listing_prefixes,
+    build_rfdiffusion_output_listing_prefixes,
     build_wisps_output_listing_prefixes,
     classify_alphafold2_proteinfold_output,
     classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
+    classify_rfdiffusion_output_key,
+    classify_shared_outputs,
     classify_wisps_output_key,
     extract_bindcraft_max_score,
     extract_proteinfold_max_score,
+    extract_rfdiffusion_max_score,
     extract_wisps_max_score,
     format_log_entries,
     get_all_downloads_zipped,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
+    get_rfdiffusion_score_file,
+    get_run_service_usage,
     get_sample_id_for_result,
     get_tool_name,
     get_wisps_score_file,
+    list_workflow_outputs_from_s3,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
-from tests.datagen import AppUserFactory, WorkflowRunFactory
+from tests.datagen import AppUserFactory, RunOutputFactory, S3ObjectFactory, WorkflowRunFactory
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -210,6 +217,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
 
     prefixes = build_bindcraft_output_listing_prefixes(run)
     assert prefixes == [
+        f"{run.id}/",
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
         f"{run.id}/bindcraft/sampleZ_0_output/",
@@ -217,6 +225,7 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
 
     run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
     assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
+        f"{run.id}/",
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
     ]
@@ -225,6 +234,81 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
     monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+
+
+def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+
+    assert classify_rfdiffusion_output_key(" ") is None
+    assert classify_rfdiffusion_output_key("folder/") is None
+    assert classify_rfdiffusion_output_key(f"{run.id}/ranked_designs.csv") is None
+    assert classify_rfdiffusion_output_key(f"{run.id}/results/other.txt") is None
+    assert classify_rfdiffusion_output_key(
+        f"{run.id}/results/ranked_designs.csv"
+    ) == ClassifiedOutput(
+        "stats_csv",
+        "ranked_designs.csv",
+    )
+    assert classify_rfdiffusion_output_key(
+        f"{run.id}/results/ranked_designs.tar.gz"
+    ) == ClassifiedOutput(
+        "pdb",
+        "ranked_designs.tar.gz",
+    )
+
+    assert build_rfdiffusion_output_listing_prefixes(run) == [
+        f"{run.id}/",
+        f"{run.id}/results/",
+    ]
+    assert build_rfdiffusion_output_listing_prefixes(SimpleNamespace(id=None)) == []
+
+
+def test_get_rfdiffusion_score_file_uses_ranked_designs_csv():
+    assert (
+        get_rfdiffusion_score_file(
+            [
+                " ",
+                "run-1/results/other.csv",
+                " run-1/results/ranked_designs.csv ",
+            ],
+            sample_id="sampleZ",
+        )
+        == "run-1/results/ranked_designs.csv"
+    )
+    assert get_rfdiffusion_score_file(["run-1/results/other.csv"], sample_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
+    csv_text = "design,af2_plddt_overall\nsampleZ_0,91.3\nsampleZ_1,88.1\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as read_file:
+        score = await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv")
+
+    assert score == pytest.approx(0.913)
+    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv")
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_max_score_returns_none_without_score_value():
+    """
+    Test extract_rfdiffusion_max_score returns None when no af2_plddt_overall score is available
+    """
+    for csv_text in [
+        "design,af2_plddt_overall\n",
+        "design,af2_plddt_overall\nsampleZ_0, \n",
+        "design,other_score\nsampleZ_0,91.3\n",
+    ]:
+        with patch(
+            "app.services.results_utils.read_s3_file",
+            new_callable=AsyncMock,
+            return_value=csv_text,
+        ):
+            assert await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv") is None
 
 
 @pytest.mark.asyncio
@@ -353,6 +437,51 @@ def test_all_workflow_output_specs_have_score_hooks():
 
 
 @pytest.mark.asyncio
+async def test_list_workflow_outputs_from_s3_continues():
+    """
+    Test list_wokflow_outputs_from_s3 continues past S3 errors when suppress_s3_errors is True
+    """
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        sample_id="sampleZ",
+        seqera_run_id="seqera-run-1",
+    )
+
+    async def extract_max_score(_key: str) -> float | None:
+        return None
+
+    spec = WorkflowResultsSpec(
+        kind="de-novo-design",
+        tool="rfdiffusion",
+        required_categories=set(),
+        get_prefixes=lambda _run: ["failed-prefix/", "ok-prefix/"],
+        classifier=classify_rfdiffusion_output_key,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=extract_max_score,
+    )
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new=AsyncMock(
+            side_effect=[
+                S3ServiceError("failed to list"),
+                [{"key": "ok-prefix/results/ranked_designs.csv"}],
+            ]
+        ),
+    ) as list_s3_files_mock:
+        outputs = await list_workflow_outputs_from_s3(run, spec, suppress_s3_errors=True)
+
+    assert outputs == {
+        "ok-prefix/results/ranked_designs.csv": ClassifiedOutput(
+            category="stats_csv",
+            label="ranked_designs.csv",
+        )
+    }
+    assert list_s3_files_mock.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_workflow_results_spec_get_max_score_returns_none_without_score_file(test_db):
     user = AppUser(
         auth0_user_id="auth0|score-none-user",
@@ -374,7 +503,7 @@ async def test_workflow_results_spec_get_max_score_returns_none_without_score_fi
         tool="boltz",
         required_categories=set(),
         get_prefixes=lambda _run: [],
-        classify=lambda _key, _sample_id: None,
+        classifier=lambda _key, _sample_id: None,
         get_score_file=lambda _keys, _sample_id: None,
         extract_max_score=extractor,
     )
@@ -420,13 +549,57 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
         tool="boltz",
         required_categories=set(),
         get_prefixes=lambda _run: [],
-        classify=lambda _key, _sample_id: None,
+        classifier=lambda _key, _sample_id: None,
         get_score_file=get_proteinfold_score_file,
         extract_max_score=extractor,
     )
 
     assert await spec.get_max_score(test_db, run) == 0.91
     extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+
+
+@pytest.mark.asyncio
+async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
+    test_db, persistent_models
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        work_dir="workdir-usage-selected",
+    )
+    ignored = S3ObjectFactory.create_sync(
+        object_key="run-1/boltz/T1024/T1024_ptm.tsv",
+        uri="s3://bucket/run-1/boltz/T1024/T1024_ptm.tsv",
+    )
+    usage_object = S3ObjectFactory.create_sync(
+        object_key="run-1/UsageReport.csv",
+        uri="s3://bucket/run-1/UsageReport.csv",
+    )
+    RunOutputFactory.create_sync(run_id=run.id, s3_object_id=ignored.object_key)
+    RunOutputFactory.create_sync(
+        run_id=run.id,
+        s3_object_id=usage_object.object_key,
+    )
+
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classifier=lambda _key, _sample_id: None,
+        get_score_file=get_proteinfold_score_file,
+        extract_max_score=AsyncMock(return_value=0.91),
+    )
+
+    with patch(
+        "app.services.results_utils.get_run_service_usage",
+        new_callable=AsyncMock,
+        return_value=3.45,
+    ) as get_run_service_usage_mock:
+        service_units = await spec.get_service_units(test_db, run)
+
+    assert service_units == 3.45
+    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv")
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
@@ -482,6 +655,7 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("alignment", "single_prediction.a3m")
 
     assert build_boltz_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/boltz/top_ranked_structures/",
         f"{run.id}/mmseqs/",
@@ -538,6 +712,7 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("stats_csv", "T1024_0_pae.tsv")
 
     assert build_alphafold2_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
         f"{run.id}/alphafold2/split_msa_prediction/T1024/",
@@ -597,6 +772,7 @@ def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
     ) == ClassifiedOutput("alignment", "single_prediction.a3m")
 
     assert build_colabfold_proteinfold_output_listing_prefixes(run) == [
+        f"{run.id}/",
         f"{run.id}/reports/",
         f"{run.id}/colabfold/top_ranked_structures/",
         f"{run.id}/mmseqs/",
@@ -890,14 +1066,40 @@ async def test_extract_wisps_max_score_skips_non_numeric_iptm():
 
 
 # ---------------------------------------------------------------------------
+# get_run_service_usage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_run_service_usage():
+    csv_text = (
+        "Name,Queue,Service Units\n"
+        "prepare,normalbw,0.00\n"
+        "search,normalbw,0.20\n"
+        "predict,gpuhopper,3.25\n"
+    )
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as mock_read:
+        service_usage = await get_run_service_usage("run-1/UsageReport.csv")
+
+    assert service_usage == 3.45
+    mock_read.assert_awaited_once_with("run-1/UsageReport.csv")
+
+
+# ---------------------------------------------------------------------------
 # build_wisps_output_listing_prefixes
 # ---------------------------------------------------------------------------
 
 
-def test_build_wisps_output_listing_prefixes_returns_three_prefixes():
+def test_build_wisps_output_listing_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
     prefixes = build_wisps_output_listing_prefixes(run)
-    assert len(prefixes) == 3
+    assert len(prefixes) == 4
+    assert f"{run.id}/" in prefixes
     assert f"{run.id}/multiqc/" in prefixes
     assert f"{run.id}/collect/" in prefixes
     assert f"{run.id}/ipsae/" in prefixes
@@ -922,3 +1124,32 @@ def test_workflow_output_specs_has_interaction_screening():
         assert spec.kind == "interaction-screening"
         assert spec.get_score_file is not None
         assert spec.extract_max_score is not None
+
+
+def test_classify_shared_outputs_usage_report_csv():
+    result = classify_shared_outputs("runs/run-1/UsageReport.csv")
+
+    assert result == ClassifiedOutput(category="usage", label="UsageReport.csv")
+
+
+def test_workflow_results_spec_classify_output_uses_shared_outputs():
+    """Test WorkflowResultsSpec classifies shared outputs before workflow-specific outputs."""
+
+    async def extract_max_score(_key: str) -> float | None:
+        return None
+
+    classifier = MagicMock(return_value=ClassifiedOutput(category="pdb", label="ignored.pdb"))
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classifier=classifier,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=extract_max_score,
+    )
+
+    result = spec.classify_output("runs/run-1/UsageReport.csv", sample_id="T1024")
+
+    assert result == ClassifiedOutput(category="usage", label="UsageReport.csv")
+    classifier.assert_not_called()

@@ -5,7 +5,7 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
-from app.db.models.core import AppUser, RunInput, RunOutput, Workflow, WorkflowRun
+from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, Workflow, WorkflowRun
 from app.db.models.job_queue import QueuedJob
 from app.services.job_utils import UserJobListRow
 
@@ -59,6 +59,10 @@ class RunInputFactory(SQLAlchemyFactory[RunInput]):
 
 
 class RunOutputFactory(SQLAlchemyFactory[RunOutput]):
+    __set_relationships__ = False
+
+
+class S3ObjectFactory(SQLAlchemyFactory[S3Object]):
     __set_relationships__ = False
 
 
