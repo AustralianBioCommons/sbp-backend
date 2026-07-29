@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zipfile import ZipFile
 
@@ -20,23 +20,29 @@ from app.services.results_utils import (
     build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
     build_colabfold_proteinfold_output_listing_prefixes,
+    build_rfdiffusion_output_listing_prefixes,
     build_wisps_output_listing_prefixes,
     classify_alphafold2_proteinfold_output,
     classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
+    classify_rfdiffusion_output_key,
+    classify_shared_outputs,
     classify_wisps_output_key,
     extract_bindcraft_max_score,
     extract_proteinfold_max_score,
+    extract_rfdiffusion_max_score,
     extract_wisps_max_score,
     format_log_entries,
     get_all_downloads_zipped,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
+    get_rfdiffusion_score_file,
     get_run_service_usage,
     get_sample_id_for_result,
     get_tool_name,
     get_wisps_score_file,
+    list_workflow_outputs_from_s3,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
@@ -230,6 +236,81 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
     assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
 
 
+def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+
+    assert classify_rfdiffusion_output_key(" ") is None
+    assert classify_rfdiffusion_output_key("folder/") is None
+    assert classify_rfdiffusion_output_key(f"{run.id}/ranked_designs.csv") is None
+    assert classify_rfdiffusion_output_key(f"{run.id}/results/other.txt") is None
+    assert classify_rfdiffusion_output_key(
+        f"{run.id}/results/ranked_designs.csv"
+    ) == ClassifiedOutput(
+        "stats_csv",
+        "ranked_designs.csv",
+    )
+    assert classify_rfdiffusion_output_key(
+        f"{run.id}/results/ranked_designs.tar.gz"
+    ) == ClassifiedOutput(
+        "pdb",
+        "ranked_designs.tar.gz",
+    )
+
+    assert build_rfdiffusion_output_listing_prefixes(run) == [
+        f"{run.id}/",
+        f"{run.id}/results/",
+    ]
+    assert build_rfdiffusion_output_listing_prefixes(SimpleNamespace(id=None)) == []
+
+
+def test_get_rfdiffusion_score_file_uses_ranked_designs_csv():
+    assert (
+        get_rfdiffusion_score_file(
+            [
+                " ",
+                "run-1/results/other.csv",
+                " run-1/results/ranked_designs.csv ",
+            ],
+            sample_id="sampleZ",
+        )
+        == "run-1/results/ranked_designs.csv"
+    )
+    assert get_rfdiffusion_score_file(["run-1/results/other.csv"], sample_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
+    csv_text = "design,af2_plddt_overall\nsampleZ_0,91.3\nsampleZ_1,88.1\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as read_file:
+        score = await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv")
+
+    assert score == pytest.approx(0.913)
+    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv")
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_max_score_returns_none_without_score_value():
+    """
+    Test extract_rfdiffusion_max_score returns None when no af2_plddt_overall score is available
+    """
+    for csv_text in [
+        "design,af2_plddt_overall\n",
+        "design,af2_plddt_overall\nsampleZ_0, \n",
+        "design,other_score\nsampleZ_0,91.3\n",
+    ]:
+        with patch(
+            "app.services.results_utils.read_s3_file",
+            new_callable=AsyncMock,
+            return_value=csv_text,
+        ):
+            assert await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv") is None
+
+
 @pytest.mark.asyncio
 async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_each_output(
     test_db, persistent_models
@@ -353,6 +434,51 @@ def test_all_workflow_output_specs_have_score_hooks():
         for spec in workflow_specs.values():
             assert spec.get_score_file is not None
             assert spec.extract_max_score is not None
+
+
+@pytest.mark.asyncio
+async def test_list_workflow_outputs_from_s3_continues():
+    """
+    Test list_wokflow_outputs_from_s3 continues past S3 errors when suppress_s3_errors is True
+    """
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        sample_id="sampleZ",
+        seqera_run_id="seqera-run-1",
+    )
+
+    async def extract_max_score(_key: str) -> float | None:
+        return None
+
+    spec = WorkflowResultsSpec(
+        kind="de-novo-design",
+        tool="rfdiffusion",
+        required_categories=set(),
+        get_prefixes=lambda _run: ["failed-prefix/", "ok-prefix/"],
+        classifier=classify_rfdiffusion_output_key,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=extract_max_score,
+    )
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new=AsyncMock(
+            side_effect=[
+                S3ServiceError("failed to list"),
+                [{"key": "ok-prefix/results/ranked_designs.csv"}],
+            ]
+        ),
+    ) as list_s3_files_mock:
+        outputs = await list_workflow_outputs_from_s3(run, spec, suppress_s3_errors=True)
+
+    assert outputs == {
+        "ok-prefix/results/ranked_designs.csv": ClassifiedOutput(
+            category="stats_csv",
+            label="ranked_designs.csv",
+        )
+    }
+    assert list_s3_files_mock.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -998,3 +1124,32 @@ def test_workflow_output_specs_has_interaction_screening():
         assert spec.kind == "interaction-screening"
         assert spec.get_score_file is not None
         assert spec.extract_max_score is not None
+
+
+def test_classify_shared_outputs_usage_report_csv():
+    result = classify_shared_outputs("runs/run-1/UsageReport.csv")
+
+    assert result == ClassifiedOutput(category="usage", label="UsageReport.csv")
+
+
+def test_workflow_results_spec_classify_output_uses_shared_outputs():
+    """Test WorkflowResultsSpec classifies shared outputs before workflow-specific outputs."""
+
+    async def extract_max_score(_key: str) -> float | None:
+        return None
+
+    classifier = MagicMock(return_value=ClassifiedOutput(category="pdb", label="ignored.pdb"))
+    spec = WorkflowResultsSpec(
+        kind="single-prediction",
+        tool="boltz",
+        required_categories=set(),
+        get_prefixes=lambda _run: [],
+        classifier=classifier,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=extract_max_score,
+    )
+
+    result = spec.classify_output("runs/run-1/UsageReport.csv", sample_id="T1024")
+
+    assert result == ClassifiedOutput(category="usage", label="UsageReport.csv")
+    classifier.assert_not_called()

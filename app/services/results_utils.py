@@ -750,7 +750,7 @@ def build_rfdiffusion_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
         return []
-    return [f"{run_uuid}/results/"]
+    return [f"{run_uuid}/", f"{run_uuid}/results/"]
 
 
 def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
