@@ -160,21 +160,22 @@ class WorkflowAdmin(ModelView):
 
 class WorkflowRunAdmin(ModelView):
     fields = [
-        "id",
+        "submission_timestamp",
+        HasOne("workflow", identity="workflow"),
         "workflow_id",
         "tool",
-        "owner_user_id",
-        HasOne("workflow", identity="workflow"),
         HasOne("owner", identity="app-user"),
+        "owner_user_id",
         "seqera_run_id",
         "run_name",
         "service_usage",
         JSONField("submitted_form_data"),
         "binder_name",
         "work_dir",
-        "submission_timestamp",
+        "id",
     ]
-    exclude_fields_from_list = "submitted_form_data"
+    exclude_fields_from_list = ["submitted_form_data"]
+    fields_default_sort = [("submission_timestamp", True)]
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.run_name}"
