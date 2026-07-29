@@ -135,6 +135,7 @@ def classify_shared_outputs(key: str) -> ClassifiedOutput | None:
 
     return None
 
+
 def _sanitize_content_disposition_filename(filename: str) -> str:
     sanitized = _HEADER_UNSAFE_FILENAME_CHARS.sub("_", filename).strip()
     return sanitized or "download"
@@ -1042,8 +1043,11 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)
     # Exclude snapshots
-    downloads = [(key, output) for key, output in outputs.items()
-                 if output.category not in ("snapshot", "usage")]
+    downloads = [
+        (key, output)
+        for key, output in outputs.items()
+        if output.category not in ("snapshot", "usage")
+    ]
 
     used_filenames: set[str] = set()
     zip_file = BytesIO()

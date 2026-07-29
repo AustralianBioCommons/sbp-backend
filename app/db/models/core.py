@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Numeric,
@@ -14,7 +15,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     text,
-    Float,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
