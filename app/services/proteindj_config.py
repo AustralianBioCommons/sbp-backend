@@ -21,7 +21,7 @@ def get_proteindj_default_params(
     no samplesheet — so these are passed straight through as paramsText keys.
     """
     return {
-        "outdir": out_dir,
+        "out_dir": out_dir,
         "input_pdb": input_pdb,
         "hotspot_residues": hotspot_residues,
         "num_designs": num_designs,

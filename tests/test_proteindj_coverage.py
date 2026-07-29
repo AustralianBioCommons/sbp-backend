@@ -69,7 +69,7 @@ def _queued_proteindj_job(
         "workspaceId": "ws_123",
         "revision": "dev",
         "paramsText": params_text
-        or ("outdir: s3://my-bucket/run-output-id\ninput_pdb: s3://my-bucket/inputs/test.pdb"),
+        or ("out_dir: s3://my-bucket/run-output-id\ninput_pdb: s3://my-bucket/inputs/test.pdb"),
         "configProfiles": ["singularity"],
         "configText": "config_text",
         "resume": False,
@@ -182,7 +182,7 @@ def test_get_proteindj_default_params_all_fields():
         design_length="100-150",
     )
     assert params == {
-        "outdir": "s3://bucket/out",
+        "out_dir": "s3://bucket/out",
         "input_pdb": "s3://bucket/in.pdb",
         "hotspot_residues": "A20,A21",
         "num_designs": 5,
@@ -328,7 +328,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     params_text = queued_job.launch_payload["paramsText"]
-    assert "outdir: s3://my-bucket/run-output-id" in params_text
+    assert "out_dir: s3://my-bucket/run-output-id" in params_text
     assert "input_pdb: s3://my-bucket/inputs/test.pdb" in params_text
     assert "hotspot_residues: A20,A21" in params_text
     assert "num_designs: 5" in params_text
