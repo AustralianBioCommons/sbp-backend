@@ -17,9 +17,9 @@ from app.services.s3 import (
     get_s3_client,
     list_s3_files,
     read_csv_from_s3,
+    read_s3_bytes,
     read_s3_file,
     upload_file_to_s3,
-    read_s3_bytes,
 )
 
 
@@ -301,7 +301,6 @@ async def test_read_s3_bytes_client_error(mock_env_vars, mock_s3_client):
 
     with pytest.raises(S3ServiceError, match="Failed to read file from S3"):
         await read_s3_bytes("results/test/missing.tsv")
-
 
 
 @pytest.mark.asyncio
