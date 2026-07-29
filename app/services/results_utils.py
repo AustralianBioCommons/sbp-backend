@@ -795,7 +795,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_rfdiffusion_output_listing_prefixes,
             get_score_file=get_rfdiffusion_score_file,
             extract_max_score=extract_rfdiffusion_max_score,
-            classify=classify_rfdiffusion_output_key,
+            classifier=classify_rfdiffusion_output_key,
         ),
     },
     "single-prediction": {
