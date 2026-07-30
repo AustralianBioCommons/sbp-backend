@@ -5,14 +5,29 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
+from sqlalchemy import select
 
-from app.db.models.system_status import SystemStatusCache
+from app.db.models.system_status import SystemStatusCache, SystemStatusIncident
 from app.schemas.health import (
     COMPONENT_COMPUTE_ENV,
     COMPONENT_SEQERA_API,
     COMPONENT_TOWER_AGENT,
 )
 from app.services import health
+
+
+@pytest.fixture(autouse=True)
+def _agent_healthcheck_disabled_by_default(monkeypatch):
+    """Keep these tests hermetic regardless of a developer's local .env.
+
+    The Tower Agent probe is opt-in via ENABLE_AGENT_HEALTHCHECK, and app.main
+    loads .env at import time, so a developer with it set locally would
+    otherwise get an unmocked probe_tower_agent() running in every test here.
+    Tests that specifically exercise the agent probe re-enable it themselves
+    (see _install_agent_mock).
+    """
+    monkeypatch.delenv("ENABLE_AGENT_HEALTHCHECK", raising=False)
 
 
 def _component(status: health.SystemStatus, name: str) -> health.ProbeResult:
@@ -216,6 +231,201 @@ async def test_stale_cache_served_when_another_process_refreshes(monkeypatch, te
     assert stale.checked_at == first.checked_at
 
 
+# ---------------------------------------------------------------------------
+# Downtime incidents (only degraded/unhealthy periods are recorded)
+# ---------------------------------------------------------------------------
+
+
+def _incidents(db, component=None):
+    rows = db.execute(select(SystemStatusIncident)).scalars().all()
+    return [r for r in rows if component is None or r.component == component]
+
+
+async def test_healthy_refresh_writes_no_incidents(monkeypatch, test_db):
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("AVAILABLE"),
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    assert _incidents(test_db) == []
+
+
+async def test_going_unhealthy_opens_an_incident(monkeypatch, test_db):
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("ERRORED", "Gadi agent disconnected"),
+    )
+    status = await health.get_system_status(test_db, force_refresh=True)
+
+    rows = _incidents(test_db, COMPONENT_COMPUTE_ENV)
+    assert len(rows) == 1
+    assert rows[0].status == "unhealthy"
+    assert rows[0].ended_at is None
+    assert "Gadi agent disconnected" in (rows[0].message or "")
+    assert rows[0].started_at == status.checked_at.replace(tzinfo=None)
+
+
+async def test_recovering_to_healthy_closes_the_incident(monkeypatch, test_db):
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("ERRORED"),
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("AVAILABLE"),
+    )
+    recovered = await health.get_system_status(test_db, force_refresh=True)
+
+    rows = _incidents(test_db, COMPONENT_COMPUTE_ENV)
+    assert len(rows) == 1  # closed, not duplicated
+    assert rows[0].ended_at == recovered.checked_at.replace(tzinfo=None)
+
+
+async def test_staying_unhealthy_does_not_open_a_second_incident(monkeypatch, test_db):
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("ERRORED", "first error"),
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("ERRORED", "still erroring"),
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    rows = _incidents(test_db, COMPONENT_COMPUTE_ENV)
+    assert len(rows) == 1
+    assert rows[0].ended_at is None
+    # The message on the still-open incident is refreshed to the latest probe result.
+    assert rows[0].message == "Compute environment state: ERRORED (still erroring)"
+
+
+async def test_severity_change_splits_the_incident(monkeypatch, test_db):
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("CREATING"),  # degraded
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    _mock_response(
+        monkeypatch,
+        user_info=_ok_user_info,
+        compute_env=_compute_env_with_status("ERRORED"),  # unhealthy
+    )
+    await health.get_system_status(test_db, force_refresh=True)
+
+    rows = sorted(_incidents(test_db, COMPONENT_COMPUTE_ENV), key=lambda r: r.started_at)
+    assert len(rows) == 2
+    assert rows[0].status == "degraded"
+    assert rows[0].ended_at is not None  # closed when severity changed
+    assert rows[1].status == "unhealthy"
+    assert rows[1].ended_at is None
+
+
+def test_get_incidents_filters_by_window_and_component(test_db):
+    now = datetime.now(UTC)
+    long_ago = SystemStatusIncident(
+        component=COMPONENT_SEQERA_API,
+        status="unhealthy",
+        started_at=now - timedelta(hours=5),
+        ended_at=now - timedelta(hours=4, minutes=55),
+    )
+    recent_api = SystemStatusIncident(
+        component=COMPONENT_SEQERA_API,
+        status="unhealthy",
+        started_at=now - timedelta(minutes=30),
+        ended_at=now - timedelta(minutes=25),
+    )
+    ongoing_ce = SystemStatusIncident(
+        component=COMPONENT_COMPUTE_ENV,
+        status="degraded",
+        started_at=now - timedelta(minutes=10),
+        ended_at=None,
+    )
+    test_db.add_all([long_ago, recent_api, ongoing_ce])
+    test_db.commit()
+
+    since = now - timedelta(hours=1)
+    all_recent = health.get_incidents(test_db, since=since, until=now)
+    assert {row.component for row in all_recent} == {COMPONENT_SEQERA_API, COMPONENT_COMPUTE_ENV}
+
+    api_only = health.get_incidents(test_db, since=since, until=now, component=COMPONENT_SEQERA_API)
+    assert len(api_only) == 1
+    assert api_only[0].ended_at is not None
+
+
+def test_summarize_downtime_clips_to_window():
+    now = datetime.now(UTC)
+    since = now - timedelta(hours=1)
+    incidents = [
+        # Started before the window, ended inside it -> clipped at `since`.
+        SystemStatusIncident(
+            component="x",
+            status="unhealthy",
+            started_at=now - timedelta(hours=2),
+            ended_at=since + timedelta(minutes=10),
+        ),
+        # Still ongoing -> counts through `until`.
+        SystemStatusIncident(
+            component="x",
+            status="degraded",
+            started_at=now - timedelta(minutes=5),
+            ended_at=None,
+        ),
+    ]
+    summary = health._summarize_downtime(incidents, since=since, until=now)
+
+    assert summary["incidentCount"] == 2
+    assert summary["downtimeSeconds"] == 10 * 60 + 5 * 60
+    assert summary["uptimePercent"] == round((3600 - 900) / 3600 * 100, 2)
+
+
+def test_summarize_downtime_no_incidents_is_full_uptime():
+    now = datetime.now(UTC)
+    summary = health._summarize_downtime([], since=now - timedelta(hours=1), until=now)
+    assert summary == {"incidentCount": 0, "downtimeSeconds": 0.0, "uptimePercent": 100.0}
+
+
+def test_to_downtime_dict_groups_by_component():
+    now = datetime.now(UTC)
+    since = now - timedelta(hours=24)
+    incidents = [
+        SystemStatusIncident(
+            component=COMPONENT_SEQERA_API,
+            status="unhealthy",
+            started_at=since + timedelta(hours=1),
+            ended_at=since + timedelta(hours=2),
+        ),
+        SystemStatusIncident(
+            component=COMPONENT_COMPUTE_ENV,
+            status="degraded",
+            started_at=since + timedelta(hours=3),
+            ended_at=None,
+            message="still starting up",
+        ),
+    ]
+    result = health.to_downtime_dict(incidents, since=since, until=now, hours=24)
+
+    assert result["windowHours"] == 24
+    assert result["since"] == since
+    assert result["until"] == now
+    by_name = {c["name"]: c for c in result["components"]}
+    assert by_name[COMPONENT_SEQERA_API]["summary"]["incidentCount"] == 1
+    assert by_name[COMPONENT_SEQERA_API]["incidents"][0]["endedAt"] == since + timedelta(hours=2)
+    assert by_name[COMPONENT_COMPUTE_ENV]["incidents"][0]["message"] == "still starting up"
+
+
 def test_overall_status_aggregation():
     assert health._worst(["healthy", "healthy"]) == "healthy"
     assert health._worst(["healthy", "degraded"]) == "degraded"
@@ -321,7 +531,6 @@ def _install_agent_mock(
 
 
 async def test_agent_probe_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("ENABLE_AGENT_HEALTHCHECK", raising=False)
     _mock_response(
         monkeypatch,
         user_info=_ok_user_info,

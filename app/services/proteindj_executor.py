@@ -1,4 +1,4 @@
-"""Bindflow workflow executor for Seqera Platform."""
+"""ProteinDJ workflow executor for Seqera Platform (modeled after bindflow)."""
 
 from __future__ import annotations
 
@@ -7,20 +7,26 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .bindflow_config import (
-    get_bindflow_config_profiles,
-    get_bindflow_config_text,
-    get_bindflow_default_params,
+from ..schemas.workflows import (
+    ProteinDjFormData,
+    WorkflowFormData,
+    WorkflowLaunchForm,
+    WorkflowUserDetails,
 )
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
     inject_prerun_script,
     without_prerun_script,
+)
+from .proteindj_config import (
+    get_proteindj_config_profiles,
+    get_proteindj_config_text,
+    get_proteindj_default_params,
 )
 from .seqera import (
     WorkflowLaunchResult,
@@ -33,9 +39,31 @@ from .seqera_errors import SeqeraConfigurationError
 logger = logging.getLogger(__name__)
 
 
-async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
+def _design_length(fields: ProteinDjFormData) -> str:
+    # The frontend's Input Configuration step (shared with bindcraft) sends
+    # min_length/max_length as separate fields; ProteinDJ expects them as a
+    # single "min-max" range.
+    return f"{fields.min_length}-{fields.max_length}"
+
+
+def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData:
+    try:
+        return ProteinDjFormData.model_validate(form_data.model_dump())
+    except ValidationError as exc:
+        missing = "formData"
+        for error in exc.errors():
+            loc = error.get("loc")
+            if loc:
+                *_, field_name = loc  # last element of the location path is the field name
+                missing = str(field_name)
+                break
+        raise SeqeraConfigurationError(
+            f"'{missing}' is required in formData for ProteinDJ workflow launch"
+        ) from exc
+
+
+async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -43,12 +71,11 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
-    mode: str,
     form_data: WorkflowFormData,
     user_details: WorkflowUserDetails,
     commit: bool = False,
 ) -> QueuedJob:
-    """Build and queue a bindflow launch payload."""
+    """Build and queue a proteindj launch payload."""
     workspace_id = _get_required_env("WORK_SPACE")
     compute_env_id = _get_required_env("COMPUTE_ID")
     work_dir = _get_required_env("WORK_DIR")
@@ -63,15 +90,14 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
-    default_params = get_bindflow_default_params(out_dir, dataset_url)
-
-    default_params["mode"] = mode
-
-    # Merge any tool-specific params forwarded from the frontend form
-    for key, value in form_data.extra_fields.items():
-        if key not in default_params and value is not None:
-            default_params[key] = value
+    proteindj_fields = _parse_proteindj_form_data(form_data)
+    default_params = get_proteindj_default_params(
+        out_dir,
+        input_pdb=proteindj_fields.starting_pdb,
+        hotspot_residues=proteindj_fields.target_hotspot_residues,
+        num_designs=proteindj_fields.number_of_final_designs,
+        design_length=_design_length(proteindj_fields),
+    )
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)
@@ -88,8 +114,8 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,
-        "configProfiles": get_bindflow_config_profiles(),
-        "configText": get_bindflow_config_text(
+        "configProfiles": get_proteindj_config_profiles(),
+        "configText": get_proteindj_config_text(
             config_path,
             user_details=user_details,
         ),
@@ -111,19 +137,19 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     return queued_job
 
 
-async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
+async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
     *,
     queued_job: QueuedJob,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
-    """Launch a bindflow workflow on the Seqera Platform."""
+    """Launch a proteindj workflow on the Seqera Platform."""
     launch_payload = queued_job.launch_payload
 
     # Log the complete params being sent
     logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
 
     logger.info(
-        "Launching bindflow workflow via Seqera API",
+        "Launching proteindj workflow via Seqera API",
         extra={
             "workspaceId": launch_payload["workspaceId"],
             "computeEnvId": launch_payload["computeEnvId"],
@@ -146,6 +172,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     )
 
     if dry_run:
-        logger.info("Dry run - not launching bindflow workflow")
+        logger.info("Dry run - not launching proteindj workflow")
         return None
-    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="Bindflow")
+    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="ProteinDJ")

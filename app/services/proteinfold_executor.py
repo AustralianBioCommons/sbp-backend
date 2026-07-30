@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .launch_payloads import (
+    DEFAULT_MODULE_LOADS,
+    get_executor_script,
+    inject_prerun_script,
+    without_prerun_script,
+)
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
@@ -30,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Params forwarded from the frontend's Tool Settings (step 2)
 _TOOL_PARAM_KEYS = frozenset(
     {
-        "alphafold2_random_seed",
+        "random_seed",
         "alphafold2_full_dbs",
         "colabfold_num_recycles",
         "colabfold_use_templates",
@@ -50,14 +55,11 @@ def _build_params_text(
     mode: str,
     form_data: WorkflowFormData | None,
     custom_params: str | None,
-    extra_params: dict[str, Any] | None = None,
 ) -> str:
     """Build the YAML params string for the Seqera launch payload."""
     params = get_proteinfold_default_params(out_dir, samplesheet_url, mode)
     if form_data:
         params.update(_tool_params(form_data))
-    if extra_params:
-        params.update(extra_params)
     params_text = params_to_yaml_text(params)
     if custom_params and custom_params.strip():
         params_text = f"{params_text}\n{custom_params.rstrip()}"
@@ -89,9 +91,7 @@ async def prepare_proteinfold_workflow(
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    job_id = (form.runName or "").strip()
-    if not job_id:
+    if not form.runName or not form.runName.strip():
         raise SeqeraConfigurationError("Missing run name for workflow launch")
 
     sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
@@ -101,11 +101,6 @@ async def prepare_proteinfold_workflow(
         mode,
         form_data,
         form.paramsText,
-        extra_params={
-            "job_id": job_id,
-            "user_name": user_details.user_email,
-            "timestamp": timestamp,
-        },
     )
 
     launch_payload: dict[str, Any] = {
@@ -119,9 +114,7 @@ async def prepare_proteinfold_workflow(
         "configProfiles": get_proteinfold_config_profiles(),
         "configText": get_proteinfold_config_text(
             config_path,
-            job_id=job_id,
             user_details=user_details,
-            timestamp=timestamp,
         ),
         "resume": False,
     }
@@ -161,7 +154,7 @@ async def launch_proteinfold_workflow(
 
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        module_loads=["singularity", "nextflow"],
+        module_loads=DEFAULT_MODULE_LOADS,
         env={
             "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
             "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),

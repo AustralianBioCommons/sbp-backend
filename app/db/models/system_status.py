@@ -1,9 +1,9 @@
-"""Database-backed cache for runtime system health."""
+"""Database-backed cache and history for runtime system health."""
 
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Text
+from sqlalchemy import JSON, DateTime, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...schemas.health import SystemStatus
@@ -38,3 +38,24 @@ class SystemStatusCache(Base):
         Return a SystemStatus object from the cache payload.
         """
         return SystemStatus.model_validate(self.payload)
+
+
+class SystemStatusIncident(Base):
+    """
+    One row per downtime period for a monitored component: opened when a probe
+    first reports ``degraded``/``unhealthy``, closed when it next reports
+    ``healthy``. Healthy checks are never recorded, so storage scales with the
+    number of actual outages rather than with polling frequency.
+    """
+
+    __tablename__ = "system_status_incidents"
+    __table_args__ = (
+        Index("ix_system_status_incidents_component_started_at", "component", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    component: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)

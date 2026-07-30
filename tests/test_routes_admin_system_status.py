@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from app.db.admin import require_admin_access
+from app.db.models.system_status import SystemStatusIncident
 from app.routes.system_status import router as system_status_router
 from app.schemas.health import ProbeResult, SystemStatus
 from app.services import health
@@ -136,3 +138,97 @@ def test_system_status_not_shadowed_by_admin_mount(mocker):
 
     assert resp.status_code == 401  # our endpoint's auth gate, not the admin mount
     assert "text/html" not in resp.headers.get("content-type", "")
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/api/system-status/history (downtime incidents)
+# ---------------------------------------------------------------------------
+
+
+def _seed_incident(test_db, *, component, status, hours_ago, ended_hours_ago=None, message=None):
+    test_db.add(
+        SystemStatusIncident(
+            component=component,
+            status=status,
+            started_at=datetime.now(UTC) - timedelta(hours=hours_ago),
+            ended_at=(
+                datetime.now(UTC) - timedelta(hours=ended_hours_ago)
+                if ended_hours_ago is not None
+                else None
+            ),
+            message=message,
+        )
+    )
+    test_db.commit()
+
+
+def test_history_requires_admin(client):
+    resp = client.get("/admin/api/system-status/history")
+    assert resp.status_code == 401
+
+
+def test_history_returns_per_component_summary_and_incidents(client, test_db):
+    client.app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    _seed_incident(
+        test_db,
+        component="seqera_compute_env",
+        status="unhealthy",
+        hours_ago=2,
+        ended_hours_ago=1,
+        message="ERRORED",
+    )
+
+    resp = client.get("/admin/api/system-status/history?hours=24")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["windowHours"] == 24
+    assert "since" in body and "until" in body
+
+    by_name = {c["name"]: c for c in body["components"]}
+    ce = by_name["seqera_compute_env"]
+    assert ce["summary"]["incidentCount"] == 1
+    assert ce["summary"]["downtimeSeconds"] == pytest.approx(3600, rel=0.01)
+    assert ce["incidents"][0]["message"] == "ERRORED"
+    assert ce["incidents"][0]["endedAt"] is not None
+
+
+def test_history_includes_ongoing_incident(client, test_db):
+    client.app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    _seed_incident(test_db, component="seqera_api", status="unhealthy", hours_ago=1)
+
+    resp = client.get("/admin/api/system-status/history?hours=24")
+    assert resp.status_code == 200
+    body = resp.json()
+    api = next(c for c in body["components"] if c["name"] == "seqera_api")
+    assert api["incidents"][0]["endedAt"] is None
+    assert api["summary"]["incidentCount"] == 1
+
+
+def test_history_excludes_incidents_outside_window(client, test_db):
+    client.app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    _seed_incident(
+        test_db, component="seqera_api", status="unhealthy", hours_ago=48, ended_hours_ago=47
+    )
+
+    resp = client.get("/admin/api/system-status/history?hours=24")
+    assert resp.status_code == 200
+    assert resp.json()["components"] == []
+
+
+def test_history_filters_by_component_query_param(client, test_db):
+    client.app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    _seed_incident(test_db, component="seqera_api", status="unhealthy", hours_ago=1)
+    _seed_incident(test_db, component="seqera_compute_env", status="unhealthy", hours_ago=1)
+
+    resp = client.get("/admin/api/system-status/history?hours=24&component=seqera_api")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["components"]) == 1
+    assert body["components"][0]["name"] == "seqera_api"
+
+
+def test_history_empty_when_no_incidents_recorded(client):
+    client.app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    resp = client.get("/admin/api/system-status/history")
+    assert resp.status_code == 200
+    assert resp.json()["components"] == []

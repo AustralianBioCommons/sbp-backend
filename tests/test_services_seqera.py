@@ -19,15 +19,13 @@ from app.services.bindflow_executor import (
     launch_bindflow_workflow,
     prepare_bindflow_workflow,
 )
-from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult, count_active_workflows
+from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
 _USER_DETAILS = WorkflowUserDetails(
     user_email="test@example.com",
-    full_name="Test_User",
-    institute="example.com",
     ip_address="127.0.0.1",
 )
 
@@ -343,3 +341,58 @@ async def test_launch_with_custom_params_text(persistent_models):
 
     assert "my_custom_param: 42" in params_text
     assert "another_param: test" in params_text
+
+
+def _totals_by_status_handler(totals: dict[str, int]):
+    """Fake /workflow endpoint: returns totalSize for whichever status:<value> was searched."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        search = request.url.params.get("search", "")
+        status = search.removeprefix("status:")
+        return httpx.Response(
+            200, json={"workflows": [], "totalSize": totals.get(status, 0), "hasMore": False}
+        )
+
+    return _handler
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_sums_running_and_submitted_totals():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        side_effect=_totals_by_status_handler({"RUNNING": 3, "SUBMITTED": 2})
+    )
+
+    assert await count_active_workflows() == 5
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_queries_each_status_with_a_minimal_page():
+    route = respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        side_effect=_totals_by_status_handler({})
+    )
+
+    await count_active_workflows()
+
+    assert route.call_count == 2
+    searches = {call.request.url.params["search"] for call in route.calls}
+    assert searches == {"status:RUNNING", "status:SUBMITTED"}
+    assert all(call.request.url.params["max"] == "1" for call in route.calls)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_no_active_runs():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(side_effect=_totals_by_status_handler({}))
+
+    assert await count_active_workflows() == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_count_active_workflows_raises_on_api_error():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(return_value=httpx.Response(500, text="boom"))
+
+    with pytest.raises(SeqeraAPIError):
+        await count_active_workflows()

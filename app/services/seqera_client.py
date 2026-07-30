@@ -85,10 +85,13 @@ def _headers(token: str) -> dict[str, str]:
 async def list_workflows_raw(
     workspace_id: str | None = None,
     search_query: str | None = None,
+    max_results: int | None = None,
 ) -> dict[str, Any] | list[Any]:
     api_url, token, params = _get_api_context(workspace_id)
     if search_query:
         params["search"] = search_query
+    if max_results is not None:
+        params["max"] = str(max_results)
 
     url = f"{api_url}/workflow"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:

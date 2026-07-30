@@ -7,11 +7,14 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
+    Index,
     Numeric,
     PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
@@ -39,14 +42,32 @@ class AppUser(Base):
 
 class Workflow(Base):
     __tablename__ = "workflows"
+    __table_args__ = (
+        # At most one row per (name, tool) for workflows with tool-specific
+        # configs (e.g. de-novo-design: bindcraft vs rfdiffusion).
+        UniqueConstraint("name", "tool"),
+        # At most one generic (tool-independent) row per name. sqlite_where is
+        # needed alongside postgresql_where so the tests' SQLite schema (built
+        # via Base.metadata.create_all) enforces the same partial uniqueness
+        # as the Postgres migration; without it, SQLite silently drops the
+        # WHERE clause and the index becomes a full unique constraint on name.
+        Index(
+            "uq_workflows_name_null_tool",
+            "name",
+            unique=True,
+            postgresql_where=text("tool IS NULL"),
+            sqlite_where=text("tool IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    repo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    default_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    config_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    default_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    config_path: Mapped[str] = mapped_column(Text, nullable=False)
     prerun_script_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")
 
@@ -72,6 +93,7 @@ class WorkflowRun(Base):
         DateTime(timezone=True), nullable=True
     )
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")

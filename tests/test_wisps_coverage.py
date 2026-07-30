@@ -41,8 +41,6 @@ from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, Wor
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
-    full_name="Test User",
-    institute="USYD",
     ip_address="1.2.3.4",
 )
 
@@ -258,33 +256,37 @@ def test_get_wisps_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
             user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
         )
     assert "process {" in result
     assert "clusterOptions" in result
 
 
-def test_get_wisps_config_text_contains_job_fields():
+def test_get_wisps_config_text_contains_encoded_email_and_encoded_ip():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
             user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
         )
-    assert "my-job" in result
-    assert "user@ex.com" in result
+    assert "dXNlckBleC5jb20=" in result
+    assert "MS4yLjMuNA==" in result
+
+
+def test_get_wisps_config_text_without_ip_uses_encoded_email_only():
+    with patch("builtins.open", mock_open(read_data="base_config")):
+        result = get_wisps_config_text(
+            config_file_path="/fake/path.config",
+            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
+        )
+    assert "-A dXNlckBleC5jb20=" in result
+    assert ":" not in result.split("clusterOptions = ")[1]
 
 
 def test_get_wisps_config_text_contains_base_config():
     with patch("builtins.open", mock_open(read_data="base_config")):
         result = get_wisps_config_text(
             config_file_path="/fake/path.config",
-            job_id="my-job",
             user_details=_USER_DETAILS,
-            timestamp="20240101_120000",
         )
     assert "base_config" in result
 

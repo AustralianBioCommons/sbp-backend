@@ -27,7 +27,7 @@ from .s3 import (
     read_s3_file,
 )
 
-OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment"]
+OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment", "usage"]
 
 
 class OutputClassifier(Protocol):
@@ -59,10 +59,21 @@ class WorkflowResultsSpec:
     tool: WorkflowTool
     required_categories: set[OutputCategory]
     get_prefixes: Callable[[WorkflowRun], list[str]]
-    classify: OutputClassifier
+    classifier: OutputClassifier
     get_score_file: GetScoreFile
     extract_max_score: Callable[[str], Awaitable[float | None]]
     supports_snapshots: bool = False
+
+    def classify_output(self, key: str, sample_id: str | None) -> ClassifiedOutput | None:
+        """
+        Classify a workflow output into a category.
+        First checks for outputs that are shared across workflows,
+        then the unique outputs for the specific workflow.
+        """
+        shared_output = classify_shared_outputs(key)
+        if shared_output is not None:
+            return shared_output
+        return self.classifier(key, sample_id)
 
     async def get_max_score(self, db: Session, run: WorkflowRun):
         keys = _get_run_output_keys(db, run)
@@ -76,6 +87,27 @@ class WorkflowResultsSpec:
             logger.warning("Failed to extract max score from %r: %s", score_file, e, exc_info=True)
             return None
 
+    def get_usage_file(self, keys: list[str]) -> str | None:
+        for key in keys:
+            normalized = key.strip()
+            if not normalized:
+                continue
+            basename = normalized.rsplit("/", 1)[-1]
+            if basename == "UsageReport.csv":
+                return normalized
+        return None
+
+    async def get_service_units(self, db: Session, run: WorkflowRun) -> float | None:
+        keys = _get_run_output_keys(db, run)
+        usage_file = self.get_usage_file(keys)
+        if usage_file is None:
+            return None
+        try:
+            return await get_run_service_usage(usage_file)
+        except Exception as e:
+            logger.warning("Failed to get service usage from %r: %s", usage_file, e, exc_info=True)
+            return None
+
 
 _LOG_LEVEL_PATTERN = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b")
 _LOG_TIMESTAMP_PATTERN = re.compile(
@@ -86,6 +118,22 @@ _HEADER_UNSAFE_FILENAME_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]+')
 _FILENAME_FALLBACK_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 logger = logging.getLogger(__name__)
+
+
+def classify_shared_outputs(key: str) -> ClassifiedOutput | None:
+    """
+    Classify outputs that are shared across workflows. Currently
+    only the usage report, but other common outputs can be added
+    """
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename == "UsageReport.csv":
+        return ClassifiedOutput(category="usage", label=basename)
+
+    return None
 
 
 def _sanitize_content_disposition_filename(filename: str) -> str:
@@ -474,7 +522,7 @@ def classify_boltz_proteinfold_output(
     sample_id_pattern = re.escape(sample_id) if sample_id else "single_prediction"
     return classify_proteinfold_output_key(
         key,
-        pdb_pattern=rf"/boltz/top_ranked_structures/{sample_id_pattern}\.pdb",
+        pdb_pattern=rf"/boltz/top_ranked_structures/{sample_id_pattern}\.(?:cif|pdb)",
         # Find across all subfolders
         stats_pattern=rf"/boltz/{sample_id_pattern}/.+\.tsv",
         alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
@@ -511,6 +559,7 @@ def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
 
     # Always include run-UUID-only prefixes; these do not depend on sample_id.
     prefixes: list[str] = [
+        f"{run_uuid}/",
         f"{run_uuid}/ranker/",
         f"{run_uuid}/generate/",
     ]
@@ -535,6 +584,7 @@ def build_boltz_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[st
     sample_id = get_sample_id_for_result(run)
 
     prefixes = [
+        f"{run_uuid}/",
         f"{run_uuid}/reports/",
         f"{run_uuid}/boltz/top_ranked_structures/",
         f"{run_uuid}/mmseqs/",
@@ -556,6 +606,7 @@ def build_alphafold2_proteinfold_output_listing_prefixes(run: WorkflowRun) -> li
     sample_id = get_sample_id_for_result(run)
 
     prefixes = [
+        f"{run_uuid}/",
         f"{run_uuid}/reports/",
         f"{run_uuid}/alphafold2/split_msa_prediction/top_ranked_structures/",
     ]
@@ -627,6 +678,7 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     if not run_uuid:
         return []
     return [
+        f"{run_uuid}/",
         f"{run_uuid}/multiqc/",
         f"{run_uuid}/collect/",
         f"{run_uuid}/ipsae/",
@@ -641,6 +693,7 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
     sample_id = get_sample_id_for_result(run)
 
     prefixes = [
+        f"{run_uuid}/",
         f"{run_uuid}/reports/",
         f"{run_uuid}/colabfold/top_ranked_structures/",
         f"{run_uuid}/mmseqs/",
@@ -654,6 +707,52 @@ def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> lis
     return prefixes
 
 
+def classify_rfdiffusion_output_key(
+    key: str, sample_id: str | None = None
+) -> ClassifiedOutput | None:
+    normalized = key.strip()
+    if not normalized or normalized.endswith("/"):
+        return None
+    basename = normalized.rsplit("/", 1)[-1]
+    if "/results/" not in normalized.lower():
+        return None
+    if basename == "ranked_designs.csv":
+        return ClassifiedOutput(category="stats_csv", label=basename)
+    if basename == "ranked_designs.tar.gz":
+        return ClassifiedOutput(category="pdb", label=basename)
+    return None
+
+
+def get_rfdiffusion_score_file(keys: list[str], sample_id: str | None) -> str | None:
+    for key in keys:
+        normalized = key.strip()
+        if not normalized:
+            continue
+        basename = normalized.rsplit("/", 1)[-1]
+        if basename == "ranked_designs.csv":
+            return normalized
+    return None
+
+
+async def extract_rfdiffusion_max_score(score_file: str) -> float | None:
+    content = await read_s3_file(score_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    row = next(csv_reader, None)
+    if row is None:
+        return None
+    value = row.get("af2_plddt_overall")
+    if value and value.strip():
+        return float(value) / 100
+    return None
+
+
+def build_rfdiffusion_output_listing_prefixes(run: WorkflowRun) -> list[str]:
+    run_uuid = str(getattr(run, "id", "") or "").strip()
+    if not run_uuid:
+        return []
+    return [f"{run_uuid}/", f"{run_uuid}/results/"]
+
+
 def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
     return WorkflowResultsSpec(
         kind="interaction-screening",
@@ -662,7 +761,7 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_wisps_max_score,
-        classify=classify_wisps_output_key,
+        classifier=classify_wisps_output_key,
     )
 
 
@@ -674,7 +773,7 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_bulk_prediction_max_score,
-        classify=classify_wisps_output_key,
+        classifier=classify_wisps_output_key,
     )
 
 
@@ -687,8 +786,17 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_bindcraft_output_listing_prefixes,
             get_score_file=get_bindcraft_score_file,
             extract_max_score=extract_bindcraft_max_score,
-            classify=classify_bindcraft_output_key,
+            classifier=classify_bindcraft_output_key,
             supports_snapshots=True,
+        ),
+        "rfdiffusion": WorkflowResultsSpec(
+            kind="de-novo-design",
+            tool="rfdiffusion",
+            required_categories={"stats_csv", "pdb"},
+            get_prefixes=build_rfdiffusion_output_listing_prefixes,
+            get_score_file=get_rfdiffusion_score_file,
+            extract_max_score=extract_rfdiffusion_max_score,
+            classifier=classify_rfdiffusion_output_key,
         ),
     },
     "single-prediction": {
@@ -699,7 +807,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_boltz_proteinfold_output_listing_prefixes,
             get_score_file=get_proteinfold_score_file,
             extract_max_score=extract_proteinfold_max_score,
-            classify=classify_boltz_proteinfold_output,
+            classifier=classify_boltz_proteinfold_output,
         ),
         "alphafold2": WorkflowResultsSpec(
             kind="single-prediction",
@@ -708,7 +816,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_alphafold2_proteinfold_output_listing_prefixes,
             get_score_file=get_proteinfold_score_file,
             extract_max_score=extract_proteinfold_max_score,
-            classify=classify_alphafold2_proteinfold_output,
+            classifier=classify_alphafold2_proteinfold_output,
         ),
         "colabfold": WorkflowResultsSpec(
             kind="single-prediction",
@@ -717,7 +825,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_colabfold_proteinfold_output_listing_prefixes,
             get_score_file=get_proteinfold_score_file,
             extract_max_score=extract_proteinfold_max_score,
-            classify=classify_colabfold_proteinfold_output,
+            classifier=classify_colabfold_proteinfold_output,
         ),
     },
     "interaction-screening": {
@@ -747,7 +855,7 @@ def collect_classified_outputs(
     outputs = {}
     sample_id = get_sample_id_for_result(run)
     for key in _get_run_output_keys(db, run):
-        classified = spec.classify(key, sample_id)
+        classified = spec.classify_output(key, sample_id)
         if classified:
             outputs[key] = classified
     return outputs
@@ -826,7 +934,7 @@ async def list_workflow_outputs_from_s3(
             if not key or key in outputs:
                 continue
 
-            classified = spec.classify(key, sample_id)
+            classified = spec.classify_output(key, sample_id)
             if classified is not None:
                 outputs[key] = classified
 
@@ -911,7 +1019,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
 
     # Sort and filter outputs
     for key, output in sorted(outputs.items(), key=_get_output_sort_key):
-        if output.category == "snapshot":
+        if output.category in ("snapshot", "usage"):
             continue
         downloads.append(
             ResultDownloadItem(
@@ -935,7 +1043,11 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)
     # Exclude snapshots
-    downloads = [(key, output) for key, output in outputs.items() if output.category != "snapshot"]
+    downloads = [
+        (key, output)
+        for key, output in outputs.items()
+        if output.category not in ("snapshot", "usage")
+    ]
 
     used_filenames: set[str] = set()
     zip_file = BytesIO()
@@ -1028,3 +1140,14 @@ async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[R
             )
         )
     return downloads
+
+
+async def get_run_service_usage(usage_file: str) -> float | None:
+    content = await read_s3_file(usage_file)
+    csv_reader = csv.DictReader(StringIO(content))
+    su_values: list[float] = []
+    for row in csv_reader:
+        value = row.get("Service Units")
+        if value:
+            su_values.append(float(value.strip()))
+    return sum(su_values)

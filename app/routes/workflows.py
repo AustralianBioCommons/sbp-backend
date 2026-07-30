@@ -12,9 +12,8 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
-from unidecode import unidecode
 
 from ..db.models import QueuedJob
 from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
@@ -25,12 +24,14 @@ from ..schemas.workflows import (
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
+    SinglePredictionEntity,
     WispsDatasetUploadRequest,
     WispsFormData,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     WorkflowUserDetails,
+    validate_single_prediction_entities,
 )
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
@@ -45,6 +46,7 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
+from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
 from ..services.seqera_errors import SeqeraConfigurationError
@@ -137,6 +139,43 @@ def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | Non
     return parsed if parsed >= 1 else None
 
 
+def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> None:
+    """Validate single-prediction entity limits; raise HTTPException on failure.
+
+    Guards against jobs with too many entities or has no protein input
+    """
+    raw_entities = form_data.extra_fields.get("entities")
+    if not isinstance(raw_entities, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'entities' is required in formData for single-prediction.",
+        )
+    try:
+        entities = [SinglePredictionEntity.model_validate(item) for item in raw_entities]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid entity data in formData for single-prediction.",
+        ) from exc
+
+    raw_potentials = form_data.extra_fields.get("boltz_use_potentials")
+    boltz_use_potentials = (
+        raw_potentials.strip().lower() in ("true", "1", "yes")
+        if isinstance(raw_potentials, str)
+        else bool(raw_potentials)
+    )
+
+    try:
+        validate_single_prediction_entities(
+            entities, tool, boltz_use_potentials=boltz_use_potentials
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
 @router.post("/me/sync")
 async def sync_current_user(
     current_user_id: UUID = Depends(get_current_user_id),
@@ -208,16 +247,27 @@ async def launch_workflow(
         )
 
     # Workflow repo_url and revision come from the DB entry for this workflow name
-    # ("single-prediction", "de-novo-design", etc.).
+    # ("single-prediction", "de-novo-design", etc.). A workflow's tool column is
+    # NULL for a single row shared by all of its tools (e.g. single-prediction),
+    # or set on multiple rows when each tool needs its own repo_url/config_path/
+    # default_revision (e.g. de-novo-design: bindcraft vs rfdiffusion). An exact
+    # tool match is preferred over the generic NULL-tool row when both exist.
+    tool_matches = func.lower(Workflow.tool) == selected_tool.lower()
     workflow = db_session.scalar(
-        select(Workflow).where(func.lower(Workflow.name) == requested_workflow)
+        select(Workflow)
+        .where(
+            func.lower(Workflow.name) == requested_workflow,
+            or_(Workflow.tool.is_(None), tool_matches),
+        )
+        .order_by(tool_matches.desc())
+        .limit(1)
     )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Workflow '{payload.launch.workflow}' is not configured in workflows table. "
-                "Seed the workflows catalog before launching."
+                f"Workflow '{payload.launch.workflow}' with tool '{selected_tool}' is not "
+                "configured in workflows table. Seed the workflows catalog before launching."
             ),
         )
 
@@ -234,28 +284,16 @@ async def launch_workflow(
         )
 
     user = db_session.execute(
-        select(AppUser.email, AppUser.name).where(AppUser.id == current_user_id)
+        select(AppUser.email).where(AppUser.id == current_user_id)
     ).one_or_none()
     if not user or not user.email:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not retrieve user details required for workflow launch.",
         )
-    user_email = user.email
-    # removes everything that isn't a letter, digit, or space
-    name = unidecode(user.name or "")
-    full_name = re.sub(r"[^a-zA-Z0-9 ]", "", name).replace(" ", "_")
-    institute = user_email.split("@")[-1] if "@" in user_email else None
-    ip_address: str | None = launch_ip or None
-
-    full_name = _require_launch_var("full_name", full_name)
-    institute = _require_launch_var("institute", institute)
-    ip_address = _require_launch_var("ip_address", ip_address)
     user_details = WorkflowUserDetails(
-        user_email=user_email,
-        full_name=full_name,
-        institute=institute,
-        ip_address=ip_address,
+        user_email=user.email,
+        ip_address=_require_launch_var("ip_address", launch_ip or None),
     )
 
     # Authoritative credit cost (server-side, non-spoofable). Only charged for
@@ -330,6 +368,9 @@ async def launch_workflow(
                 detail=f"'{missing}' is required in formData for {workflow_name}.",
             ) from exc
 
+    if workflow_name in ("single-prediction", "proteinfold"):
+        _validate_single_prediction_form(payload.formData, selected_tool)
+
     try:
         queued_job: QueuedJob
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
@@ -352,23 +393,36 @@ async def launch_workflow(
                 user_details=user_details,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-            # de-novo-design → bindflow executor.
-            # selected_tool carries the chosen algorithm ("bindcraft", "rfdiffusion").
+            # de-novo-design → bindflow executor (bindcraft) or proteindj executor
+            # (rfdiffusion), depending on the chosen algorithm.
             tool_mode = selected_tool
-            bindcraft_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            queued_job = await prepare_bindflow_workflow(
-                bindcraft_launch_form,
-                s3_input_key,
-                db_session=db_session,
-                workflow_run=workflow_run,
-                pipeline=workflow.repo_url,
-                config_path=workflow.config_path,
-                revision=workflow.default_revision,
-                output_id=str(run_id),
-                mode=tool_mode,
-                form_data=payload.formData,
-                user_details=user_details,
-            )
+            de_novo_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
+            if tool_mode.lower() == "rfdiffusion":
+                queued_job = await prepare_proteindj_workflow(
+                    de_novo_launch_form,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
+            else:
+                queued_job = await prepare_bindflow_workflow(
+                    de_novo_launch_form,
+                    s3_input_key,
+                    db_session=db_session,
+                    workflow_run=workflow_run,
+                    pipeline=workflow.repo_url,
+                    config_path=workflow.config_path,
+                    revision=workflow.default_revision,
+                    output_id=str(run_id),
+                    mode=tool_mode,
+                    form_data=payload.formData,
+                    user_details=user_details,
+                )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
@@ -406,7 +460,7 @@ async def launch_workflow(
                     .values(
                         credit=AppUser.credit - run_credit_cost,
                         credit_updated_at=datetime.now(UTC),
-                        credit_updated_by=user_email,
+                        credit_updated_by=user_details.user_email,
                     )
                 ),
             )
