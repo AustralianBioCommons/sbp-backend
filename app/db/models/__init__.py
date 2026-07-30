@@ -2,6 +2,7 @@
 
 from .core import (  # noqa: F401
     AppUser,
+    DataTransfer,
     RunInput,
     RunMetric,
     RunOutput,

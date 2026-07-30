@@ -142,6 +142,7 @@ def persistent_models(test_db):
         datagen.RunOutputFactory,
         datagen.S3ObjectFactory,
         datagen.QueuedJobFactory,
+        datagen.DataTransferFactory,
     ]
 
     for factory in factories:
