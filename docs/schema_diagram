@@ -97,12 +97,16 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">tool</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">service_usage</TD>
+                         <TD BGCOLOR="#BBDEFB">FLOAT ()</TD>
                          </TR></TABLE>> URL="http://WorkflowRun_details.html"]
 	WorkflowRun -> AppUser [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
 	WorkflowRun -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]
 	WorkflowRun -> RunMetric [label=metrics color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunMetric"]
 	WorkflowRun -> RunInput [label=inputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunInput"]
 	WorkflowRun -> RunOutput [label=outputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunOutput"]
+	WorkflowRun -> DataTransfer [label=data_transfers color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and DataTransfer"]
 	S3Object [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">S3Object</FONT></TD></TR>
