@@ -35,6 +35,7 @@ from ..routes.dependencies import get_db
 from . import engine
 from .models.core import (
     AppUser,
+    DataTransfer,
     RunInput,
     RunMetric,
     RunOutput,
@@ -267,6 +268,28 @@ class RunOutputAdmin(UrlSafePrimaryKeyModelView):
         HasOne("run", identity="workflow-run"),
         HasOne("s3_object", identity="s3-object"),
     ]
+
+
+class DataTransferAdmin(ModelView):
+    fields = [
+        "id",
+        HasOne("workflow_run", identity="workflow-run"),
+        "direction",
+        "provider",
+        "source_location",
+        "destination_location",
+        "transfer_id",
+        "status",
+        JSONField("provider_metadata"),
+        "created_at",
+        "updated_at",
+        "error_message",
+    ]
+    exclude_fields_from_list = ["provider_metadata", "error_message"]
+    fields_default_sort = [("created_at", True)]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return f"{obj.direction} transfer via {obj.provider}"
 
 
 class QueuedJobAdmin(ModelView):
@@ -763,6 +786,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(RunMetricAdmin(RunMetric))
     admin.add_view(RunInputAdmin(RunInput))
     admin.add_view(RunOutputAdmin(RunOutput))
+    admin.add_view(DataTransferAdmin(DataTransfer))
     admin.add_view(S3ObjectAdmin(S3Object))
     admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
     admin.add_view(

@@ -17,6 +17,7 @@ from starlette_admin._types import RequestAction
 
 from app.db.admin import (
     AppUserAdmin,
+    DataTransferAdmin,
     RunOutputAdmin,
     S3ObjectAdmin,
     _claims_has_admin_role,
@@ -122,6 +123,18 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit" in field_names
     assert "credit_updated_at" in field_names
     assert "credit_updated_by" in field_names
+
+
+def test_data_transfer_admin_includes_expected_columns() -> None:
+    field_names = _admin_field_names(DataTransferAdmin)
+    assert "workflow_run" in field_names
+    assert "direction" in field_names
+    assert "provider" in field_names
+    assert "source_location" in field_names
+    assert "destination_location" in field_names
+    assert "transfer_id" in field_names
+    assert "status" in field_names
+    assert "created_at" in field_names
 
 
 def test_app_user_admin_credit_audit_fields_are_read_only_on_forms() -> None:
