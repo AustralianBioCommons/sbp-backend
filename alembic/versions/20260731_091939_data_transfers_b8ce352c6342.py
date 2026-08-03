@@ -30,12 +30,72 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_data_transfers'))
     )
     op.add_column('run_inputs', sa.Column('data_transfer_id', sa.UUID(), nullable=True))
+    op.add_column('run_outputs', sa.Column('data_transfer_id', sa.UUID(), nullable=True))
+    # ### end Alembic commands ###
+
+    # Backfill a DataTransfer row for every pre-existing run_inputs/run_outputs
+    # row (from before this table existed) so data_transfer_id can be made
+    # NOT NULL below without dropping any existing input/output history.
+    op.execute(sa.text("""
+        CREATE TEMP TABLE _run_input_transfer_backfill AS
+        SELECT
+            ri.run_id,
+            ri.s3_object_id,
+            gen_random_uuid() AS data_transfer_id,
+            s3."URI" AS source_location,
+            wr.work_dir AS destination_location
+        FROM run_inputs ri
+        JOIN s3_objects s3 ON s3.object_key = ri.s3_object_id
+        JOIN workflow_runs wr ON wr.id = ri.run_id
+        WHERE ri.data_transfer_id IS NULL
+    """))
+    op.execute(sa.text("""
+        INSERT INTO data_transfers
+            (id, workflow_run_id, direction, provider, source_location, destination_location, status)
+        SELECT data_transfer_id, run_id, 'input', 's3', source_location, destination_location, 'completed'
+        FROM _run_input_transfer_backfill
+    """))
+    op.execute(sa.text("""
+        UPDATE run_inputs ri
+        SET data_transfer_id = b.data_transfer_id
+        FROM _run_input_transfer_backfill b
+        WHERE ri.run_id = b.run_id AND ri.s3_object_id = b.s3_object_id
+    """))
+    op.execute(sa.text("DROP TABLE _run_input_transfer_backfill"))
+
+    op.execute(sa.text("""
+        CREATE TEMP TABLE _run_output_transfer_backfill AS
+        SELECT
+            ro.run_id,
+            ro.s3_object_id,
+            gen_random_uuid() AS data_transfer_id,
+            wr.work_dir AS source_location,
+            s3."URI" AS destination_location
+        FROM run_outputs ro
+        JOIN s3_objects s3 ON s3.object_key = ro.s3_object_id
+        JOIN workflow_runs wr ON wr.id = ro.run_id
+        WHERE ro.data_transfer_id IS NULL
+    """))
+    op.execute(sa.text("""
+        INSERT INTO data_transfers
+            (id, workflow_run_id, direction, provider, source_location, destination_location, status)
+        SELECT data_transfer_id, run_id, 'output', 's3', source_location, destination_location, 'completed'
+        FROM _run_output_transfer_backfill
+    """))
+    op.execute(sa.text("""
+        UPDATE run_outputs ro
+        SET data_transfer_id = b.data_transfer_id
+        FROM _run_output_transfer_backfill b
+        WHERE ro.run_id = b.run_id AND ro.s3_object_id = b.s3_object_id
+    """))
+    op.execute(sa.text("DROP TABLE _run_output_transfer_backfill"))
+
+    op.alter_column('run_inputs', 'data_transfer_id', nullable=False)
+    op.alter_column('run_outputs', 'data_transfer_id', nullable=False)
     op.create_unique_constraint(op.f('uq_run_inputs_data_transfer_id'), 'run_inputs', ['data_transfer_id'])
     op.create_foreign_key(op.f('fk_run_inputs_data_transfer_id_data_transfers'), 'run_inputs', 'data_transfers', ['data_transfer_id'], ['id'])
-    op.add_column('run_outputs', sa.Column('data_transfer_id', sa.UUID(), nullable=True))
     op.create_unique_constraint(op.f('uq_run_outputs_data_transfer_id'), 'run_outputs', ['data_transfer_id'])
     op.create_foreign_key(op.f('fk_run_outputs_data_transfer_id_data_transfers'), 'run_outputs', 'data_transfers', ['data_transfer_id'], ['id'])
-    # ### end Alembic commands ###
 
 
 def downgrade() -> None:

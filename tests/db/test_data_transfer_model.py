@@ -1,6 +1,8 @@
+import pytest
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
 
-from app.db.models import DataTransfer, RunInput, RunOutput, WorkflowRun
+from app.db.models import DataTransfer, WorkflowRun
 from tests.datagen import (
     DataTransferFactory,
     RunInputFactory,
@@ -120,19 +122,19 @@ def test_run_output_links_to_data_transfer(test_db, persistent_models):
     assert transfer.run_input is None
 
 
-def test_run_input_data_transfer_is_optional(test_db, persistent_models):
-    """Existing/older RunInput rows without a linked DataTransfer remain valid."""
+def test_run_input_requires_data_transfer(test_db, persistent_models):
+    """Every RunInput/RunOutput row must be linked to a DataTransfer record."""
     workflow_run = WorkflowRunFactory.create_sync()
     s3_object = S3ObjectFactory.create_sync()
 
-    run_input = RunInputFactory.create_sync(
-        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
-    )
-    run_output = RunOutputFactory.create_sync(
-        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
-    )
+    with pytest.raises(IntegrityError):
+        RunInputFactory.create_sync(
+            run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+        )
+    test_db.rollback()
 
-    assert isinstance(run_input, RunInput)
-    assert isinstance(run_output, RunOutput)
-    assert run_input.data_transfer_id is None
-    assert run_output.data_transfer_id is None
+    with pytest.raises(IntegrityError):
+        RunOutputFactory.create_sync(
+            run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+        )
+    test_db.rollback()
