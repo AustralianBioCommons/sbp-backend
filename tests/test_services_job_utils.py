@@ -22,6 +22,18 @@ from app.services import job_utils, results_utils
 from tests.datagen import WorkflowRunFactory
 
 
+def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
+    """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
+    transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location=f"/work/{object_key}",
+        destination_location=f"s3://bucket/{object_key}",
+    )
+    return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
+
+
 class _Result:
     def __init__(self, all_value=None, scalar_value=None):
         self._all = all_value or []
@@ -287,7 +299,7 @@ async def test_ensure_completed_run_score_persists_spec_score(test_db):
     )
     test_db.add_all([user, workflow, run, output])
     test_db.flush()
-    run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
+    run_output = _make_run_output(run, output.object_key)
     test_db.add(run_output)
     test_db.commit()
 
@@ -420,7 +432,7 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
     ]
     snapshots = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in snapshot_keys]
     test_db.add_all(snapshots)
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=key) for key in snapshot_keys])
+    test_db.add_all([_make_run_output(run, key) for key in snapshot_keys])
     test_db.commit()
 
     with (
@@ -563,7 +575,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         object_key=report_key,
         uri=f"s3://bucket/{report_key}",
     )
-    test_db.add_all([user, run, report, RunOutput(run_id=run.id, s3_object_id=report_key)])
+    test_db.add_all([user, run, report, _make_run_output(run, report_key)])
     test_db.commit()
 
     with (

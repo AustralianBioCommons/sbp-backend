@@ -9,7 +9,15 @@ from zipfile import ZipFile
 import pytest
 from fastapi import HTTPException
 
-from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunMetric,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from app.routes.workflow.results import (
     get_result_download_all,
     get_result_downloads,
@@ -31,6 +39,18 @@ def _configure_bindcraft_run(run: WorkflowRun) -> None:
         config_path="/config/de-novo-design.config",
     )
     run.submitted_form_data = {"mode": "bindcraft"}
+
+
+def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
+    """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
+    transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location=f"/work/{object_key}",
+        destination_location=f"s3://bucket/{object_key}",
+    )
+    return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
 
 @pytest.mark.asyncio
@@ -371,7 +391,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
     ]
     test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -425,7 +445,7 @@ async def test_get_result_download_all_returns_valid_zip_file(test_db, persisten
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all(outputs)
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     async def read_bytes(key: str) -> bytes:
@@ -529,7 +549,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
     ]
     test_db.add_all(outputs)
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -663,7 +683,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
     ]
     test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -775,7 +795,7 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     )
     test_db.add_all([user, run, report])
     test_db.commit()
-    test_db.add(RunOutput(run_id=run.id, s3_object_id=report.object_key))
+    test_db.add(_make_run_output(run, report.object_key))
     test_db.commit()
 
     with (

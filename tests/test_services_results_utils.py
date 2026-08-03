@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from app.db.models.core import AppUser, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services.results_utils import (
     WORKFLOW_OUTPUT_SPECS,
     ClassifiedOutput,
@@ -49,7 +49,25 @@ from app.services.results_utils import (
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
-from tests.datagen import AppUserFactory, RunOutputFactory, S3ObjectFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    DataTransferFactory,
+    RunOutputFactory,
+    S3ObjectFactory,
+    WorkflowRunFactory,
+)
+
+
+def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
+    """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
+    transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location=f"/work/{object_key}",
+        destination_location=f"s3://bucket/{object_key}",
+    )
+    return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
 
 def test_format_log_entries_extracts_timestamp_level_and_strips_ansi():
@@ -336,7 +354,7 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all([user, run, *outputs])
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     async def read_bytes(key: str) -> bytes:
@@ -537,8 +555,8 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
     test_db.flush()
     test_db.add_all(
         [
-            RunOutput(run_id=run.id, s3_object_id=ignored.object_key),
-            RunOutput(run_id=run.id, s3_object_id=score_object.object_key),
+            _make_run_output(run, ignored.object_key),
+            _make_run_output(run, score_object.object_key),
         ]
     )
     test_db.commit()
@@ -575,10 +593,15 @@ async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
         object_key="run-1/UsageReport.csv",
         uri="s3://bucket/run-1/UsageReport.csv",
     )
-    RunOutputFactory.create_sync(run_id=run.id, s3_object_id=ignored.object_key)
+    RunOutputFactory.create_sync(
+        run_id=run.id,
+        s3_object_id=ignored.object_key,
+        data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
+    )
     RunOutputFactory.create_sync(
         run_id=run.id,
         s3_object_id=usage_object.object_key,
+        data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
     )
 
     spec = WorkflowResultsSpec(
