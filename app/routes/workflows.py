@@ -16,7 +16,15 @@ from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob
-from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
+from ..db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunInput,
+    RunMetric,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from ..schemas.workflows import (
     DatasetUploadRequest,
     LaunchDetails,
@@ -314,6 +322,7 @@ async def launch_workflow(
             )
 
     run_id = uuid4()
+    workflow_name = workflow.name.lower()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
     submission_timestamp = datetime.now(UTC)
 
@@ -341,10 +350,21 @@ async def launch_workflow(
     s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key))
+    input_destination = (
+        f"{_get_required_env('WORK_DIR').rstrip('/')}/input/{workflow_name}/{run_id}/"
+    )
+    input_transfer = DataTransfer(
+        workflow_run_id=run_id,
+        direction="input",
+        provider="s3",
+        source_location=s3_input_uri,
+        destination_location=input_destination,
+    )
+    db_session.add(input_transfer)
+    db_session.add(
+        RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer)
+    )
     db_session.flush()
-
-    workflow_name = workflow.name.lower()
 
     # All workflows require config_path. Validate before the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.

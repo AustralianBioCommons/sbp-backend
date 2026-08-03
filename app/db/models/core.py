@@ -132,24 +132,38 @@ class S3Object(Base):
 
 class RunInput(Base):
     __tablename__ = "run_inputs"
-    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id"),)
+    __table_args__ = (
+        PrimaryKeyConstraint("run_id", "s3_object_id"),
+        UniqueConstraint("data_transfer_id"),
+    )
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
+    data_transfer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("data_transfers.id"), nullable=True
+    )
 
     run: Mapped[WorkflowRun] = relationship(back_populates="inputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_inputs")
+    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_input")
 
 
 class RunOutput(Base):
     __tablename__ = "run_outputs"
-    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id"),)
+    __table_args__ = (
+        PrimaryKeyConstraint("run_id", "s3_object_id"),
+        UniqueConstraint("data_transfer_id"),
+    )
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
+    data_transfer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("data_transfers.id"), nullable=True
+    )
 
     run: Mapped[WorkflowRun] = relationship(back_populates="outputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_outputs")
+    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_output")
 
 
 class RunMetric(Base):
@@ -198,3 +212,5 @@ class DataTransfer(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
+    run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
+    run_output: Mapped[RunOutput | None] = relationship(back_populates="data_transfer")

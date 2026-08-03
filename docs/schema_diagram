@@ -134,9 +134,13 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">data_transfer_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
                          </TR></TABLE>> URL="http://RunInput_details.html"]
 	RunInput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunInput and WorkflowRun"]
 	RunInput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunInput and S3Object"]
+	RunInput -> DataTransfer [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunInput and DataTransfer"]
 	RunOutput [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunOutput</FONT></TD></TR>
@@ -146,9 +150,13 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">data_transfer_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
                          </TR></TABLE>> URL="http://RunOutput_details.html"]
 	RunOutput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunOutput and WorkflowRun"]
 	RunOutput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunOutput and S3Object"]
+	RunOutput -> DataTransfer [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunOutput and DataTransfer"]
 	RunMetric [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunMetric</FONT></TD></TR>
@@ -163,6 +171,49 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
                          </TR></TABLE>> URL="http://RunMetric_details.html"]
 	RunMetric -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
+	DataTransfer [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">DataTransfer</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">workflow_run_id</TD>
+                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">direction</TD>
+                         <TD BGCOLOR="#BBDEFB">VARCHAR(10) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">provider</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">source_location</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">destination_location</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">transfer_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">status</TD>
+                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">provider_metadata</TD>
+                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">created_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">updated_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">error_message</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR></TABLE>> URL="http://DataTransfer_details.html"]
+	DataTransfer -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and WorkflowRun"]
+	DataTransfer -> RunInput [label=run_input color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunInput"]
+	DataTransfer -> RunOutput [label=run_output color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunOutput"]
 	QueuedJob [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">QueuedJob</FONT></TD></TR>
@@ -221,4 +272,26 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">updated_at</TD>
                          <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
                          </TR></TABLE>> URL="http://SystemStatusCache_details.html"]
+	SystemStatusIncident [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusIncident</FONT></TD></TR>
+        <TR>
+                         <TD BGCOLOR="#BBDEFB">id</TD>
+                         <TD BGCOLOR="#BBDEFB">INTEGER (PK)</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">component</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">status</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">started_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">ended_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">message</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR></TABLE>> URL="http://SystemStatusIncident_details.html"]
 }

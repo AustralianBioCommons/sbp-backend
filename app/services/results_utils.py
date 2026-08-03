@@ -16,7 +16,7 @@ from zipfile import ZipFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import RunOutput, S3Object, WorkflowRun
+from ..db.models.core import DataTransfer, RunOutput, S3Object, WorkflowRun
 from ..schemas.workflows import ResultDownloadItem, ResultLogEntry, WorkflowName, WorkflowTool
 from .s3 import (
     S3ConfigurationError,
@@ -879,6 +879,11 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
     existing_keys = set(_get_run_output_keys(db, run))
     changed = False
 
+    # Every workflow config publishes its results under this same run-scoped
+    # prefix, whether the pipeline calls the param "outdir" (bindflow,
+    # proteinfold, wisps) or "out_dir" (proteindj) - the value is identical.
+    run_outdir = _build_s3_uri(str(run.id))
+
     for key in keys:
         normalized = key.strip()
         if not normalized or normalized in existing_keys:
@@ -892,7 +897,17 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
             )
             db.add(s3_object)
 
-        db.add(RunOutput(run_id=run.id, s3_object_id=normalized))
+        output_transfer = DataTransfer(
+            workflow_run_id=run.id,
+            direction="output",
+            provider="s3",
+            source_location=run_outdir,
+            destination_location=s3_object.uri,
+        )
+        db.add(output_transfer)
+        db.add(
+            RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer)
+        )
         existing_keys.add(normalized)
         changed = True
 
