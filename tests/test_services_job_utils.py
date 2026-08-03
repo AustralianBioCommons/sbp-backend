@@ -6,8 +6,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 
-from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunMetric,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from app.db.models.job_queue import QueuedJob
 from app.services import job_utils, results_utils
 from tests.datagen import WorkflowRunFactory
@@ -367,6 +376,22 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
     persisted = test_db.get(S3Object, snapshot_key)
     assert persisted is not None
     assert persisted.uri.endswith(snapshot_key)
+
+    run_output = test_db.scalar(
+        select(RunOutput).where(
+            RunOutput.run_id == run_id, RunOutput.s3_object_id == snapshot_key
+        )
+    )
+    assert run_output is not None
+    assert run_output.data_transfer_id is not None
+    output_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
+    assert output_transfer is not None
+    assert output_transfer.workflow_run_id == run_id
+    assert output_transfer.direction == "output"
+    assert output_transfer.provider == "s3"
+    assert output_transfer.source_location == f"s3://test-s3-bucket/{run_id}"
+    assert output_transfer.destination_location == persisted.uri
+    assert output_transfer.status == "pending"
     link = (
         test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
     )

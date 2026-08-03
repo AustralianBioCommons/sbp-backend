@@ -1,7 +1,13 @@
 from sqlalchemy import inspect
 
-from app.db.models import DataTransfer, WorkflowRun
-from tests.datagen import DataTransferFactory, WorkflowRunFactory
+from app.db.models import DataTransfer, RunInput, RunOutput, WorkflowRun
+from tests.datagen import (
+    DataTransferFactory,
+    RunInputFactory,
+    RunOutputFactory,
+    S3ObjectFactory,
+    WorkflowRunFactory,
+)
 
 
 def test_data_transfer_model_structure():
@@ -76,3 +82,57 @@ def test_data_transfer_records_error_message(test_db, persistent_models):
     assert transfer.status == "failed"
     assert transfer.error_message == "connection timed out"
     assert transfer.updated_at is None
+
+
+def test_run_input_links_to_data_transfer(test_db, persistent_models):
+    """A RunInput row can be linked to the DataTransfer record it originated from."""
+    workflow_run = WorkflowRunFactory.create_sync()
+    s3_object = S3ObjectFactory.create_sync()
+    transfer = DataTransferFactory.create_sync(workflow_run=workflow_run, direction="input")
+
+    run_input = RunInputFactory.create_sync(
+        run_id=workflow_run.id,
+        s3_object_id=s3_object.object_key,
+        data_transfer=transfer,
+    )
+
+    assert run_input.data_transfer_id == transfer.id
+    test_db.refresh(transfer)
+    assert transfer.run_input.run_id == workflow_run.id
+    assert transfer.run_output is None
+
+
+def test_run_output_links_to_data_transfer(test_db, persistent_models):
+    """A RunOutput row can be linked to the DataTransfer record it originated from."""
+    workflow_run = WorkflowRunFactory.create_sync()
+    s3_object = S3ObjectFactory.create_sync()
+    transfer = DataTransferFactory.create_sync(workflow_run=workflow_run, direction="output")
+
+    run_output = RunOutputFactory.create_sync(
+        run_id=workflow_run.id,
+        s3_object_id=s3_object.object_key,
+        data_transfer=transfer,
+    )
+
+    assert run_output.data_transfer_id == transfer.id
+    test_db.refresh(transfer)
+    assert transfer.run_output.run_id == workflow_run.id
+    assert transfer.run_input is None
+
+
+def test_run_input_data_transfer_is_optional(test_db, persistent_models):
+    """Existing/older RunInput rows without a linked DataTransfer remain valid."""
+    workflow_run = WorkflowRunFactory.create_sync()
+    s3_object = S3ObjectFactory.create_sync()
+
+    run_input = RunInputFactory.create_sync(
+        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+    )
+    run_output = RunOutputFactory.create_sync(
+        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+    )
+
+    assert isinstance(run_input, RunInput)
+    assert isinstance(run_output, RunOutput)
+    assert run_input.data_transfer_id is None
+    assert run_output.data_transfer_id is None
