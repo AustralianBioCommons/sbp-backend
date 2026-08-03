@@ -139,11 +139,13 @@ class RunInput(Base):
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
-    data_transfer_id: Mapped[UUID] = mapped_column(ForeignKey("data_transfers.id"), nullable=False)
+    data_transfer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("data_transfers.id"), nullable=True
+    )
 
     run: Mapped[WorkflowRun] = relationship(back_populates="inputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_inputs")
-    data_transfer: Mapped[DataTransfer] = relationship(back_populates="run_input")
+    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_input")
 
 
 class RunOutput(Base):
@@ -155,11 +157,13 @@ class RunOutput(Base):
 
     run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
-    data_transfer_id: Mapped[UUID] = mapped_column(ForeignKey("data_transfers.id"), nullable=False)
+    data_transfer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("data_transfers.id"), nullable=True
+    )
 
     run: Mapped[WorkflowRun] = relationship(back_populates="outputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_outputs")
-    data_transfer: Mapped[DataTransfer] = relationship(back_populates="run_output")
+    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_output")
 
 
 class RunMetric(Base):

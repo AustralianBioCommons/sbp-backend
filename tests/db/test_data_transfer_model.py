@@ -1,6 +1,4 @@
-import pytest
 from sqlalchemy import inspect
-from sqlalchemy.exc import IntegrityError
 
 from app.db.models import DataTransfer, WorkflowRun
 from tests.datagen import (
@@ -122,19 +120,19 @@ def test_run_output_links_to_data_transfer(test_db, persistent_models):
     assert transfer.run_input is None
 
 
-def test_run_input_requires_data_transfer(test_db, persistent_models):
-    """Every RunInput/RunOutput row must be linked to a DataTransfer record."""
+def test_run_input_output_data_transfer_link_is_optional(test_db, persistent_models):
+    """RunInput/RunOutput rows aren't required to link to a DataTransfer record —
+    the link records provenance when known, but isn't tied to one particular
+    upload/download mechanism."""
     workflow_run = WorkflowRunFactory.create_sync()
     s3_object = S3ObjectFactory.create_sync()
 
-    with pytest.raises(IntegrityError):
-        RunInputFactory.create_sync(
-            run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
-        )
-    test_db.rollback()
+    run_input = RunInputFactory.create_sync(
+        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+    )
+    assert run_input.data_transfer_id is None
 
-    with pytest.raises(IntegrityError):
-        RunOutputFactory.create_sync(
-            run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
-        )
-    test_db.rollback()
+    run_output = RunOutputFactory.create_sync(
+        run_id=workflow_run.id, s3_object_id=s3_object.object_key, data_transfer=None
+    )
+    assert run_output.data_transfer_id is None
