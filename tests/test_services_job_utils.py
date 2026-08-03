@@ -378,9 +378,7 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
     assert persisted.uri.endswith(snapshot_key)
 
     run_output = test_db.scalar(
-        select(RunOutput).where(
-            RunOutput.run_id == run_id, RunOutput.s3_object_id == snapshot_key
-        )
+        select(RunOutput).where(RunOutput.run_id == run_id, RunOutput.s3_object_id == snapshot_key)
     )
     assert run_output is not None
     assert run_output.data_transfer_id is not None

@@ -905,9 +905,7 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
             destination_location=s3_object.uri,
         )
         db.add(output_transfer)
-        db.add(
-            RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer)
-        )
+        db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))
         existing_keys.add(normalized)
         changed = True
 

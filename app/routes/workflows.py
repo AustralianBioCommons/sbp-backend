@@ -361,9 +361,7 @@ async def launch_workflow(
         destination_location=input_destination,
     )
     db_session.add(input_transfer)
-    db_session.add(
-        RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer)
-    )
+    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
     db_session.flush()
 
     # All workflows require config_path. Validate before the try block
