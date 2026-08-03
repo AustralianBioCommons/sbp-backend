@@ -180,9 +180,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
     test_db.add_all(
         [
             RunInput(run_id=run.id, s3_object_id=s3_in.object_key, data_transfer=input_transfer),
-            RunOutput(
-                run_id=run.id, s3_object_id=s3_out.object_key, data_transfer=output_transfer
-            ),
+            RunOutput(run_id=run.id, s3_object_id=s3_out.object_key, data_transfer=output_transfer),
             RunMetric(run_id=run.id, max_score=1.23),
         ]
     )
@@ -217,9 +215,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
     assert test_db.execute(select(RunOutput).where(RunOutput.run_id == run.id)).first() is None
     assert test_db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).first() is None
     assert (
-        test_db.execute(
-            select(DataTransfer).where(DataTransfer.workflow_run_id == run.id)
-        ).first()
+        test_db.execute(select(DataTransfer).where(DataTransfer.workflow_run_id == run.id)).first()
         is None
     )
 
