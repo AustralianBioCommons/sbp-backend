@@ -204,9 +204,7 @@ def sync_completed_workflow_runs(dry_run: bool = False):
         logger.warning("Skipping workflow run result sync while system status is unhealthy.")
         return
 
-    result = asyncio.run(
-        sync_workflow_runs(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT)
-    )
+    result = asyncio.run(sync_workflow_runs(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT))
     logger.info(
         "Finished syncing workflow runs: "
         f"checked={result.checked}, completed={result.completed}, "

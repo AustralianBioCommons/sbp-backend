@@ -99,7 +99,9 @@ class WorkflowRun(Base):
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
     seqera_final_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-    sync_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")

@@ -539,9 +539,7 @@ async def test_get_job_details_success(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_get_job_details_uses_stored_terminal_status_without_seqera(
-    mock_db, mock_user_id
-):
+async def test_get_job_details_uses_stored_terminal_status_without_seqera(mock_db, mock_user_id):
     """Completed synced jobs are rendered from DB state without querying Seqera or syncing."""
     run_id = "wf-cached"
     workflow = WorkflowFactory.build(name="single-prediction")
