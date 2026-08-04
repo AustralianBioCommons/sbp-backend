@@ -6,11 +6,32 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 
-from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunMetric,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from app.db.models.job_queue import QueuedJob
 from app.services import job_utils, results_utils
 from tests.datagen import WorkflowRunFactory
+
+
+def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
+    """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
+    transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location=f"/work/{object_key}",
+        destination_location=f"s3://bucket/{object_key}",
+    )
+    return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
 
 class _Result:
@@ -278,7 +299,7 @@ async def test_ensure_completed_run_score_persists_spec_score(test_db):
     )
     test_db.add_all([user, workflow, run, output])
     test_db.flush()
-    run_output = RunOutput(run_id=run.id, s3_object_id=output.object_key)
+    run_output = _make_run_output(run, output.object_key)
     test_db.add(run_output)
     test_db.commit()
 
@@ -367,6 +388,20 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
     persisted = test_db.get(S3Object, snapshot_key)
     assert persisted is not None
     assert persisted.uri.endswith(snapshot_key)
+
+    run_output = test_db.scalar(
+        select(RunOutput).where(RunOutput.run_id == run_id, RunOutput.s3_object_id == snapshot_key)
+    )
+    assert run_output is not None
+    assert run_output.data_transfer_id is not None
+    output_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
+    assert output_transfer is not None
+    assert output_transfer.workflow_run_id == run_id
+    assert output_transfer.direction == "output"
+    assert output_transfer.provider == "s3"
+    assert output_transfer.source_location == f"s3://test-s3-bucket/{run_id}"
+    assert output_transfer.destination_location == persisted.uri
+    assert output_transfer.status == "pending"
     link = (
         test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
     )
@@ -397,7 +432,7 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
     ]
     snapshots = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in snapshot_keys]
     test_db.add_all(snapshots)
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=key) for key in snapshot_keys])
+    test_db.add_all([_make_run_output(run, key) for key in snapshot_keys])
     test_db.commit()
 
     with (
@@ -540,7 +575,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         object_key=report_key,
         uri=f"s3://bucket/{report_key}",
     )
-    test_db.add_all([user, run, report, RunOutput(run_id=run.id, s3_object_id=report_key)])
+    test_db.add_all([user, run, report, _make_run_output(run, report_key)])
     test_db.commit()
 
     with (
