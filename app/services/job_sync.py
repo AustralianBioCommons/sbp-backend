@@ -33,7 +33,7 @@ DescribeWorkflow = Callable[[str], Awaitable[dict[str, Any]]]
 class WorkflowRunSyncResult:
     """Outcome for syncing one workflow run."""
 
-    run_id: UUID
+    run_id: UUID | str
     seqera_run_id: str | None
     seqera_status: str | None = None
     ui_status: str | None = None

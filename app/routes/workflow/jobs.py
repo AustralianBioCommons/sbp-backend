@@ -280,8 +280,13 @@ async def get_job_details(
 
     seqera_payload: dict[str, object] | None = None
     if stored_ui_status is None:
+        seqera_run_id = owned_run.seqera_run_id
+        if seqera_run_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
+            )
         try:
-            seqera_payload = await describe_workflow(owned_run.seqera_run_id)
+            seqera_payload = await describe_workflow(seqera_run_id)
         except SeqeraConfigurationError as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
