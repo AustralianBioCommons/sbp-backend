@@ -6,7 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from loguru import logger
 
-from scheduler.jobs import sync_completed_workflow_runs
+from app.scheduler.jobs import sync_completed_workflow_runs
 
 # Load .env before importing scheduler modules, which read required env vars (e.g.
 # SEQERA_API_URL) at call time. Unlike app/main.py, this entrypoint runs standalone
