@@ -18,7 +18,7 @@ from rdkit import Chem, RDLogger
 
 # RDKit logs a warning/error to stderr for every unparseable SMILES by default;
 # invalid SMILES are an expected user-input case here, not something to log.
-RDLogger.DisableLog("rdApp.*")
+RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
 
 WorkflowName = Literal[
     "single-prediction", "de-novo-design", "bulk-prediction", "interaction-screening"
