@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.db.models.core import (
     AppUser,
+    DataTransfer,
     RunInput,
     RunMetric,
     RunOutput,
@@ -162,10 +163,24 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
     test_db.add_all([run, s3_in, s3_out])
     test_db.commit()
 
+    input_transfer = DataTransfer(
+        workflow_run=run,
+        direction="input",
+        provider="s3",
+        source_location=s3_in.uri,
+        destination_location="/work/in-1",
+    )
+    output_transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location="/work/out-1",
+        destination_location=s3_out.uri,
+    )
     test_db.add_all(
         [
-            RunInput(run_id=run.id, s3_object_id=s3_in.object_key),
-            RunOutput(run_id=run.id, s3_object_id=s3_out.object_key),
+            RunInput(run_id=run.id, s3_object_id=s3_in.object_key, data_transfer=input_transfer),
+            RunOutput(run_id=run.id, s3_object_id=s3_out.object_key, data_transfer=output_transfer),
             RunMetric(run_id=run.id, max_score=1.23),
         ]
     )
@@ -199,6 +214,10 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
     assert test_db.execute(select(RunInput).where(RunInput.run_id == run.id)).first() is None
     assert test_db.execute(select(RunOutput).where(RunOutput.run_id == run.id)).first() is None
     assert test_db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).first() is None
+    assert (
+        test_db.execute(select(DataTransfer).where(DataTransfer.workflow_run_id == run.id)).first()
+        is None
+    )
 
 
 @pytest.mark.asyncio

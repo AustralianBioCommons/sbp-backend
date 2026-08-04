@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from ...db.models.core import RunInput, RunMetric, RunOutput, WorkflowRun
+from ...db.models.core import DataTransfer, RunInput, RunMetric, RunOutput, WorkflowRun
 from ...schemas.workflows import (
     TERMINAL_SEQERA_STATUSES,
     BulkDeleteJobsRequest,
@@ -371,6 +371,7 @@ async def delete_job(
     db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
     db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
     db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
+    db.execute(delete(DataTransfer).where(DataTransfer.workflow_run_id == owned_run.id))
     if queued_job:
         db.delete(queued_job)
     db.delete(owned_run)
@@ -448,6 +449,7 @@ async def bulk_delete_jobs(
             db.execute(delete(RunMetric).where(RunMetric.run_id == run.id))
             db.execute(delete(RunInput).where(RunInput.run_id == run.id))
             db.execute(delete(RunOutput).where(RunOutput.run_id == run.id))
+            db.execute(delete(DataTransfer).where(DataTransfer.workflow_run_id == run.id))
             if queued_job := run.get_queued_job(session=db):
                 db.delete(queued_job)
             db.delete(run)

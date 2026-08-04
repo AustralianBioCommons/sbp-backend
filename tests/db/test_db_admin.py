@@ -17,6 +17,7 @@ from starlette_admin._types import RequestAction
 
 from app.db.admin import (
     AppUserAdmin,
+    DataTransferAdmin,
     RunOutputAdmin,
     S3ObjectAdmin,
     _claims_has_admin_role,
@@ -26,7 +27,7 @@ from app.db.admin import (
     mount_db_admin,
     require_admin_access,
 )
-from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
 
 DB_ADMIN_REQUIRED_ENV = {
@@ -122,6 +123,18 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit" in field_names
     assert "credit_updated_at" in field_names
     assert "credit_updated_by" in field_names
+
+
+def test_data_transfer_admin_includes_expected_columns() -> None:
+    field_names = _admin_field_names(DataTransferAdmin)
+    assert "workflow_run" in field_names
+    assert "direction" in field_names
+    assert "provider" in field_names
+    assert "source_location" in field_names
+    assert "destination_location" in field_names
+    assert "transfer_id" in field_names
+    assert "status" in field_names
+    assert "created_at" in field_names
 
 
 def test_app_user_admin_credit_audit_fields_are_read_only_on_forms() -> None:
@@ -287,12 +300,32 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         binder_name="PDL1",
         work_dir="/tmp/seed-run",
     )
-    run_input = RunInput(run_id=run_id, s3_object_id=s3_object.object_key)
-    run_output = RunOutput(run_id=run_id, s3_object_id=s3_object.object_key)
+    input_transfer = DataTransfer(
+        workflow_run_id=run_id,
+        direction="input",
+        provider="s3",
+        source_location=s3_object.uri,
+        destination_location="/tmp/seed-run",
+    )
+    output_transfer = DataTransfer(
+        workflow_run_id=run_id,
+        direction="output",
+        provider="s3",
+        source_location="/tmp/seed-run",
+        destination_location=s3_object.uri,
+    )
+    run_input = RunInput(
+        run_id=run_id, s3_object_id=s3_object.object_key, data_transfer=input_transfer
+    )
+    run_output = RunOutput(
+        run_id=run_id, s3_object_id=s3_object.object_key, data_transfer=output_transfer
+    )
 
     test_db.add(user)
     test_db.add(s3_object)
     test_db.add(run)
+    test_db.add(input_transfer)
+    test_db.add(output_transfer)
     test_db.add(run_input)
     test_db.add(run_output)
     test_db.commit()

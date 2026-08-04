@@ -34,6 +34,7 @@ except ModuleNotFoundError as exc:
 # Import all models to ensure they're registered with Base
 from app.db.models.core import (
     AppUser,
+    DataTransfer,
     RunInput,
     RunMetric,
     RunOutput,
@@ -42,7 +43,7 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
-from app.db.models.system_status import SystemStatusCache
+from app.db.models.system_status import SystemStatusCache, SystemStatusIncident
 
 
 def main():
@@ -55,7 +56,19 @@ def main():
     print("Generating database schema diagram...")
 
     # Collect all models
-    models = [AppUser, Workflow, WorkflowRun, S3Object, RunInput, RunOutput, RunMetric, QueuedJob, SystemStatusCache]
+    models = [
+        AppUser,
+        Workflow,
+        WorkflowRun,
+        S3Object,
+        RunInput,
+        RunOutput,
+        RunMetric,
+        DataTransfer,
+        QueuedJob,
+        SystemStatusCache,
+        SystemStatusIncident,
+    ]
 
     print(f"Models found: {len(models)} tables")
     for model in models:
