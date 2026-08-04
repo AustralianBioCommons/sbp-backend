@@ -1,10 +1,12 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import typer
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from loguru import logger
+
+from scheduler.jobs import sync_completed_workflow_runs
 
 # Load .env before importing scheduler modules, which read required env vars (e.g.
 # SEQERA_API_URL) at call time. Unlike app/main.py, this entrypoint runs standalone
@@ -16,6 +18,7 @@ from app.scheduler import SCHEDULER  # noqa: E402
 from app.scheduler.jobs import refresh_user_credits, submit_pending_jobs  # noqa: E402
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
+SYNC_INTERVAL = IntervalTrigger(minutes=10)
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=1, minute=0, timezone="UTC")
 
 
@@ -29,6 +32,18 @@ def main(dry_run: bool = False):
             trigger=SUBMIT_INTERVAL,
             next_run_time=datetime.now(tz=UTC),
             id="submit_pending_jobs",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info(f"Adding sync_completed_workflow_runs to scheduler: trigger = {SYNC_INTERVAL}")
+        SCHEDULER.add_job(
+            sync_completed_workflow_runs,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=SYNC_INTERVAL,
+            next_run_time=datetime.now(tz=UTC) + timedelta(minutes=2),
+            id="sync_completed_workflow_runs",
             misfire_grace_time=60,
             max_instances=1,
             replace_existing=True,
