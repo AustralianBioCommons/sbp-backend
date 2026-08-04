@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import UUID as PyUUID
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -22,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
+from ...schemas.workflows import TERMINAL_SEQERA_STATUSES
 from .. import Base
 
 _InetType = Text().with_variant(INET(), "postgresql")
@@ -30,7 +32,7 @@ _InetType = Text().with_variant(INET(), "postgresql")
 class AppUser(Base):
     __tablename__ = "app_users"
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     auth0_user_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -63,7 +65,7 @@ class Workflow(Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     repo_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -82,9 +84,9 @@ class WorkflowRun(Base):
         UniqueConstraint("work_dir"),
     )
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    workflow_id: Mapped[UUID | None] = mapped_column(ForeignKey("workflows.id"))
-    owner_user_id: Mapped[UUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workflow_id: Mapped[PyUUID | None] = mapped_column(ForeignKey("workflows.id"))
+    owner_user_id: Mapped[PyUUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
     seqera_run_id: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     binder_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     sample_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -97,6 +99,10 @@ class WorkflowRun(Base):
     )
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seqera_final_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    sync_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
@@ -115,6 +121,16 @@ class WorkflowRun(Base):
             .order_by(QueuedJob.queued_at.desc())
             .first()
         )
+
+    def is_fully_synced(self) -> bool:
+        seqera_complete = self.is_seqera_finalized()
+        sync_complete = self.sync_completed_at is not None
+        return seqera_complete and sync_complete
+
+    def is_seqera_finalized(self) -> bool:
+        if self.seqera_final_status is None:
+            return False
+        return self.seqera_final_status.upper() in TERMINAL_SEQERA_STATUSES
 
 
 class S3Object(Base):
@@ -137,9 +153,9 @@ class RunInput(Base):
         UniqueConstraint("data_transfer_id"),
     )
 
-    run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
+    run_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
-    data_transfer_id: Mapped[UUID | None] = mapped_column(
+    data_transfer_id: Mapped[PyUUID | None] = mapped_column(
         ForeignKey("data_transfers.id"), nullable=True
     )
 
@@ -155,9 +171,9 @@ class RunOutput(Base):
         UniqueConstraint("data_transfer_id"),
     )
 
-    run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
+    run_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
-    data_transfer_id: Mapped[UUID | None] = mapped_column(
+    data_transfer_id: Mapped[PyUUID | None] = mapped_column(
         ForeignKey("data_transfers.id"), nullable=True
     )
 
@@ -169,7 +185,7 @@ class RunOutput(Base):
 class RunMetric(Base):
     __tablename__ = "run_metrics"
 
-    run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), primary_key=True)
+    run_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflow_runs.id"), primary_key=True)
     max_score: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
     final_design_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
@@ -193,8 +209,8 @@ class DataTransfer(Base):
 
     __tablename__ = "data_transfers"
 
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    workflow_run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workflow_run_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     direction: Mapped[DataTransferDirection] = mapped_column(String(length=10), nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)

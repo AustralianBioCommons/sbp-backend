@@ -14,6 +14,7 @@ from ..routes.dependencies import get_db
 from ..schemas.workflows import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
@@ -28,6 +29,7 @@ RETRY_DELAY_BASE = 5 * 60
 # them (Nextflow's queueSize), so 25 workflows can run concurrently. Hardcoded as a
 # temporary MVP value, configurable via env var.
 MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
+WORKFLOW_SYNC_BATCH_LIMIT = int(os.getenv("WORKFLOW_SYNC_BATCH_LIMIT", "50"))
 
 
 class LaunchFunction(Protocol):
@@ -187,3 +189,33 @@ def submit_pending_jobs(dry_run: bool = False):
 
 def refresh_user_credits(dry_run: bool = False):
     logger.info("TODO: refresh user credits - not implemented yet")
+
+
+def sync_completed_workflow_runs(dry_run: bool = False):
+    logger.info("Checking for completed workflow runs to sync...")
+    db_session = next(get_db())
+    if dry_run:
+        runs = get_runs_requiring_sync(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT)
+        logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
+        return
+
+    ok_to_sync = is_seqera_available(db_session)
+    if not ok_to_sync:
+        logger.warning("Skipping workflow run result sync while system status is unhealthy.")
+        return
+
+    result = asyncio.run(sync_workflow_runs(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT))
+    logger.info(
+        "Finished syncing workflow runs: "
+        f"checked={result.checked}, completed={result.completed}, "
+        f"skipped={result.skipped}, errored={result.errored}."
+    )
+    for run_result in result.results:
+        if run_result.error is None:
+            continue
+        logger.warning(
+            "Workflow run sync failed: "
+            f"run_id={run_result.run_id}, "
+            f"seqera_run_id={run_result.seqera_run_id}, "
+            f"error={run_result.error}"
+        )
