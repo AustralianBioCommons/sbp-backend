@@ -2,7 +2,8 @@
 
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID as PyUUID, uuid4
+from uuid import UUID as PyUUID
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
