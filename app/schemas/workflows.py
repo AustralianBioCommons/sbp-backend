@@ -17,6 +17,11 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from rdkit import Chem, RDLogger
+
+# RDKit logs a warning/error to stderr for every unparseable SMILES by default;
+# invalid SMILES are an expected user-input case here, not something to log.
+RDLogger.DisableLog("rdApp.*")
 
 WorkflowName = Literal[
     "single-prediction", "de-novo-design", "bulk-prediction", "interaction-screening"
@@ -156,6 +161,11 @@ class SinglePredictionEntity(BaseModel):
     sequence: Annotated[str, StringConstraints(strip_whitespace=True)] = ""
 
 
+def _is_valid_smiles(value: str) -> bool:
+    """Check whether a string is a chemically valid SMILES, using RDKit."""
+    return bool(value) and Chem.MolFromSmiles(value) is not None
+
+
 def _entity_prediction_size(entity: SinglePredictionEntity) -> int:
     """Prediction size for one copy of an entity (ligands use a fixed size)."""
     if entity.moleculeType in ("ligand", "ccd"):
@@ -190,6 +200,11 @@ def validate_single_prediction_entities(
         total_copies += entity.copyNumber
         if entity.moleculeType == "protein":
             has_protein = True
+        if entity.moleculeType == "ligand" and not _is_valid_smiles(entity.sequence):
+            label = entity.id or "unnamed entity"
+            raise ValueError(
+                f"Ligand entity '{label}' has an invalid SMILES string: '{entity.sequence}'"
+            )
         total_size += _entity_prediction_size(entity) * entity.copyNumber
 
     if total_copies > SINGLE_PREDICTION_MAX_ENTITIES:

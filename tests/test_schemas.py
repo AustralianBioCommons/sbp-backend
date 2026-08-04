@@ -552,3 +552,27 @@ def test_validate_single_prediction_size_limit_is_exclusive():
     with pytest.raises(ValueError, match="less than 2000"):
         validate_single_prediction_entities([_protein(sequence="A" * 2000)], "alphafold2")
     validate_single_prediction_entities([_protein(sequence="A" * 1999)], "alphafold2")
+
+
+def test_validate_single_prediction_rejects_invalid_smiles():
+    protein = _protein()
+    ligand = SinglePredictionEntity(
+        id="lig", moleculeType="ligand", copyNumber=1, sequence="not-a-smiles("
+    )
+    with pytest.raises(ValueError, match="valid SMILES"):
+        validate_single_prediction_entities([protein, ligand], "colabfold")
+
+
+def test_validate_single_prediction_rejects_empty_ligand_sequence():
+    protein = _protein()
+    ligand = SinglePredictionEntity(id="lig", moleculeType="ligand", copyNumber=1, sequence="")
+    with pytest.raises(ValueError, match="valid SMILES"):
+        validate_single_prediction_entities([protein, ligand], "colabfold")
+
+
+def test_validate_single_prediction_accepts_aromatic_lowercase_smiles():
+    protein = _protein()
+    benzene = SinglePredictionEntity(
+        id="lig", moleculeType="ligand", copyNumber=1, sequence="c1ccccc1"
+    )
+    validate_single_prediction_entities([protein, benzene], "colabfold")

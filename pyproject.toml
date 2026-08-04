@@ -25,6 +25,7 @@ dependencies = [
     "apscheduler>=3.11.3",
     "loguru>=0.7.3",
     "typer>=0.26.8",
+    "rdkit~=2026.3",
 ]
 
 [tool.setuptools]
