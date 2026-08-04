@@ -378,3 +378,12 @@ class BulkDeleteJobsResponse(BaseModel):
 
     deleted: list[str] = Field(default_factory=list)
     failed: dict[str, str] = Field(default_factory=dict)
+
+
+TERMINAL_SEQERA_STATUSES = frozenset(
+    {
+        PipelineStatus.SUCCEEDED.value,
+        PipelineStatus.FAILED.value,
+        PipelineStatus.CANCELLED.value,
+    }
+)
