@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.db.models.core import Workflow, WorkflowRun
+from app.db.models.core import RunMetric
 from app.main import create_app
 from app.routes.workflow.jobs import get_job_details, list_jobs
 from tests.datagen import (
@@ -400,17 +400,20 @@ async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_get_job_details_success(mock_db, mock_user_id, mocker):
+async def test_get_job_details_success(mock_db, mock_user_id):
     """Test successful job details retrieval."""
     run_id = "wf-123"
-    workflow = mocker.Mock(spec=Workflow)
-    workflow.name = "BindCraft"
-
-    owned_run = mocker.Mock(spec=WorkflowRun)
-    owned_run.workflow = workflow
-    owned_run.tool = None
-    owned_run.submitted_form_data = None
-    owned_run.seqera_run_id = "seqera-wf-123"
+    workflow = WorkflowFactory.build(name="BindCraft")
+    owned_run = WorkflowRunFactory.build(
+        workflow=workflow,
+        seqera_run_id="seqera-wf-123",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        service_usage=1.0,
+        binder_name=None,
+        run_name="Test Job Details",
+    )
+    owned_run.metrics = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
@@ -430,6 +433,7 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
             new_callable=AsyncMock,
             return_value=0.95,
         ),
+        patch("app.routes.workflow.jobs.sync_service_usage", new_callable=AsyncMock),
     ):
         response = await get_job_details(
             run_id=run_id,
@@ -442,6 +446,57 @@ async def test_get_job_details_success(mock_db, mock_user_id, mocker):
     assert response.status == "Completed"
     assert response.workflow == "Bindcraft"
     assert response.score == 0.95
+
+
+@pytest.mark.asyncio
+async def test_get_job_details_uses_stored_terminal_status_without_seqera(
+    mock_db, mock_user_id
+):
+    """Completed synced jobs are rendered from DB state without querying Seqera or syncing."""
+    run_id = "wf-cached"
+    workflow = WorkflowFactory.build(name="single-prediction")
+    owned_run = WorkflowRunFactory.build(
+        workflow=workflow,
+        tool="boltz",
+        submitted_form_data=None,
+        seqera_run_id="seqera-wf-cached",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+        service_usage=2.5,
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        binder_name=None,
+        run_name="Cached Job Details",
+    )
+    owned_run.metrics = RunMetric(max_score=0.875)
+
+    with (
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
+        patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+        ) as ensure_score,
+        patch(
+            "app.routes.workflow.jobs.sync_service_usage",
+            new_callable=AsyncMock,
+        ) as sync_usage,
+    ):
+        response = await get_job_details(
+            run_id=run_id,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    ensure_score.assert_not_awaited()
+    sync_usage.assert_not_awaited()
+    assert response.id == run_id
+    assert response.jobName == "Cached Job Details"
+    assert response.status == "Completed"
+    assert response.workflow == "Single Prediction"
+    assert response.tool == "Boltz"
+    assert response.score == 0.875
+    assert response.submittedAt == datetime(2026, 2, 1, 10, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -460,13 +515,19 @@ async def test_get_job_details_not_found(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocker):
+async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
     """Test that in-progress jobs don't return a score."""
-    owned_run = mocker.Mock(spec=WorkflowRun)
-    owned_run.workflow = None
-    owned_run.tool = None
-    owned_run.submitted_form_data = None
-    owned_run.seqera_run_id = "seqera-wf-456"
+    owned_run = WorkflowRunFactory.build(
+        workflow=None,
+        tool=None,
+        submitted_form_data=None,
+        seqera_run_id="seqera-wf-456",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        service_usage=None,
+        submission_timestamp=None,
+    )
+    owned_run.metrics = None
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
@@ -479,7 +540,7 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
             "app.routes.workflow.jobs.ensure_completed_run_score",
             new_callable=AsyncMock,
             return_value=0.95,
-        ),
+        ) as ensure_score,
     ):
         response = await get_job_details(
             run_id="wf-456",
@@ -489,15 +550,18 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id, mocke
 
     assert response.status == "In progress"
     assert response.score is None
+    ensure_score.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_get_job_details_seqera_error(mock_db, mock_user_id, mocker):
+async def test_get_job_details_seqera_error(mock_db, mock_user_id):
     """Test handling of Seqera API error in job details."""
     from app.services.seqera_errors import SeqeraAPIError
 
-    owned_run = mocker.Mock()
-    owned_run.seqera_run_id = "seqera-wf-789"
+    owned_run = WorkflowRunFactory.build(
+        seqera_run_id="seqera-wf-789",
+        seqera_final_status=None,
+    )
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
@@ -521,7 +585,18 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id, mocker):
 async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
     """Test that completed jobs trigger score calculation."""
     run_id = "run-score-test"
-    user_run = UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-score-test")
+    run = WorkflowRunFactory.build(
+        seqera_run_id="wf-score-test",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        submitted_form_data=None,
+    )
+    run.metrics = None
+    user_run = UserJobListRowFactory.build(
+        run=run,
+        run_id=run_id,
+        seqera_run_id="wf-score-test",
+    )
 
     with (
         patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
