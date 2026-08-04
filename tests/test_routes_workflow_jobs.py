@@ -240,6 +240,96 @@ async def test_list_jobs_failed_queued_job_skips_seqera_lookup(test_db, persiste
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_stored_terminal_status_skips_seqera_lookup(mock_db, mock_user_id):
+    """Test seqera lookup is skipped when seqera_final_status is recorded"""
+    run = WorkflowRunFactory.build(
+        seqera_run_id="wf-cached-complete",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+        binder_name=None,
+        run_name="Cached Complete Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    run.metrics = None
+    user_run = UserJobListRowFactory.build(
+        run=run,
+        run_id="run-cached-complete",
+        seqera_run_id="wf-cached-complete",
+        workflow_type="Single Prediction",
+        score=0.91,
+    )
+    describe = AsyncMock()
+
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
+        patch("app.routes.workflow.jobs.describe_workflow", describe),
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].jobName == "Cached Complete Job"
+    assert response.jobs[0].status == "Completed"
+    assert response.jobs[0].score == 0.91
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db, mock_user_id):
+    """Completed runs already marked synced don't sync score and usage"""
+    run = WorkflowRunFactory.build(
+        seqera_run_id="wf-synced-complete",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+        service_usage=None,
+        binder_name=None,
+        run_name="Synced Complete Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    run.metrics = None
+    user_run = UserJobListRowFactory.build(
+        run=run,
+        run_id="run-synced-complete",
+        seqera_run_id="wf-synced-complete",
+        score=None,
+    )
+
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
+        patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
+        patch(
+            "app.routes.workflow.jobs.ensure_completed_run_score",
+            new_callable=AsyncMock,
+        ) as ensure_score,
+        patch(
+            "app.routes.workflow.jobs.sync_service_usage",
+            new_callable=AsyncMock,
+        ) as sync_usage,
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    ensure_score.assert_not_awaited()
+    sync_usage.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].status == "Completed"
+    assert response.jobs[0].score is None
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
     """Test that jobs with non-matching status are filtered out."""
     run_id = "run-999"
