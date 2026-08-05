@@ -7,7 +7,8 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.workflows import (
+from app.schemas.workflows.interaction_screening import WispsDatasetUploadRequest, WispsSequenceItem
+from app.schemas.workflows.shared import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
     JobListItem,
@@ -17,15 +18,15 @@ from app.schemas.workflows import (
     ListRunsResponse,
     PipelineStatus,
     RunInfo,
-    SinglePredictionEntity,
     UIStatus,
-    WispsDatasetUploadRequest,
-    WispsSequenceItem,
     WorkflowLaunchForm,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     WorkflowUserDetails,
     map_pipeline_status_to_ui,
+)
+from app.schemas.workflows.single_prediction import (
+    SinglePredictionEntity,
     single_prediction_size_limit,
     validate_single_prediction_entities,
 )

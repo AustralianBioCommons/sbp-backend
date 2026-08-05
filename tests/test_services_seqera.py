@@ -13,7 +13,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,

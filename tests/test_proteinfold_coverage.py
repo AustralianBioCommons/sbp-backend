@@ -11,7 +11,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,

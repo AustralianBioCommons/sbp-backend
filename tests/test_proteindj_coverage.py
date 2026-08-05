@@ -9,12 +9,8 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import (
-    ProteinDjFormData,
-    WorkflowFormData,
-    WorkflowLaunchForm,
-    WorkflowUserDetails,
-)
+from app.schemas.workflows.de_novo_design import ProteinDjFormData
+from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
