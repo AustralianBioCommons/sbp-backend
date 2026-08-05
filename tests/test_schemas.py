@@ -576,3 +576,70 @@ def test_validate_single_prediction_accepts_aromatic_lowercase_smiles():
         id="lig", moleculeType="ligand", copyNumber=1, sequence="c1ccccc1"
     )
     validate_single_prediction_entities([protein, benzene], "colabfold")
+
+
+def test_validate_single_prediction_rejects_invalid_protein_sequence():
+    protein = SinglePredictionEntity(
+        id="p", moleculeType="protein", copyNumber=1, sequence="ACDEFXZ"
+    )
+    with pytest.raises(ValueError, match="canonical"):
+        validate_single_prediction_entities([protein], "colabfold")
+
+
+def test_validate_single_prediction_rejects_empty_protein_sequence():
+    protein = SinglePredictionEntity(id="p", moleculeType="protein", copyNumber=1, sequence="")
+    with pytest.raises(ValueError, match="canonical"):
+        validate_single_prediction_entities([protein], "colabfold")
+
+
+def test_validate_single_prediction_accepts_whitespace_in_protein_sequence():
+    protein = SinglePredictionEntity(
+        id="p", moleculeType="protein", copyNumber=1, sequence="ACD\nEFG hik"
+    )
+    validate_single_prediction_entities([protein], "colabfold")
+
+
+def test_validate_single_prediction_rejects_invalid_dna_sequence():
+    protein = _protein()
+    dna = SinglePredictionEntity(id="d", moleculeType="dna", copyNumber=1, sequence="ACGU")
+    with pytest.raises(ValueError, match="DNA characters"):
+        validate_single_prediction_entities([protein, dna], "colabfold")
+
+
+def test_validate_single_prediction_accepts_valid_dna_sequence():
+    protein = _protein()
+    dna = SinglePredictionEntity(id="d", moleculeType="dna", copyNumber=1, sequence="acgt")
+    validate_single_prediction_entities([protein, dna], "colabfold")
+
+
+def test_validate_single_prediction_rejects_invalid_rna_sequence():
+    protein = _protein()
+    rna = SinglePredictionEntity(id="r", moleculeType="rna", copyNumber=1, sequence="ACGT")
+    with pytest.raises(ValueError, match="RNA characters"):
+        validate_single_prediction_entities([protein, rna], "colabfold")
+
+
+def test_validate_single_prediction_accepts_valid_rna_sequence():
+    protein = _protein()
+    rna = SinglePredictionEntity(id="r", moleculeType="rna", copyNumber=1, sequence="acgu")
+    validate_single_prediction_entities([protein, rna], "colabfold")
+
+
+def test_validate_single_prediction_accepts_supported_ccd_code():
+    protein = _protein()
+    ccd = SinglePredictionEntity(id="c", moleculeType="ccd", copyNumber=1, sequence="atp")
+    validate_single_prediction_entities([protein, ccd], "colabfold")
+
+
+def test_validate_single_prediction_rejects_unsupported_ccd_code():
+    protein = _protein()
+    ccd = SinglePredictionEntity(id="c", moleculeType="ccd", copyNumber=1, sequence="XYZ")
+    with pytest.raises(ValueError, match="unsupported ligand code"):
+        validate_single_prediction_entities([protein, ccd], "colabfold")
+
+
+def test_validate_single_prediction_rejects_malformed_ccd_code():
+    protein = _protein()
+    ccd = SinglePredictionEntity(id="c", moleculeType="ccd", copyNumber=1, sequence="TOOLONGCODE")
+    with pytest.raises(ValueError, match="unsupported ligand code"):
+        validate_single_prediction_entities([protein, ccd], "colabfold")
