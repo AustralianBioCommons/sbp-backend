@@ -25,20 +25,21 @@ from ..db.models.core import (
     Workflow,
     WorkflowRun,
 )
-from ..schemas.workflows import (
+from ..schemas.workflows.interaction_screening import WispsDatasetUploadRequest, WispsFormData
+from ..schemas.workflows.shared import (
     DatasetUploadRequest,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
-    SinglePredictionEntity,
-    WispsDatasetUploadRequest,
-    WispsFormData,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     WorkflowUserDetails,
+)
+from ..schemas.workflows.single_prediction import (
+    SinglePredictionEntity,
     validate_single_prediction_entities,
 )
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow

@@ -19,7 +19,7 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from ..schemas.workflows import WorkflowName, WorkflowTool
+from ..schemas.workflows.shared import WorkflowName, WorkflowTool
 
 
 def is_credits_enabled() -> bool:

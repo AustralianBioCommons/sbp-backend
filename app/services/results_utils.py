@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.models.core import DataTransfer, RunOutput, S3Object, WorkflowRun
-from ..schemas.workflows import ResultDownloadItem, ResultLogEntry, WorkflowName, WorkflowTool
+from ..schemas.workflows.shared import ResultDownloadItem, ResultLogEntry, WorkflowName, WorkflowTool
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
