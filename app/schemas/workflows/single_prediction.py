@@ -26,7 +26,7 @@ SINGLE_PREDICTION_BOLTZ_POTENTIALS_SIZE_LIMIT = 2000
 
 # DNA/RNA alphabets, consistent with the frontend's fasta.utils.ts. Protein
 # sequences are validated with RDKit's own residue parser instead (see
-# _is_valid_protein_sequence) rather than a hand-rolled amino-acid regex.
+# is_valid_protein_sequence) rather than a hand-rolled amino-acid regex.
 _DNA_REGEX = re.compile(r"^[ATGC]+$")
 _RNA_REGEX = re.compile(r"^[AUGC]+$")
 _CCD_CODE_REGEX = re.compile(r"^[A-Z0-9]{1,5}$")
@@ -74,7 +74,7 @@ def _normalize_sequence(value: str) -> str:
     return re.sub(r"\s+", "", value or "").upper()
 
 
-def _is_valid_protein_sequence(value: str) -> bool:
+def is_valid_protein_sequence(value: str) -> bool:
     """Check a sequence is a valid protein, using RDKit's peptide sequence
     parser (flavor=0: L-amino acids); rejects ambiguous/extended one-letter
     codes (B, J, O, U, X, Z, ...) that aren't one of the 20 canonical residues."""
@@ -82,25 +82,25 @@ def _is_valid_protein_sequence(value: str) -> bool:
     return bool(normalized) and Chem.MolFromSequence(normalized, flavor=0) is not None
 
 
-def _is_valid_dna_sequence(value: str) -> bool:
+def is_valid_dna_sequence(value: str) -> bool:
     """Check a sequence uses only valid DNA characters (A, T, G, C)."""
     normalized = _normalize_sequence(value)
     return bool(normalized) and bool(_DNA_REGEX.match(normalized))
 
 
-def _is_valid_rna_sequence(value: str) -> bool:
+def is_valid_rna_sequence(value: str) -> bool:
     """Check a sequence uses only valid RNA characters (A, U, G, C)."""
     normalized = _normalize_sequence(value)
     return bool(normalized) and bool(_RNA_REGEX.match(normalized))
 
 
-def _is_valid_ccd_code(value: str) -> bool:
+def is_valid_ccd_code(value: str) -> bool:
     """Check a value is a supported wwPDB Chemical Component Dictionary code."""
     normalized = (value or "").strip().upper()
     return bool(_CCD_CODE_REGEX.match(normalized)) and normalized in CCD_COMPOUNDS
 
 
-def _is_valid_smiles(value: str) -> bool:
+def is_valid_smiles(value: str) -> bool:
     """Check whether a string is a chemically valid SMILES, using RDKit."""
     return bool(value) and Chem.MolFromSmiles(value) is not None
 
@@ -112,30 +112,30 @@ def _validate_entity_sequence(entity: SinglePredictionEntity) -> None:
     """
     label = entity.id or "unnamed entity"
     if entity.moleculeType == "protein":
-        if not _is_valid_protein_sequence(entity.sequence):
+        if not is_valid_protein_sequence(entity.sequence):
             raise ValueError(
                 f"Protein entity '{label}' has an invalid sequence: only the 20 canonical "
                 "amino acids (ARNDCQEGHILKMFPSTWYV) are allowed."
             )
     elif entity.moleculeType == "dna":
-        if not _is_valid_dna_sequence(entity.sequence):
+        if not is_valid_dna_sequence(entity.sequence):
             raise ValueError(
                 f"DNA entity '{label}' has an invalid sequence: only valid DNA characters "
                 "(A, T, G, C) are allowed."
             )
     elif entity.moleculeType == "rna":
-        if not _is_valid_rna_sequence(entity.sequence):
+        if not is_valid_rna_sequence(entity.sequence):
             raise ValueError(
                 f"RNA entity '{label}' has an invalid sequence: only valid RNA characters "
                 "(A, U, G, C) are allowed."
             )
     elif entity.moleculeType == "ccd":
-        if not _is_valid_ccd_code(entity.sequence):
+        if not is_valid_ccd_code(entity.sequence):
             raise ValueError(
                 f"CCD entity '{label}' has an unsupported ligand code: '{entity.sequence}'. "
                 f"Supported codes: {', '.join(sorted(CCD_COMPOUNDS))}."
             )
-    elif entity.moleculeType == "ligand" and not _is_valid_smiles(entity.sequence):
+    elif entity.moleculeType == "ligand" and not is_valid_smiles(entity.sequence):
         raise ValueError(
             f"Ligand entity '{label}' has an invalid SMILES string: '{entity.sequence}'"
         )
