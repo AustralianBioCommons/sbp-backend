@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 from datetime import UTC, datetime
@@ -19,7 +20,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy import inspect as sqla_inspect
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
@@ -28,10 +29,11 @@ from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
-from starlette_admin.fields import HasOne, StringField
+from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..routes.dependencies import get_db
+from ..services.credits import launch_credit_cost
 from . import engine
 from .models.core import (
     AppUser,
@@ -159,6 +161,38 @@ class WorkflowAdmin(ModelView):
         return f"{obj.name}"
 
 
+class NciServiceUnitsField(FloatField):
+    """Displays ``service_usage`` rounded up to 2 decimal places.
+
+    Only the display value is rounded; create/edit forms still show and accept
+    the raw, full-precision value stored in the DB.
+    """
+
+    async def serialize_value(
+        self, request: Request, value: Any, action: RequestAction
+    ) -> float:
+        value = float(value)
+        if action in (RequestAction.LIST, RequestAction.DETAIL):
+            return math.ceil(value * 100) / 100
+        return value
+
+
+class SbpCreditField(IntegerField):
+    """SBP credit cost for a run, recomputed on the fly (not stored) using the
+    same formula charged at launch time, so it can be shown next to
+    ``service_usage`` for SU-to-credit calibration without a schema change.
+    None for categories not costed by that formula (e.g. bulk/interaction
+    screening). Excluded from create/edit forms via ``exclude_fields_from_*``
+    below, since it has nothing to write back.
+    """
+
+    async def parse_obj(self, request: Request, obj: Any) -> int | None:
+        if obj.workflow is None or not obj.tool:
+            return None
+        final_design_count = obj.metrics.final_design_count if obj.metrics else None
+        return launch_credit_cost(obj.workflow.name, obj.tool, final_design_count)
+
+
 class WorkflowRunAdmin(ModelView):
     fields = [
         "submission_timestamp",
@@ -169,7 +203,8 @@ class WorkflowRunAdmin(ModelView):
         "owner_user_id",
         "seqera_run_id",
         "run_name",
-        "service_usage",
+        NciServiceUnitsField("service_usage", label="NCI Service Units"),
+        SbpCreditField("sbp_credit", label="SBP Credit"),
         JSONField("submitted_form_data"),
         "binder_name",
         "work_dir",
@@ -178,7 +213,18 @@ class WorkflowRunAdmin(ModelView):
         "id",
     ]
     exclude_fields_from_list = ["submitted_form_data"]
+    exclude_fields_from_create = ["sbp_credit"]
+    exclude_fields_from_edit = ["sbp_credit"]
     fields_default_sort = [("submission_timestamp", True)]
+
+    def get_list_query(self, request: Request) -> Any:
+        # SbpCreditField reads obj.metrics; eager-load it here to avoid an N+1
+        # lazy load per row (metrics isn't itself a listed field/RelationField,
+        # so starlette-admin's automatic joinedload doesn't cover it).
+        return super().get_list_query(request).options(joinedload(WorkflowRun.metrics))
+
+    def get_details_query(self, request: Request) -> Any:
+        return super().get_details_query(request).options(joinedload(WorkflowRun.metrics))
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.run_name}"
