@@ -164,6 +164,11 @@ def test_workflow_run_admin_sbp_credit_excluded_from_forms() -> None:
         (12.001, 12.01),
         (12.34, 12.34),
         (12.345, 12.35),
+        # Regression: 0.07 * 100 == 7.000000000000001 in binary float, so a
+        # naive math.ceil(value * 100) / 100 would wrongly bump this to 0.08.
+        (0.07, 0.07),
+        (0.56, 0.56),
+        (2.18, 2.18),
     ],
 )
 async def test_nci_service_units_field_rounds_up_for_list_and_detail(raw, expected) -> None:
