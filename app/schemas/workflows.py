@@ -549,5 +549,7 @@ TERMINAL_SEQERA_STATUSES = frozenset(
         PipelineStatus.SUCCEEDED.value,
         PipelineStatus.FAILED.value,
         PipelineStatus.CANCELLED.value,
+        # UNKNOWN status can't be recovered
+        PipelineStatus.UNKNOWN.value,
     }
 )
