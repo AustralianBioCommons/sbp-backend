@@ -14,7 +14,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from ...db.models.core import DataTransfer, RunInput, RunMetric, RunOutput, WorkflowRun
-from ...schemas.workflows import (
+from ...schemas.workflows.shared import (
     TERMINAL_SEQERA_STATUSES,
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,

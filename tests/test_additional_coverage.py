@@ -12,7 +12,8 @@ from app.routes.workflows import (
     upload_dataset,
     upload_wisps_dataset_endpoint,
 )
-from app.schemas.workflows import DatasetUploadRequest, WispsDatasetUploadRequest
+from app.schemas.workflows.interaction_screening import WispsDatasetUploadRequest
+from app.schemas.workflows.shared import DatasetUploadRequest
 from app.services.s3 import S3ConfigurationError, S3ServiceError, S3UploadResult
 
 

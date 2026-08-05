@@ -420,7 +420,7 @@ def test_list_runs_placeholder(client: TestClient):
 
 
 def _form_data(**extra):
-    from app.schemas.workflows import WorkflowFormData
+    from app.schemas.workflows.shared import WorkflowFormData
 
     return WorkflowFormData(workflow="de-novo-design", tool="bindcraft", **extra)
 

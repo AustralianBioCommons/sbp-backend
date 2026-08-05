@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models.core import WorkflowRun
-from ..schemas.workflows import (
+from ..schemas.workflows.shared import (
     TERMINAL_SEQERA_STATUSES,
     PipelineStatus,
     UIStatus,

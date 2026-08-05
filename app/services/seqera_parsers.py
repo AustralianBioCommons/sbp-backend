@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..schemas.workflows import map_pipeline_status_to_ui
+from ..schemas.workflows.shared import map_pipeline_status_to_ui
 from .seqera_models import WorkflowListItem
 
 

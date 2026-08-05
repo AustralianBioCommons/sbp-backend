@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
 from .seqera import (
     WorkflowLaunchResult,

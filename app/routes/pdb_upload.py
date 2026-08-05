@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
-from ..schemas.workflows import PdbUploadResponse
+from ..schemas.workflows.shared import PdbUploadResponse
 from ..services.s3 import (
     S3ConfigurationError,
     S3ServiceError,

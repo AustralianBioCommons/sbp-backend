@@ -23,7 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...schemas.workflows import TERMINAL_SEQERA_STATUSES
+from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES
 from .. import Base
 
 _InetType = Text().with_variant(INET(), "postgresql")

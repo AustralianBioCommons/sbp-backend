@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
-from ..schemas.workflows import WorkflowName
+from ..schemas.workflows.shared import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs

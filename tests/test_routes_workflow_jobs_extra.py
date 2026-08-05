@@ -27,7 +27,7 @@ from app.routes.workflow.jobs import (
     delete_job,
     get_job_details,
 )
-from app.schemas.workflows import BulkDeleteJobsRequest
+from app.schemas.workflows.shared import BulkDeleteJobsRequest
 from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 

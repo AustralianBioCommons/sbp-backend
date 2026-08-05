@@ -12,7 +12,7 @@ import string
 from datetime import UTC, datetime
 from typing import Any
 
-from ..schemas.workflows import WispsSequenceItem
+from ..schemas.workflows.interaction_screening import WispsSequenceItem
 from .s3 import S3UploadResult, upload_file_to_s3
 
 logger = logging.getLogger(__name__)
