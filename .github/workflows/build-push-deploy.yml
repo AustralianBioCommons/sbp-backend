@@ -65,13 +65,11 @@ jobs:
           DEPLOY_LAMBDA_NAME: ${{ steps.env.outputs.lambda }}
           IMAGE_TAG: ${{ steps.env.outputs.tag }}
         run: |
-          export AWS_MAX_ATTEMPTS=1
-
           set -euo pipefail
           aws lambda invoke \
             --function-name "$DEPLOY_LAMBDA_NAME" \
+            --invocation-type Event \
             --cli-binary-format raw-in-base64-out \
-            --cli-read-timeout 0 \
             --payload "{\"tag\":\"$IMAGE_TAG\"}" \
             /tmp/response.json
           cat /tmp/response.json
