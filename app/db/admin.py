@@ -173,6 +173,8 @@ class WorkflowRunAdmin(ModelView):
         JSONField("submitted_form_data"),
         "binder_name",
         "work_dir",
+        "seqera_final_status",
+        "sync_completed_at",
         "id",
     ]
     exclude_fields_from_list = ["submitted_form_data"]
