@@ -21,6 +21,7 @@ from .interaction_screening import (
     WispsSequenceItem,
 )
 from .shared import (
+    TERMINAL_SEQERA_STATUSES,
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,
     CancelWorkflowResponse,
@@ -76,6 +77,7 @@ __all__ = [
     "SINGLE_PREDICTION_LIGAND_SIZE",
     "SINGLE_PREDICTION_MAX_ENTITIES",
     "SINGLE_PREDICTION_SIZE_LIMITS",
+    "TERMINAL_SEQERA_STATUSES",
     "BulkDeleteJobsRequest",
     "BulkDeleteJobsResponse",
     "CancelWorkflowResponse",
