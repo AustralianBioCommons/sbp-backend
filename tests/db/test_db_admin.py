@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -155,6 +156,25 @@ def test_workflow_run_admin_sbp_credit_excluded_from_forms() -> None:
     # sbp_credit is computed, not stored, so it must not appear on create/edit forms.
     assert "sbp_credit" in WorkflowRunAdmin.exclude_fields_from_create
     assert "sbp_credit" in WorkflowRunAdmin.exclude_fields_from_edit
+
+
+def test_workflow_run_admin_sbp_credit_not_sortable() -> None:
+    # sbp_credit has no backing column, so it must be excluded from
+    # sortable_fields (drives the list UI's sort affordance).
+    assert "sbp_credit" not in WorkflowRunAdmin.sortable_fields
+
+
+def test_workflow_run_admin_order_by_sbp_credit_does_not_raise() -> None:
+    # Regression: order_by is a plain query param, not validated against
+    # sortable_fields, so a manually edited URL (or a stale bookmark) can
+    # still request `order_by=sbp_credit ...`. Without filtering it out in
+    # build_order_clauses, starlette-admin's base implementation resolves
+    # `getattr(WorkflowRun, "sbp_credit", None)` to None and raises
+    # `ValueError: Value can not be None` while building the ORDER BY clause.
+    admin = WorkflowRunAdmin(WorkflowRun)
+    stmt = select(WorkflowRun)
+    ordered = admin.build_order_clauses(None, ["sbp_credit desc"], stmt)
+    assert ordered is not None
 
 
 @pytest.mark.parametrize(
