@@ -168,17 +168,13 @@ class NciServiceUnitsField(FloatField):
     the raw, full-precision value stored in the DB.
     """
 
-    async def serialize_value(
-        self, request: Request, value: Any, action: RequestAction
-    ) -> float:
+    async def serialize_value(self, request: Request, value: Any, action: RequestAction) -> float:
         value = float(value)
         if action in (RequestAction.LIST, RequestAction.DETAIL):
             # Round-trip through Decimal(str(value)) rather than value * 100
             # directly: binary float noise (e.g. 0.07 * 100 == 7.000000000000001)
             # would otherwise push ~5% of already-clean 2dp values up a cent.
-            return float(
-                Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_CEILING)
-            )
+            return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_CEILING))
         return value
 
 
