@@ -438,8 +438,6 @@ async def launch_workflow(
                     config_path=workflow.config_path,
                     revision=workflow.default_revision,
                     output_id=str(run_id),
-                    mode=tool_mode,
-                    form_data=payload.formData,
                     user_details=user_details,
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
