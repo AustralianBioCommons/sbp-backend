@@ -485,7 +485,7 @@ def test_get_proteinfold_default_params_required_keys():
     assert params["outdir"] == "s3://bucket/out"
     assert params["input"] == "https://sheet.url"
     assert "mode" in params
-    assert "project" in params
+    assert "project" not in params
 
 
 def test_get_proteinfold_default_params_mode_substitution():
