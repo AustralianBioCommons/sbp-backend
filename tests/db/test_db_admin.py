@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -18,8 +19,11 @@ from starlette_admin._types import RequestAction
 from app.db.admin import (
     AppUserAdmin,
     DataTransferAdmin,
+    NciServiceUnitsField,
     RunOutputAdmin,
     S3ObjectAdmin,
+    SbpCreditField,
+    WorkflowRunAdmin,
     _claims_has_admin_role,
     _decode_admin_pk,
     _is_db_admin_enabled,
@@ -135,6 +139,88 @@ def test_data_transfer_admin_includes_expected_columns() -> None:
     assert "transfer_id" in field_names
     assert "status" in field_names
     assert "created_at" in field_names
+
+
+def test_workflow_run_admin_renames_service_usage_and_adds_sbp_credit() -> None:
+    field_names = _admin_field_names(WorkflowRunAdmin)
+    assert "service_usage" in field_names
+    assert "sbp_credit" in field_names
+
+    fields_by_name = {getattr(f, "name", f): f for f in WorkflowRunAdmin.fields}
+    assert fields_by_name["service_usage"].label == "NCI Service Units"
+    assert fields_by_name["sbp_credit"].label == "SBP Credit"
+
+
+def test_workflow_run_admin_sbp_credit_excluded_from_forms() -> None:
+    # sbp_credit is computed, not stored, so it must not appear on create/edit forms.
+    assert "sbp_credit" in WorkflowRunAdmin.exclude_fields_from_create
+    assert "sbp_credit" in WorkflowRunAdmin.exclude_fields_from_edit
+
+
+def test_workflow_run_admin_sbp_credit_not_sortable() -> None:
+    # sbp_credit has no backing column, so a click on its list-view column
+    # header must not offer to sort by it (that would 500 — starlette-admin
+    # would try to build an ORDER BY clause against a nonexistent column).
+    assert "sbp_credit" not in WorkflowRunAdmin.sortable_fields
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (12.0, 12.0),
+        (12.001, 12.0),
+        (12.34, 12.34),
+        (12.345, 12.35),
+        (0.07, 0.07),
+        (0.56, 0.56),
+        (2.18, 2.18),
+    ],
+)
+async def test_nci_service_units_field_rounds_for_list_and_detail(raw, expected) -> None:
+    field = NciServiceUnitsField("service_usage", label="NCI Service Units")
+    for action in (RequestAction.LIST, RequestAction.DETAIL):
+        assert await field.serialize_value(None, raw, action) == expected
+
+
+async def test_nci_service_units_field_keeps_raw_precision_on_forms() -> None:
+    field = NciServiceUnitsField("service_usage", label="NCI Service Units")
+    for action in (RequestAction.CREATE, RequestAction.EDIT):
+        assert await field.serialize_value(None, 12.001, action) == 12.001
+
+
+async def test_sbp_credit_field_computes_de_novo_design_cost_from_metrics() -> None:
+    field = SbpCreditField("sbp_credit", label="SBP Credit")
+    run = SimpleNamespace(
+        workflow=SimpleNamespace(name="de-novo-design"),
+        tool="rfdiffusion",
+        metrics=SimpleNamespace(final_design_count=3),
+    )
+    assert await field.parse_obj(None, run) == 30  # 10 credits/design * 3 designs
+
+
+async def test_sbp_credit_field_computes_single_prediction_constant_cost() -> None:
+    field = SbpCreditField("sbp_credit", label="SBP Credit")
+    run = SimpleNamespace(
+        workflow=SimpleNamespace(name="single-prediction"),
+        tool="colabfold",
+        metrics=None,
+    )
+    assert await field.parse_obj(None, run) == 5
+
+
+async def test_sbp_credit_field_is_none_for_uncosted_categories_and_missing_data() -> None:
+    field = SbpCreditField("sbp_credit", label="SBP Credit")
+    bulk_run = SimpleNamespace(
+        workflow=SimpleNamespace(name="bulk-prediction"), tool="boltz", metrics=None
+    )
+    no_workflow_run = SimpleNamespace(workflow=None, tool="boltz", metrics=None)
+    no_tool_run = SimpleNamespace(
+        workflow=SimpleNamespace(name="single-prediction"), tool=None, metrics=None
+    )
+
+    assert await field.parse_obj(None, bulk_run) is None
+    assert await field.parse_obj(None, no_workflow_run) is None
+    assert await field.parse_obj(None, no_tool_run) is None
 
 
 def test_app_user_admin_credit_audit_fields_are_read_only_on_forms() -> None:

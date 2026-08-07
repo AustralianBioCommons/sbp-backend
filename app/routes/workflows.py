@@ -45,8 +45,8 @@ from ..schemas.workflows.single_prediction import (
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
     WorkflowCreditsResponse,
-    compute_cost,
     is_credits_enabled,
+    launch_credit_cost,
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
@@ -204,23 +204,6 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
     return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
 
 
-def _launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
-    """Authoritative per-run cost for workflows charged server-side at launch.
-
-    Only de-novo (final designs) and single (constant) are charged today — their
-    quantity is fully determined by the launch payload. interaction/bulk are not
-    charged here (display-only); they return None.
-    """
-    cat = category.strip().lower()
-    if cat == "single-prediction":
-        return compute_cost(cat, tool, 1)
-    if cat == "de-novo-design":
-        if final_design_count is None or final_design_count < 1:
-            return None
-        return compute_cost(cat, tool, final_design_count)
-    return None
-
-
 @router.post(
     "/launch",
     response_model=WorkflowLaunchResponse,
@@ -310,7 +293,7 @@ async def launch_workflow(
     # (de-novo, single); interaction/bulk are display-only for now. Gated by the
     # ENABLE_CREDITS flag so the feature can be rolled out independently.
     run_credit_cost = (
-        _launch_credit_cost(requested_workflow, selected_tool, final_design_count)
+        launch_credit_cost(requested_workflow, selected_tool, final_design_count)
         if is_credits_enabled()
         else None
     )

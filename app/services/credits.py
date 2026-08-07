@@ -128,3 +128,20 @@ def compute_cost(category: str, tool: str, quantity: int) -> int | None:
     if multiplier is None:
         return None
     return multiplier * max(0, quantity)
+
+
+def launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
+    """Authoritative per-run cost for workflows charged server-side at launch.
+
+    Only de-novo (final designs) and single (constant) are charged today — their
+    quantity is fully determined by the launch payload. interaction/bulk are not
+    charged here (display-only); they return None.
+    """
+    cat = category.strip().lower()
+    if cat == "single-prediction":
+        return compute_cost(cat, tool, 1)
+    if cat == "de-novo-design":
+        if final_design_count is None or final_design_count < 1:
+            return None
+        return compute_cost(cat, tool, final_design_count)
+    return None
