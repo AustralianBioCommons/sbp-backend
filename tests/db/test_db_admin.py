@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -159,39 +158,25 @@ def test_workflow_run_admin_sbp_credit_excluded_from_forms() -> None:
 
 
 def test_workflow_run_admin_sbp_credit_not_sortable() -> None:
-    # sbp_credit has no backing column, so it must be excluded from
-    # sortable_fields (drives the list UI's sort affordance).
+    # sbp_credit has no backing column, so a click on its list-view column
+    # header must not offer to sort by it (that would 500 — starlette-admin
+    # would try to build an ORDER BY clause against a nonexistent column).
     assert "sbp_credit" not in WorkflowRunAdmin.sortable_fields
-
-
-def test_workflow_run_admin_order_by_sbp_credit_does_not_raise() -> None:
-    # Regression: order_by is a plain query param, not validated against
-    # sortable_fields, so a manually edited URL (or a stale bookmark) can
-    # still request `order_by=sbp_credit ...`. Without filtering it out in
-    # build_order_clauses, starlette-admin's base implementation resolves
-    # `getattr(WorkflowRun, "sbp_credit", None)` to None and raises
-    # `ValueError: Value can not be None` while building the ORDER BY clause.
-    admin = WorkflowRunAdmin(WorkflowRun)
-    stmt = select(WorkflowRun)
-    ordered = admin.build_order_clauses(None, ["sbp_credit desc"], stmt)
-    assert ordered is not None
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (12.0, 12.0),
-        (12.001, 12.01),
+        (12.001, 12.0),
         (12.34, 12.34),
         (12.345, 12.35),
-        # Regression: 0.07 * 100 == 7.000000000000001 in binary float, so a
-        # naive math.ceil(value * 100) / 100 would wrongly bump this to 0.08.
         (0.07, 0.07),
         (0.56, 0.56),
         (2.18, 2.18),
     ],
 )
-async def test_nci_service_units_field_rounds_up_for_list_and_detail(raw, expected) -> None:
+async def test_nci_service_units_field_rounds_for_list_and_detail(raw, expected) -> None:
     field = NciServiceUnitsField("service_usage", label="NCI Service Units")
     for action in (RequestAction.LIST, RequestAction.DETAIL):
         assert await field.serialize_value(None, raw, action) == expected

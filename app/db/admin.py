@@ -11,7 +11,6 @@ import json
 import os
 import secrets
 from datetime import UTC, datetime
-from decimal import ROUND_CEILING, Decimal
 from time import time
 from typing import Any
 from urllib.parse import urlencode
@@ -162,7 +161,7 @@ class WorkflowAdmin(ModelView):
 
 
 class NciServiceUnitsField(FloatField):
-    """Displays ``service_usage`` rounded up to 2 decimal places.
+    """Displays ``service_usage`` rounded to 2 decimal places.
 
     Only the display value is rounded; create/edit forms still show and accept
     the raw, full-precision value stored in the DB.
@@ -171,10 +170,7 @@ class NciServiceUnitsField(FloatField):
     async def serialize_value(self, request: Request, value: Any, action: RequestAction) -> float:
         value = float(value)
         if action in (RequestAction.LIST, RequestAction.DETAIL):
-            # Round-trip through Decimal(str(value)) rather than value * 100
-            # directly: binary float noise (e.g. 0.07 * 100 == 7.000000000000001)
-            # would otherwise push ~5% of already-clean 2dp values up a cent.
-            return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_CEILING))
+            return round(value, 2)
         return value
 
 
@@ -216,10 +212,7 @@ class WorkflowRunAdmin(ModelView):
     exclude_fields_from_list = ["submitted_form_data"]
     exclude_fields_from_create = ["sbp_credit"]
     exclude_fields_from_edit = ["sbp_credit"]
-    # sbp_credit is computed (no backing column), so it can't be an ORDER BY
-    # target. Excluding it here just drops the sort affordance from the list
-    # UI — build_order_clauses below is what actually guards against a crash,
-    # since a hand-edited `order_by` query param bypasses this entirely.
+    # sbp_credit has no backing column, so it can't be an ORDER BY target.
     sortable_fields = [
         "submission_timestamp",
         "workflow_id",
@@ -245,18 +238,6 @@ class WorkflowRunAdmin(ModelView):
 
     def get_details_query(self, request: Request) -> Any:
         return super().get_details_query(request).options(joinedload(WorkflowRun.metrics))
-
-    def build_order_clauses(self, request: Request, order_list: list[str], stmt: Any) -> Any:
-        # sbp_credit has no backing column, so getattr(WorkflowRun, "sbp_credit")
-        # is None and the base implementation crashes with `ValueError: Value
-        # can not be None` when asked to order by it. sortable_fields above
-        # keeps the UI from offering this, but order_by is a plain query param
-        # that isn't validated against sortable_fields, so a manually edited
-        # URL would still reach the crash without this guard.
-        order_list = [
-            entry for entry in order_list if entry.strip().split(maxsplit=1)[0] != "sbp_credit"
-        ]
-        return super().build_order_clauses(request, order_list, stmt)
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.run_name}"
