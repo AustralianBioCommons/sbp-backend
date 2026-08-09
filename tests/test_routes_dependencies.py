@@ -208,6 +208,97 @@ def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker
     assert refreshed.email == "updated@example.com"
 
 
+def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
+    test_db, mocker: MockerFixture
+):
+    existing_id = uuid4()
+    existing_user = AppUser(
+        id=existing_id,
+        auth0_user_id="auth0|approved",
+        name="Approved User",
+        email="approved@example.com",
+    )
+    test_db.add(existing_user)
+    test_db.commit()
+
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={
+            "sub": "auth0|approved",
+            "https://biocommons.org.au/roles": ["biocommons/group/sbp_workflow_execution"],
+        },
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+
+    user_id = get_current_user_id(credentials, test_db)
+
+    granted_user = test_db.get(AppUser, user_id)
+    assert granted_user.credit == 1000
+    assert granted_user.credit_updated_by == "sbp bundle approval"
+    assert granted_user.sbp_bundle_credit_granted_at is not None
+
+
+def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(
+    test_db, mocker: MockerFixture
+):
+    existing_id = uuid4()
+    existing_user = AppUser(
+        id=existing_id,
+        auth0_user_id="auth0|already-granted",
+        name="Already Granted",
+        email="already-granted@example.com",
+        credit=1000,
+    )
+    test_db.add(existing_user)
+    test_db.commit()
+    test_db.refresh(existing_user)
+    first_grant_timestamp = existing_user.sbp_bundle_credit_granted_at
+    assert first_grant_timestamp is None
+
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={
+            "sub": "auth0|already-granted",
+            "https://biocommons.org.au/roles": ["biocommons/group/sbp_workflow_execution"],
+        },
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+
+    user_id = get_current_user_id(credentials, test_db)
+    get_current_user_id(credentials, test_db)
+
+    granted_user = test_db.get(AppUser, user_id)
+    assert granted_user.credit == 2000  # granted once, on top of the pre-existing 1000
+    assert granted_user.sbp_bundle_credit_granted_at is not None
+
+
+def test_get_current_user_id_no_grant_without_role(test_db, mocker: MockerFixture):
+    existing_id = uuid4()
+    existing_user = AppUser(
+        id=existing_id,
+        auth0_user_id="auth0|no-role",
+        name="No Role",
+        email="no-role@example.com",
+    )
+    test_db.add(existing_user)
+    test_db.commit()
+
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={"sub": "auth0|no-role", "https://biocommons.org.au/roles": []},
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+
+    user_id = get_current_user_id(credentials, test_db)
+
+    unchanged_user = test_db.get(AppUser, user_id)
+    assert unchanged_user.credit == 0
+    assert unchanged_user.sbp_bundle_credit_granted_at is None
+
+
 def test_require_agent_health_permission_allows_when_present(mocker: MockerFixture):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
