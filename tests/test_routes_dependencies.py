@@ -239,9 +239,7 @@ def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
     assert granted_user.sbp_bundle_credit_granted_at is not None
 
 
-def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(
-    test_db, mocker: MockerFixture
-):
+def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(test_db, mocker: MockerFixture):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
