@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -159,18 +159,23 @@ def _grant_sbp_bundle_credit_if_approved(
     user: AppUser, claims: dict[str, object], db: Session
 ) -> None:
     """Grant the one-time SBP bundle credit the first time this user's token
-    carries the workflow execution role. ``sbp_bundle_credit_granted_at``
-    guards against granting it more than once."""
+    carries the workflow execution role. The ``WHERE ... IS NULL`` guard and
+    DB-side ``credit + 1000`` increment make the grant atomic, so concurrent
+    requests for the same user can't both pass the check and double-grant."""
     if not _has_workflow_execution_role(claims):
-        return
-    if user.sbp_bundle_credit_granted_at is not None:
         return
 
     now = datetime.now(UTC)
-    user.credit += SBP_BUNDLE_CREDIT_GRANT
-    user.credit_updated_at = now
-    user.credit_updated_by = SBP_BUNDLE_CREDIT_ACTOR
-    user.sbp_bundle_credit_granted_at = now
+    db.execute(
+        update(AppUser)
+        .where(AppUser.id == user.id, AppUser.sbp_bundle_credit_granted_at.is_(None))
+        .values(
+            credit=AppUser.credit + 1000,
+            credit_updated_at=now,
+            credit_updated_by="sbp bundle approval",
+            sbp_bundle_credit_granted_at=now,
+        )
+    )
     db.commit()
 
 
