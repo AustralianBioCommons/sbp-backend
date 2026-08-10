@@ -6,7 +6,7 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models.core import AppUser
@@ -213,14 +213,17 @@ def refresh_user_credits(dry_run: bool = False):
         )
         return
 
-    result = db_session.execute(
-        update(AppUser)
-        .where(approved_filter)
-        .values(
-            credit=SBP_USER_CREDIT_ALLOWANCE,
-            credit_updated_at=datetime.now(UTC),
-            credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
-        )
+    result = cast(
+        CursorResult,
+        db_session.execute(
+            update(AppUser)
+            .where(approved_filter)
+            .values(
+                credit=SBP_USER_CREDIT_ALLOWANCE,
+                credit_updated_at=datetime.now(UTC),
+                credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+            )
+        ),
     )
     db_session.commit()
     logger.info(
