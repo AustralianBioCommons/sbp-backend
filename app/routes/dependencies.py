@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from datetime import UTC, datetime
 from time import time
 from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -135,7 +136,47 @@ def get_current_user_id(
         if should_update:
             db.commit()
 
+    _grant_sbp_bundle_credit_if_approved(user, claims, db)
+
     return cast(UUID, user.id)
+
+
+# One-time credit bonus applied when a user's SBP workflow-execution role
+# (biocommons/group/sbp_workflow_execution) is first seen approved on their
+# account, per the SBP bundle grant policy.
+SBP_BUNDLE_CREDIT_GRANT = 1000
+SBP_BUNDLE_CREDIT_ACTOR = "sbp bundle approval"
+
+
+def _has_workflow_execution_role(claims: dict[str, object]) -> bool:
+    roles_claim = os.getenv("DB_ADMIN_ROLES_CLAIM", "").strip()
+    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
+    roles = claims.get(roles_claim, [])
+    return bool(required_role) and isinstance(roles, list) and required_role in roles
+
+
+def _grant_sbp_bundle_credit_if_approved(
+    user: AppUser, claims: dict[str, object], db: Session
+) -> None:
+    """Grant the one-time SBP bundle credit the first time this user's token
+    carries the workflow execution role. The ``WHERE ... IS NULL`` guard and
+    DB-side ``credit + 1000`` increment make the grant atomic, so concurrent
+    requests for the same user can't both pass the check and double-grant."""
+    if not _has_workflow_execution_role(claims):
+        return
+
+    now = datetime.now(UTC)
+    db.execute(
+        update(AppUser)
+        .where(AppUser.id == user.id, AppUser.sbp_bundle_credit_granted_at.is_(None))
+        .values(
+            credit=AppUser.credit + 1000,
+            credit_updated_at=now,
+            credit_updated_by="sbp bundle approval",
+            sbp_bundle_credit_granted_at=now,
+        )
+    )
+    db.commit()
 
 
 def require_workflow_execution_role(
@@ -143,10 +184,7 @@ def require_workflow_execution_role(
 ) -> None:
     """Raise HTTP 403 if the token does not carry the workflow execution role."""
     claims = verify_access_token_claims(credentials.credentials)
-    roles_claim = os.getenv("DB_ADMIN_ROLES_CLAIM", "").strip()
-    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
-    roles = claims.get(roles_claim, [])
-    if not isinstance(roles, list) or required_role not in roles:
+    if not _has_workflow_execution_role(claims):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Workflow execution role required.",
