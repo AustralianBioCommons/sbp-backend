@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..db import SessionLocal
 from ..db.models.core import AppUser
+from ..services.credits import SBP_USER_CREDIT_ALLOWANCE
 
 security = HTTPBearer()
 USERINFO_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
@@ -144,7 +145,6 @@ def get_current_user_id(
 # One-time credit bonus applied when a user's SBP workflow-execution role
 # (biocommons/group/sbp_workflow_execution) is first seen approved on their
 # account, per the SBP bundle grant policy.
-SBP_BUNDLE_CREDIT_GRANT = 1000
 SBP_BUNDLE_CREDIT_ACTOR = "sbp bundle approval"
 
 
@@ -170,9 +170,9 @@ def _grant_sbp_bundle_credit_if_approved(
         update(AppUser)
         .where(AppUser.id == user.id, AppUser.sbp_bundle_credit_granted_at.is_(None))
         .values(
-            credit=AppUser.credit + 1000,
+            credit=AppUser.credit + SBP_USER_CREDIT_ALLOWANCE,
             credit_updated_at=now,
-            credit_updated_by="sbp bundle approval",
+            credit_updated_by=SBP_BUNDLE_CREDIT_ACTOR,
             sbp_bundle_credit_granted_at=now,
         )
     )

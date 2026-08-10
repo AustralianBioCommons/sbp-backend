@@ -21,7 +21,9 @@ from app.scheduler.jobs import (  # noqa: E402
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
 SYNC_INTERVAL = IntervalTrigger(minutes=10)
-MONTHLY_TRIGGER = CronTrigger(day=1, hour=1, minute=0, timezone="UTC")
+# Matches DB_ADMIN_DISPLAY_TIMEZONE (app/db/admin.py): Sydney/Melbourne local time,
+# which APScheduler resolves to AEST or AEDT depending on daylight saving.
+MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Sydney")
 
 
 def main(dry_run: bool = False):

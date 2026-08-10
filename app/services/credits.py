@@ -27,6 +27,12 @@ def is_credits_enabled() -> bool:
     return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
 
 
+# Standard SBP user credit allowance: the one-time bundle grant applied when a
+# user's workflow-execution role is first approved, and the amount every
+# user's balance is reset to on the monthly refresh.
+SBP_USER_CREDIT_ALLOWANCE = 1000
+
+
 class CreditBasis(StrEnum):
     """Which input quantity drives a workflow's credit cost.
 

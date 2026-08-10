@@ -6,14 +6,16 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from ..db.models.core import AppUser
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.credits import SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
@@ -187,8 +189,30 @@ def submit_pending_jobs(dry_run: bool = False):
     logger.info("Finished submitting pending jobs.")
 
 
+MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
+
+
 def refresh_user_credits(dry_run: bool = False):
-    logger.info("TODO: refresh user credits - not implemented yet")
+    db_session = next(get_db())
+    if dry_run:
+        user_count = db_session.scalar(select(func.count()).select_from(AppUser))
+        logger.info(
+            f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
+            f"{user_count} user(s)."
+        )
+        return
+
+    result = db_session.execute(
+        update(AppUser).values(
+            credit=SBP_USER_CREDIT_ALLOWANCE,
+            credit_updated_at=datetime.now(UTC),
+            credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+        )
+    )
+    db_session.commit()
+    logger.info(
+        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} user(s)."
+    )
 
 
 def sync_completed_workflow_runs(dry_run: bool = False):
