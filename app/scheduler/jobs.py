@@ -6,14 +6,16 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
+from ..db.models.core import AppUser
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
@@ -188,7 +190,43 @@ def submit_pending_jobs(dry_run: bool = False):
 
 
 def refresh_user_credits(dry_run: bool = False):
-    logger.info("TODO: refresh user credits - not implemented yet")
+    """Reset every SBP-approved user's credit to the standard monthly allowance.
+
+    Scoped to users who have already been through the one-time bundle grant
+    (``sbp_bundle_credit_granted_at IS NOT NULL``) so accounts that merely
+    logged in without ever having their workflow-execution role approved
+    don't get free credit, and so a role approval landing between refreshes
+    can never race the grant's own IS NULL guard (app/routes/dependencies.py).
+    """
+    db_session = next(get_db())
+    approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
+    if dry_run:
+        user_count = db_session.scalar(
+            select(func.count()).select_from(AppUser).where(approved_filter)
+        )
+        logger.info(
+            f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
+            f"{user_count} approved user(s)."
+        )
+        return
+
+    result = cast(
+        CursorResult,
+        db_session.execute(
+            update(AppUser)
+            .where(approved_filter)
+            .values(
+                credit=SBP_USER_CREDIT_ALLOWANCE,
+                credit_updated_at=datetime.now(UTC),
+                credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+            )
+        ),
+    )
+    db_session.commit()
+    logger.info(
+        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} approved "
+        "user(s)."
+    )
 
 
 def sync_completed_workflow_runs(dry_run: bool = False):

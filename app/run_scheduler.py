@@ -21,7 +21,9 @@ from app.scheduler.jobs import (  # noqa: E402
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
 SYNC_INTERVAL = IntervalTrigger(minutes=10)
-MONTHLY_TRIGGER = CronTrigger(day=1, hour=1, minute=0, timezone="UTC")
+# Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
+# miscalculates day=1 across Sydney's October DST switch and skips November entirely.
+MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
 
 
 def main(dry_run: bool = False):

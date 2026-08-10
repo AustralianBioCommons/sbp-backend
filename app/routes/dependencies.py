@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..db import SessionLocal
 from ..db.models.core import AppUser
+from ..services.credits import SBP_BUNDLE_CREDIT_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 
 security = HTTPBearer()
 USERINFO_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
@@ -141,13 +142,6 @@ def get_current_user_id(
     return cast(UUID, user.id)
 
 
-# One-time credit bonus applied when a user's SBP workflow-execution role
-# (biocommons/group/sbp_workflow_execution) is first seen approved on their
-# account, per the SBP bundle grant policy.
-SBP_BUNDLE_CREDIT_GRANT = 1000
-SBP_BUNDLE_CREDIT_ACTOR = "sbp bundle approval"
-
-
 def _has_workflow_execution_role(claims: dict[str, object]) -> bool:
     roles_claim = os.getenv("DB_ADMIN_ROLES_CLAIM", "").strip()
     required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
@@ -160,8 +154,11 @@ def _grant_sbp_bundle_credit_if_approved(
 ) -> None:
     """Grant the one-time SBP bundle credit the first time this user's token
     carries the workflow execution role. The ``WHERE ... IS NULL`` guard and
-    DB-side ``credit + 1000`` increment make the grant atomic, so concurrent
-    requests for the same user can't both pass the check and double-grant."""
+    DB-side ``credit + SBP_USER_CREDIT_ALLOWANCE`` increment make the grant
+    atomic, so concurrent requests for the same user can't both pass the check
+    and double-grant. The monthly refresh job (``refresh_user_credits``) only
+    ever touches users who already have this flag set, so it can't race with
+    a role approval landing between refreshes."""
     if not _has_workflow_execution_role(claims):
         return
 
@@ -170,9 +167,9 @@ def _grant_sbp_bundle_credit_if_approved(
         update(AppUser)
         .where(AppUser.id == user.id, AppUser.sbp_bundle_credit_granted_at.is_(None))
         .values(
-            credit=AppUser.credit + 1000,
+            credit=AppUser.credit + SBP_USER_CREDIT_ALLOWANCE,
             credit_updated_at=now,
-            credit_updated_by="sbp bundle approval",
+            credit_updated_by=SBP_BUNDLE_CREDIT_ACTOR,
             sbp_bundle_credit_granted_at=now,
         )
     )
