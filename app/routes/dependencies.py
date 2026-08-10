@@ -160,8 +160,11 @@ def _grant_sbp_bundle_credit_if_approved(
 ) -> None:
     """Grant the one-time SBP bundle credit the first time this user's token
     carries the workflow execution role. The ``WHERE ... IS NULL`` guard and
-    DB-side ``credit + 1000`` increment make the grant atomic, so concurrent
-    requests for the same user can't both pass the check and double-grant."""
+    DB-side ``credit + SBP_USER_CREDIT_ALLOWANCE`` increment make the grant
+    atomic, so concurrent requests for the same user can't both pass the check
+    and double-grant. The monthly refresh job (``refresh_user_credits``) only
+    ever touches users who already have this flag set, so it can't race with
+    a role approval landing between refreshes."""
     if not _has_workflow_execution_role(claims):
         return
 

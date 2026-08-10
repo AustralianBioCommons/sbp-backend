@@ -193,17 +193,30 @@ MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
 
 
 def refresh_user_credits(dry_run: bool = False):
+    """Reset every SBP-approved user's credit to the standard monthly allowance.
+
+    Scoped to users who have already been through the one-time bundle grant
+    (``sbp_bundle_credit_granted_at IS NOT NULL``) so accounts that merely
+    logged in without ever having their workflow-execution role approved
+    don't get free credit, and so a role approval landing between refreshes
+    can never race the grant's own IS NULL guard (app/routes/dependencies.py).
+    """
     db_session = next(get_db())
+    approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
     if dry_run:
-        user_count = db_session.scalar(select(func.count()).select_from(AppUser))
+        user_count = db_session.scalar(
+            select(func.count()).select_from(AppUser).where(approved_filter)
+        )
         logger.info(
             f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
-            f"{user_count} user(s)."
+            f"{user_count} approved user(s)."
         )
         return
 
     result = db_session.execute(
-        update(AppUser).values(
+        update(AppUser)
+        .where(approved_filter)
+        .values(
             credit=SBP_USER_CREDIT_ALLOWANCE,
             credit_updated_at=datetime.now(UTC),
             credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
@@ -211,7 +224,8 @@ def refresh_user_credits(dry_run: bool = False):
     )
     db_session.commit()
     logger.info(
-        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} user(s)."
+        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} approved "
+        "user(s)."
     )
 
 

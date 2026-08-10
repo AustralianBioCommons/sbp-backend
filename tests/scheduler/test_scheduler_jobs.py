@@ -3,7 +3,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
+from pytest_mock import MockerFixture
 
+from app.db.models.core import AppUser
+from app.routes.dependencies import get_current_user_id
 from app.scheduler import jobs as scheduler_jobs
 from app.services.seqera import WorkflowLaunchResult
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
@@ -278,3 +282,86 @@ def test_launch_job_marks_failed_after_max_failed_attempts(test_db, persistent_m
     assert queued_job.error == "Seqera launch failed"
     assert queued_job.last_attempt_at is not None
     assert queued_job.next_attempt_at is None
+
+
+def test_refresh_user_credits_dry_run_does_not_modify_db(test_db, monkeypatch):
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    user = AppUser(
+        auth0_user_id="auth0|dry-run",
+        name="Dry Run",
+        email="dry-run@example.com",
+        credit=50,
+        sbp_bundle_credit_granted_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    scheduler_jobs.refresh_user_credits(dry_run=True)
+
+    test_db.refresh(user)
+    assert user.credit == 50
+
+
+def test_refresh_user_credits_only_resets_approved_users(test_db, monkeypatch):
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    unapproved_user = AppUser(
+        auth0_user_id="auth0|unapproved", name="Unapproved", email="unapproved@example.com",
+        credit=10,
+    )
+    already_granted_at = datetime(2026, 1, 1, tzinfo=UTC)
+    approved_user = AppUser(
+        auth0_user_id="auth0|approved",
+        name="Approved",
+        email="approved@example.com",
+        credit=200,
+        sbp_bundle_credit_granted_at=already_granted_at,
+    )
+    test_db.add_all([unapproved_user, approved_user])
+    test_db.commit()
+
+    scheduler_jobs.refresh_user_credits()
+
+    test_db.refresh(unapproved_user)
+    test_db.refresh(approved_user)
+    # Never went through role approval, so the monthly refresh leaves them untouched.
+    assert unapproved_user.credit == 10
+    assert unapproved_user.sbp_bundle_credit_granted_at is None
+    assert approved_user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
+    assert approved_user.credit_updated_by == scheduler_jobs.MONTHLY_CREDIT_REFRESH_ACTOR
+    # (SQLite round-trips DateTime(timezone=True) values as naive, hence replace().)
+    assert approved_user.sbp_bundle_credit_granted_at.replace(tzinfo=UTC) == already_granted_at
+
+
+def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
+    test_db, monkeypatch, mocker: MockerFixture
+):
+    """Once a user is approved and refreshed, a later refresh cycle must not
+    stack another SBP_USER_CREDIT_ALLOWANCE on top of their current balance."""
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    user = AppUser(auth0_user_id="auth0|race", name="Race", email="race@example.com", credit=0)
+    test_db.add(user)
+    test_db.commit()
+
+    # Unapproved: a refresh before role approval is a no-op.
+    scheduler_jobs.refresh_user_credits()
+    test_db.refresh(user)
+    assert user.credit == 0
+
+    mocker.patch(
+        "app.routes.dependencies.verify_access_token_claims",
+        return_value={
+            "sub": "auth0|race",
+            "https://biocommons.org.au/roles": ["biocommons/group/sbp_workflow_execution"],
+        },
+    )
+    mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
+
+    get_current_user_id(credentials, test_db)
+    test_db.refresh(user)
+    assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
+
+    # Now approved: further refresh cycles reset, not add.
+    scheduler_jobs.refresh_user_credits()
+    test_db.refresh(user)
+    assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE

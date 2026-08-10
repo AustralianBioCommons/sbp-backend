@@ -42,8 +42,10 @@ class AppUser(Base):
     )
     credit_updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Set the first time this user's token carries the SBP workflow-execution
-    # role, when the one-time 1000-credit bundle grant is applied. Doubles as
-    # the "already granted" flag so the grant never repeats.
+    # role, when the one-time bundle grant is applied. Doubles as the "already
+    # granted" flag so the grant never repeats, and as the eligibility filter
+    # for the monthly credit refresh (refresh_user_credits), which only resets
+    # credit for users who have been through this grant at least once.
     sbp_bundle_credit_granted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
