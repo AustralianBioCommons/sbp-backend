@@ -32,6 +32,10 @@ def is_credits_enabled() -> bool:
 # user's balance is reset to on the monthly refresh.
 SBP_USER_CREDIT_ALLOWANCE = 1000
 
+# credit_updated_by labels for the two paths that apply SBP_USER_CREDIT_ALLOWANCE.
+SBP_BUNDLE_CREDIT_ACTOR = "sbp bundle approval"
+MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
+
 
 class CreditBasis(StrEnum):
     """Which input quantity drives a workflow's credit cost.

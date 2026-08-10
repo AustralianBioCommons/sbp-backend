@@ -15,7 +15,7 @@ from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
-from ..services.credits import SBP_USER_CREDIT_ALLOWANCE
+from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
@@ -187,9 +187,6 @@ def submit_pending_jobs(dry_run: bool = False):
         )
 
     logger.info("Finished submitting pending jobs.")
-
-
-MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
 
 
 def refresh_user_credits(dry_run: bool = False):
