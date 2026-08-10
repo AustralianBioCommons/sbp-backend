@@ -305,7 +305,9 @@ def test_refresh_user_credits_dry_run_does_not_modify_db(test_db, monkeypatch):
 def test_refresh_user_credits_only_resets_approved_users(test_db, monkeypatch):
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     unapproved_user = AppUser(
-        auth0_user_id="auth0|unapproved", name="Unapproved", email="unapproved@example.com",
+        auth0_user_id="auth0|unapproved",
+        name="Unapproved",
+        email="unapproved@example.com",
         credit=10,
     )
     already_granted_at = datetime(2026, 1, 1, tzinfo=UTC)
