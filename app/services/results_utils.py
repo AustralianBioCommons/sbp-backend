@@ -385,9 +385,9 @@ def get_workflow_name(run: WorkflowRun) -> WorkflowName | None:
         return None
 
     workflow_name: str = run.workflow.name
-    assert workflow_name in get_args(WorkflowName), (
-        f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
-    )
+    assert workflow_name in get_args(
+        WorkflowName
+    ), f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
     return cast(WorkflowName, workflow_name)
 
 
