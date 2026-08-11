@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 async def prepare_wisps_workflow(
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -41,6 +40,7 @@ async def prepare_wisps_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     tool: str | None = form_data.tool or None
@@ -59,7 +59,7 @@ async def prepare_wisps_workflow(
         raise SeqeraConfigurationError("Missing run name for workflow launch")
 
     mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
-    sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
+    sheet_url = staged_input_location
     params_text = params_to_yaml_text(
         get_wisps_default_params(
             out_dir=out_dir,

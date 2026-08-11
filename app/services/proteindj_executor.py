@@ -11,8 +11,10 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
+from ..db.models.core import DataTransfer, RunInput, S3Object
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_input_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -24,6 +26,7 @@ from .proteindj_config import (
     get_proteindj_config_text,
     get_proteindj_default_params,
 )
+from .results_utils import s3_uri_to_key
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
@@ -87,9 +90,30 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     proteindj_fields = _parse_proteindj_form_data(form_data)
+
+    pdb_key = s3_uri_to_key(proteindj_fields.starting_pdb)
+    if not pdb_key:
+        raise SeqeraConfigurationError("Invalid S3 URI for starting_pdb")
+    if db_session.get(S3Object, pdb_key) is None:
+        db_session.add(S3Object(object_key=pdb_key, uri=proteindj_fields.starting_pdb))
+    staged_pdb_location = build_gadi_input_path(
+        workflow_run.id, "de-novo-design", os.path.basename(pdb_key)
+    )
+    pdb_transfer = DataTransfer(
+        workflow_run_id=workflow_run.id,
+        direction="input",
+        provider="globus",
+        source_location=proteindj_fields.starting_pdb,
+        destination_location=staged_pdb_location,
+    )
+    db_session.add(pdb_transfer)
+    db_session.add(
+        RunInput(run_id=workflow_run.id, s3_object_id=pdb_key, data_transfer=pdb_transfer)
+    )
+
     default_params = get_proteindj_default_params(
         out_dir,
-        input_pdb=proteindj_fields.starting_pdb,
+        input_pdb=staged_pdb_location,
         hotspot_residues=proteindj_fields.target_hotspot_residues,
         num_designs=proteindj_fields.number_of_final_designs,
         design_length=_design_length(proteindj_fields),

@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
     db_session: Session,
     workflow_run: WorkflowRun,
@@ -44,6 +43,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     revision: str | None = None,
     output_id: str | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
@@ -61,8 +61,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         raise SeqeraConfigurationError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
-    default_params = get_bindflow_default_params(out_dir, dataset_url)
+    default_params = get_bindflow_default_params(out_dir, staged_input_location)
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)
