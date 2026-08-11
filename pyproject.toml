@@ -26,6 +26,7 @@ dependencies = [
     "loguru>=0.7.3",
     "typer>=0.26.8",
     "rdkit~=2026.3",
+    "globus-sdk>=4.9.0",
 ]
 
 [tool.setuptools]
