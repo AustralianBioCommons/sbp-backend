@@ -201,8 +201,7 @@ class RunMetric(Base):
 
 
 DataTransferDirection = Literal["input", "output"]
-# Placeholder values - nothing transitions these yet, so revisit this set once
-# the actual transfer/execution mechanism (provider, retries, etc.) is settled.
+# Driven by app/services/globus_transfer.py for provider="globus" rows.
 DataTransferStatus = Literal["pending", "in_progress", "completed", "failed"]
 
 
