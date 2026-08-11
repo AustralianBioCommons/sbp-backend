@@ -59,7 +59,13 @@ from ..services.datasets import (
 from ..services.globus_transfer import build_gadi_input_path
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
-from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
+from ..services.results_utils import s3_uri_to_key
+from ..services.s3 import (
+    S3ConfigurationError,
+    S3ServiceError,
+    generate_presigned_url,
+    read_csv_from_s3,
+)
 from ..services.seqera_errors import SeqeraConfigurationError
 from ..services.wisps_executor import prepare_wisps_workflow
 from .dependencies import (
@@ -185,6 +191,87 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+
+async def _stage_referenced_samplesheet_file(
+    *,
+    db_session: Session,
+    s3_input_key: str,
+    field_name: str,
+    run_id: UUID,
+    workflow_name: str,
+) -> str:
+    """Stage a file referenced by a samplesheet column to Gadi via Globus, and
+    return the s3InputKey of a corrected samplesheet with that column rewritten
+    to the local path.
+
+    Some samplesheets (bindcraft's starting_pdb, proteinfold's fasta) carry a raw
+    S3 URI to a separately-uploaded file. Globus stages the samplesheet CSV to
+    Gadi as-is, but the pipeline reads that column as a local file path, not an
+    S3 URI (unlike ProteinDJ, which takes its pdb path as a direct pipeline
+    param, never via a samplesheet) - so the referenced file must be staged
+    separately and the samplesheet corrected to point at where it lands.
+    """
+    try:
+        samplesheet_rows = await read_csv_from_s3(s3_input_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+        ) from exc
+    if not samplesheet_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Samplesheet at s3InputKey is empty.",
+        )
+    samplesheet_row = samplesheet_rows[0]
+    source_uri = (samplesheet_row.get(field_name) or "").strip()
+    if not source_uri:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"'{field_name}' is required in the samplesheet for {workflow_name}.",
+        )
+    source_key = s3_uri_to_key(source_uri)
+    if not source_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid S3 URI for {field_name}.",
+        )
+    if db_session.get(S3Object, source_key) is None:
+        db_session.add(S3Object(object_key=source_key, uri=source_uri))
+    staged_location = build_gadi_input_path(run_id, workflow_name, os.path.basename(source_key))
+    db_session.add(
+        RunInput(
+            run_id=run_id,
+            s3_object_id=source_key,
+            data_transfer=DataTransfer(
+                workflow_run_id=run_id,
+                direction="input",
+                provider="globus",
+                source_location=source_uri,
+                destination_location=staged_location,
+            ),
+        )
+    )
+    samplesheet_row[field_name] = staged_location
+    try:
+        csv_upload = await upload_csv_to_s3(samplesheet_row)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to re-upload corrected samplesheet: {exc}",
+        ) from exc
+    return csv_upload.file_key
 
 
 @router.post("/me/sync")
@@ -332,24 +419,6 @@ async def launch_workflow(
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
 
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
-    s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
-    if db_session.get(S3Object, s3_input_key) is None:
-        db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    staged_input_location = build_gadi_input_path(
-        run_id, workflow_name, os.path.basename(s3_input_key)
-    )
-    input_transfer = DataTransfer(
-        workflow_run_id=run_id,
-        direction="input",
-        provider="globus",
-        source_location=s3_input_uri,
-        destination_location=staged_input_location,
-    )
-    db_session.add(input_transfer)
-    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
-    db_session.flush()
-
     # All workflows require config_path. Validate before the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.
     if not workflow.config_path:
@@ -374,6 +443,49 @@ async def launch_workflow(
 
     if workflow_name in ("single-prediction", "proteinfold"):
         _validate_single_prediction_form(payload.formData, selected_tool)
+
+    # Validation above must run before any of this, since it involves real S3/Globus
+    # I/O that a malformed request shouldn't pay the cost of (and shouldn't be able
+    # to trigger before its own formData is validated).
+    is_bindcraft_launch = (
+        workflow_name in ("de-novo-design", "bindflow", "bindcraft")
+        and selected_tool.lower() != "rfdiffusion"
+    )
+    is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
+    if is_bindcraft_launch:
+        s3_input_key = await _stage_referenced_samplesheet_file(
+            db_session=db_session,
+            s3_input_key=s3_input_key,
+            field_name="starting_pdb",
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+    elif is_proteinfold_launch:
+        s3_input_key = await _stage_referenced_samplesheet_file(
+            db_session=db_session,
+            s3_input_key=s3_input_key,
+            field_name="fasta",
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+
+    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
+    if db_session.get(S3Object, s3_input_key) is None:
+        db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
+    staged_input_location = build_gadi_input_path(
+        run_id, workflow_name, os.path.basename(s3_input_key)
+    )
+    input_transfer = DataTransfer(
+        workflow_run_id=run_id,
+        direction="input",
+        provider="globus",
+        source_location=s3_input_uri,
+        destination_location=staged_input_location,
+    )
+    db_session.add(input_transfer)
+    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
+    db_session.flush()
 
     try:
         queued_job: QueuedJob

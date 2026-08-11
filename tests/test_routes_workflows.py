@@ -13,10 +13,21 @@ from sqlalchemy.orm import Session
 from app.db.models import QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
+from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import SeqeraConfigurationError
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
+
+
+def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s3_uri: str):
+    """Configure read_csv_from_s3/upload_csv_to_s3 mocks for the samplesheet-file
+    staging step (_stage_referenced_samplesheet_file), so a launch reaches its
+    executor instead of hitting real S3 for the referenced starting_pdb/fasta file."""
+    mock_read_csv.return_value = [{field_name: s3_uri}]
+    mock_upload_csv.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-bucket"
+    )
 
 
 async def _queue_job_for_route_prepare(form, _s3_input_key, **kwargs):
