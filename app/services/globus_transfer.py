@@ -54,12 +54,19 @@ def _s3_relative_path(source_location: str) -> str:
 def _gadi_relative_path(destination_location: str) -> str:
     """Path relative to the Gadi Globus collection root for a real absolute Gadi path.
 
-    The collection's root maps directly to "/" on the real filesystem, so an
-    absolute Gadi path is already the Globus-relative path, unchanged.
+    The collection's root maps to GADI_COLLECTION_ROOT on the real filesystem, not
+    "/" (confirmed in production: sending the full absolute path unchanged
+    double-nests it under the collection root and the destination never appears at
+    the expected real path).
     """
-    if not destination_location.startswith("/"):
-        raise GlobusTransferError(f"Destination path {destination_location} is not absolute")
-    return destination_location
+    collection_root = _get_required_env("GADI_COLLECTION_ROOT").rstrip("/")
+    if not destination_location.startswith(collection_root + "/"):
+        raise GlobusTransferError(
+            f"Destination path {destination_location} is not under the Gadi "
+            f"collection root {collection_root}"
+        )
+    # The startswith check above guarantees this always begins with "/".
+    return destination_location[len(collection_root) :]
 
 
 @dataclass(frozen=True)
