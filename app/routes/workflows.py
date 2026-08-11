@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import string
@@ -55,6 +56,7 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
+from ..services.globus_transfer import build_gadi_input_path
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
@@ -334,15 +336,15 @@ async def launch_workflow(
     s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    input_destination = (
-        f"{_get_required_env('WORK_DIR').rstrip('/')}/input/{workflow_name}/{run_id}/"
+    staged_input_location = build_gadi_input_path(
+        run_id, workflow_name, os.path.basename(s3_input_key)
     )
     input_transfer = DataTransfer(
         workflow_run_id=run_id,
         direction="input",
-        provider="s3",
+        provider="globus",
         source_location=s3_input_uri,
-        destination_location=input_destination,
+        destination_location=staged_input_location,
     )
     db_session.add(input_transfer)
     db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
@@ -383,7 +385,6 @@ async def launch_workflow(
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_proteinfold_workflow(
                 proteinfold_launch_form,
-                s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -393,6 +394,7 @@ async def launch_workflow(
                 mode=tool_algo,
                 form_data=payload.formData,
                 user_details=user_details,
+                staged_input_location=staged_input_location,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor (bindcraft) or proteindj executor
@@ -414,7 +416,6 @@ async def launch_workflow(
             else:
                 queued_job = await prepare_bindflow_workflow(
                     de_novo_launch_form,
-                    s3_input_key,
                     db_session=db_session,
                     workflow_run=workflow_run,
                     pipeline=workflow.repo_url,
@@ -422,13 +423,13 @@ async def launch_workflow(
                     revision=workflow.default_revision,
                     output_id=str(run_id),
                     user_details=user_details,
+                    staged_input_location=staged_input_location,
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_wisps_workflow(
                 wisps_launch_form,
-                s3_input_key,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -437,6 +438,7 @@ async def launch_workflow(
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_details=user_details,
+                staged_input_location=staged_input_location,
             )
         else:
             db_session.rollback()
@@ -444,6 +446,11 @@ async def launch_workflow(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
+
+        # Hold the job out of submit_pending_jobs until Globus data staging
+        # completes (app/services/globus_transfer.py flips this to "pending").
+        queued_job.status = "staging"
+        db_session.add(queued_job)
 
         # Deduct the run's credit cost now that the job is accepted into the queue. Atomic and
         # guarded (credit >= cost) so the balance can't go negative; committed

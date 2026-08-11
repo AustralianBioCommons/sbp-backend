@@ -9,11 +9,11 @@ from loguru import logger
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
-from ..db.models.core import AppUser
+from ..db.models.core import AppUser, DataTransfer
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
-from ..services import health, seqera
+from ..services import globus_transfer, health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
@@ -32,6 +32,7 @@ RETRY_DELAY_BASE = 5 * 60
 # temporary MVP value, configurable via env var.
 MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
 WORKFLOW_SYNC_BATCH_LIMIT = int(os.getenv("WORKFLOW_SYNC_BATCH_LIMIT", "50"))
+DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
 
 class LaunchFunction(Protocol):
@@ -257,3 +258,29 @@ def sync_completed_workflow_runs(dry_run: bool = False):
             f"seqera_run_id={run_result.seqera_run_id}, "
             f"error={run_result.error}"
         )
+
+
+def sync_data_transfers(dry_run: bool = False):
+    """Submit pending and poll in-progress Globus data transfers, notifying the
+    workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
+    run's input staging settles."""
+    logger.info("Checking for Globus data transfers to sync...")
+    db_session = next(get_db())
+    if dry_run:
+        pending_count = db_session.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(
+                DataTransfer.provider == "globus",
+                DataTransfer.status.in_(["pending", "in_progress"]),
+            )
+        )
+        logger.info(f"Dry run - found {pending_count} Globus data transfer(s) requiring sync.")
+        return
+
+    result = globus_transfer.sync_data_transfers(db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT)
+    logger.info(
+        "Finished syncing Globus data transfers: "
+        f"checked={result.checked}, submitted={result.submitted}, "
+        f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+    )
