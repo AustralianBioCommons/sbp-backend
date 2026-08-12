@@ -13,6 +13,8 @@ from typing import Any, BinaryIO, cast
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from ..config import Settings, get_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,11 +37,13 @@ class S3UploadResult:
     error: str | None = None
 
 
-def get_s3_client():
+def get_s3_client(settings: Settings | None = None):
     """Get configured S3 client."""
-    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
+    if settings is None:
+        settings = get_settings()
+    aws_access_key = settings.aws.access_key_id
+    aws_secret_key = settings.aws.secret_access_key
+    aws_region = settings.aws.region
 
     if (aws_access_key and not aws_secret_key) or (aws_secret_key and not aws_access_key):
         raise S3ConfigurationError(

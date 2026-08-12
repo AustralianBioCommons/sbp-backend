@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from ..config import get_settings, Settings
 from ..db.models import QueuedJob
 from ..db.models.core import (
     AppUser,
@@ -214,6 +215,7 @@ async def launch_workflow(
     current_user_id: UUID = Depends(get_current_user_id),
     launch_ip: str | None = Depends(get_client_ip),
     db_session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> WorkflowLaunchResponse:
     """Launch a workflow on the Seqera Platform."""
     requested_workflow = payload.launch.workflow.strip().lower()
@@ -294,7 +296,7 @@ async def launch_workflow(
     # ENABLE_CREDITS flag so the feature can be rolled out independently.
     run_credit_cost = (
         launch_credit_cost(requested_workflow, selected_tool, final_design_count)
-        if is_credits_enabled()
+        if is_credits_enabled(settings)
         else None
     )
     if run_credit_cost is not None:
