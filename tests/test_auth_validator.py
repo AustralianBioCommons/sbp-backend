@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 from fastapi import HTTPException
 from jose import jwt
 from jose.exceptions import JWTError
+from pydantic import ValidationError
 
 from app.auth import validator
 
@@ -28,6 +29,23 @@ def _clear_key_cache():
 def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
     monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
+
+
+def _auth_settings(
+    *,
+    domain: str = "tenant.example",
+    audience: str = "aud",
+    algorithms: list[str] | None = None,
+) -> validator.AuthSettings:
+    return validator.AuthSettings(
+        domain=domain,
+        client_id="test-client-id",
+        audience=audience,
+        algorithms=algorithms or ["RS256"],
+        redirect_uri="http://localhost:3000/auth/callback",
+        required_role="biocommons/group/sbp_admin",
+        workflow_execution_role="biocommons/group/sbp_workflow_execution",
+    )
 
 
 def generate_public_private_key_pair() -> tuple[RSAPublicKey, RSAPrivateKey]:
@@ -99,61 +117,69 @@ def create_access_token(
     )
 
 
-def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch, test_get_settings):
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("AUTH0_ISSUER", "https://issuer.example/")
-    monkeypatch.setenv("AUTH0_ALGORITHMS", "RS256, ES256")
+    monkeypatch.setenv("AUTH_ISSUER", "https://issuer.example/")
+    monkeypatch.setenv("AUTH_ALGORITHMS", "RS256, ES256")
 
-    settings = validator._get_auth0_settings()
+    settings = test_get_settings()
 
-    assert settings.domain == "dev.login.aai.test.biocommons.org.au"
-    assert settings.audience == "https://api.example.test"
-    assert settings.issuer == "https://issuer.example/"
-    assert settings.algorithms == ("RS256", "ES256")
+    assert settings.auth.domain == "dev.login.aai.test.biocommons.org.au"
+    assert settings.auth.audience == "https://api.example.test"
+    assert settings.auth.issuer == "https://issuer.example/"
+    assert settings.auth.algorithms == ["RS256", "ES256"]
 
 
-def test_get_auth0_settings_raises_if_domain_missing(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_raises_if_domain_missing(monkeypatch: pytest.MonkeyPatch, test_get_settings):
     monkeypatch.delenv("AUTH_DOMAIN", raising=False)
     monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
 
-    with pytest.raises(HTTPException) as exc:
-        validator._get_auth0_settings()
+    with pytest.raises(ValidationError) as exc:
+        test_get_settings()
 
-    assert exc.value.status_code == 500
-    assert "AUTH_DOMAIN" in exc.value.detail
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("domain",)
+    assert field_error["type"] == "missing"
 
 
-def test_get_auth0_settings_raises_if_audience_missing(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_raises_if_audience_missing(
+    monkeypatch: pytest.MonkeyPatch, test_get_settings
+):
     monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
     monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
 
-    with pytest.raises(HTTPException) as exc:
-        validator._get_auth0_settings()
+    with pytest.raises(ValidationError) as exc:
+        test_get_settings()
 
-    assert exc.value.status_code == 500
-    assert "AUTH_AUDIENCE" in exc.value.detail
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("audience",)
+    assert field_error["type"] == "missing"
 
 
-def test_get_auth0_settings_ignores_legacy_auth0_env(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_ignores_legacy_auth0_env(
+    monkeypatch: pytest.MonkeyPatch, test_get_settings
+):
     monkeypatch.delenv("AUTH_DOMAIN", raising=False)
     monkeypatch.delenv("AUTH_AUDIENCE", raising=False)
     monkeypatch.setenv("AUTH0_DOMAIN", "legacy.auth.test")
     monkeypatch.setenv("AUTH0_AUDIENCE", "https://legacy.api.test")
 
-    with pytest.raises(HTTPException) as exc:
-        validator._get_auth0_settings()
+    with pytest.raises(ValidationError) as exc:
+        test_get_settings()
 
-    assert exc.value.status_code == 500
+    missing_fields = {error["loc"] for error in exc.value.errors() if error["type"] == "missing"}
+    assert {("domain",), ("audience",)} <= missing_fields
 
 
-def test_get_auth0_settings_empty_algorithms(monkeypatch: pytest.MonkeyPatch):
+def test_get_auth0_settings_empty_algorithms(monkeypatch: pytest.MonkeyPatch, test_get_settings):
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("AUTH0_ALGORITHMS", " , ")
+    monkeypatch.setenv("AUTH_ALGORITHMS", "")
 
-    with pytest.raises(HTTPException) as exc:
-        validator._get_auth0_settings()
+    with pytest.raises(ValidationError) as exc:
+        test_get_settings()
 
-    assert exc.value.status_code == 500
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("algorithms",)
 
 
 def test_fetch_rsa_keys_uses_cache(mocker):
@@ -170,7 +196,7 @@ def test_fetch_rsa_keys_uses_cache(mocker):
 
 
 def test_get_rsa_key_found(mocker):
-    settings = validator.Auth0Settings("tenant.example", "aud", ("RS256",))
+    settings = _auth_settings()
     mocker.patch(
         "app.auth.validator._fetch_rsa_keys",
         return_value={"keys": [{"kid": "kid-1", "kty": "RSA"}]},
@@ -185,7 +211,7 @@ def test_get_rsa_key_found(mocker):
 
 
 def test_get_rsa_key_retries_once_and_returns_none(mocker):
-    settings = validator.Auth0Settings("tenant.example", "aud", ("RS256",))
+    settings = _auth_settings()
     fetch_mock = mocker.patch(
         "app.auth.validator._fetch_rsa_keys",
         return_value={"keys": [{"kid": "other-kid"}]},
@@ -198,7 +224,7 @@ def test_get_rsa_key_retries_once_and_returns_none(mocker):
     assert fetch_mock.call_count == 2
 
 
-def test_verify_access_token_sub_success(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_success(monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings):
     """Test JWT validation with actual token instead of mocking decode."""
     _set_required_env(monkeypatch)
 
@@ -211,14 +237,16 @@ def test_verify_access_token_sub_success(monkeypatch: pytest.MonkeyPatch, mocker
     # Mock the key retrieval to return our test public key
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
 
-    result = validator.verify_access_token_sub(token.access_token_str)
+    result = validator.verify_access_token_sub(token.access_token_str, test_get_settings())
     assert result == "auth0|abc123"
 
 
-def test_verify_access_token_sub_with_custom_issuer(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_with_custom_issuer(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation with custom issuer setting."""
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("AUTH0_ISSUER", "https://custom.example.com/")
+    monkeypatch.setenv("AUTH_ISSUER", "https://custom.example.com/")
 
     token = create_access_token(
         sub="auth0|xyz789",
@@ -228,11 +256,13 @@ def test_verify_access_token_sub_with_custom_issuer(monkeypatch: pytest.MonkeyPa
 
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
 
-    result = validator.verify_access_token_sub(token.access_token_str)
+    result = validator.verify_access_token_sub(token.access_token_str, test_get_settings())
     assert result == "auth0|xyz789"
 
 
-def test_verify_access_token_sub_expired_token(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_expired_token(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation fails with expired token."""
     _set_required_env(monkeypatch)
 
@@ -246,13 +276,15 @@ def test_verify_access_token_sub_expired_token(monkeypatch: pytest.MonkeyPatch, 
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub(token.access_token_str)
+        validator.verify_access_token_sub(token.access_token_str, test_get_settings())
 
     assert exc.value.status_code == 401
     assert "expired" in str(exc.value.detail).lower()
 
 
-def test_verify_access_token_sub_wrong_audience(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_wrong_audience(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation fails with wrong audience."""
     _set_required_env(monkeypatch)
 
@@ -265,12 +297,14 @@ def test_verify_access_token_sub_wrong_audience(monkeypatch: pytest.MonkeyPatch,
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub(token.access_token_str)
+        validator.verify_access_token_sub(token.access_token_str, test_get_settings())
 
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_wrong_issuer(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_wrong_issuer(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation fails with wrong issuer."""
     _set_required_env(monkeypatch)
 
@@ -283,22 +317,24 @@ def test_verify_access_token_sub_wrong_issuer(monkeypatch: pytest.MonkeyPatch, m
     mocker.patch("app.auth.validator._get_rsa_key", return_value=token.public_key)
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub(token.access_token_str)
+        validator.verify_access_token_sub(token.access_token_str, test_get_settings())
 
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_invalid_header(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_invalid_header(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     _set_required_env(monkeypatch)
     mocker.patch("app.auth.validator._get_rsa_key", side_effect=JWTError("bad header"))
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub("token")
+        validator.verify_access_token_sub("token", test_get_settings())
 
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_http_error(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_http_error(monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings):
     _set_required_env(monkeypatch)
     request = httpx.Request("GET", "https://tenant/.well-known/jwks.json")
     mocker.patch(
@@ -307,22 +343,26 @@ def test_verify_access_token_sub_http_error(monkeypatch: pytest.MonkeyPatch, moc
     )
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub("token")
+        validator.verify_access_token_sub("token", test_get_settings())
 
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_missing_signing_key(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_missing_signing_key(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     _set_required_env(monkeypatch)
     mocker.patch("app.auth.validator._get_rsa_key", return_value=None)
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub("token")
+        validator.verify_access_token_sub("token", test_get_settings())
 
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_invalid_payload(monkeypatch: pytest.MonkeyPatch, mocker):
+def test_verify_access_token_sub_invalid_payload(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation fails when signature is invalid."""
     _set_required_env(monkeypatch)
 
@@ -337,7 +377,7 @@ def test_verify_access_token_sub_invalid_payload(monkeypatch: pytest.MonkeyPatch
     mocker.patch("app.auth.validator._get_rsa_key", return_value=different_key.public_key())
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub(token.access_token_str)
+        validator.verify_access_token_sub(token.access_token_str, test_get_settings())
 
     assert exc.value.status_code == 401
 
@@ -351,6 +391,7 @@ def test_verify_access_token_sub_invalid_subject(
     sub_value: Any,
     monkeypatch: pytest.MonkeyPatch,
     mocker,
+    test_get_settings,
 ):
     """Test JWT validation fails when subject claim is invalid or missing."""
     _set_required_env(monkeypatch)
@@ -386,7 +427,7 @@ def test_verify_access_token_sub_invalid_subject(
     mocker.patch("app.auth.validator._get_rsa_key", return_value=public_key)
 
     with pytest.raises(HTTPException) as exc:
-        validator.verify_access_token_sub(token_str)
+        validator.verify_access_token_sub(token_str, test_get_settings())
 
     assert exc.value.status_code == 401
     assert "subject" in str(exc.value.detail).lower()
