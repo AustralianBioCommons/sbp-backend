@@ -919,6 +919,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pydantic-settings"
+version = "2.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/68/ca/31c57507b13119d7d3cfa1576dad2911a4861e3be07b579395f4e9d393f9/pydantic_settings-2.15.0.tar.gz", hash = "sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117", size = 261253, upload-time = "2026-08-07T09:24:57.419Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/a4/2bffa9f8e804325a09867f0e9d30795c80ea9f8d62560bd1b6ad6220eb2f/pydantic_settings-2.15.0-py3-none-any.whl", hash = "sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42", size = 69413, upload-time = "2026-08-07T09:24:55.839Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -978,6 +992,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/14/eb014d26be205d38ad5ad20d9a80f7d201472e08167f0bb4361e251084a9/pytest_mock-3.15.1.tar.gz", hash = "sha256:1849a238f6f396da19762269de72cb1814ab44416fa73a8686deac10b0d87a0f", size = 34036, upload-time = "2025-09-16T16:37:27.081Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/cc/06253936f4a7fa2e0f48dfe6d851d9c56df896a9ab09ac019d70b760619c/pytest_mock-3.15.1-py3-none-any.whl", hash = "sha256:0a25e2eb88fe5168d535041d09a4529a188176ae608a6d249ee65abc0949630d", size = 10095, upload-time = "2025-09-16T16:37:25.734Z" },
+]
+
+[[package]]
+name = "pytest-sugar"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+    { name = "termcolor" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/4e/60fed105549297ba1a700e1ea7b828044842ea27d72c898990510b79b0e2/pytest-sugar-1.1.1.tar.gz", hash = "sha256:73b8b65163ebf10f9f671efab9eed3d56f20d2ca68bda83fa64740a92c08f65d", size = 16533, upload-time = "2025-08-23T12:19:35.737Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/d5/81d38a91c1fdafb6711f053f5a9b92ff788013b19821257c2c38c1e132df/pytest_sugar-1.1.1-py3-none-any.whl", hash = "sha256:2f8319b907548d5b9d03a171515c1d43d2e38e32bd8182a1781eb20b43344cc8", size = 11440, upload-time = "2025-08-23T12:19:34.894Z" },
 ]
 
 [[package]]
@@ -1177,6 +1204,7 @@ dependencies = [
     { name = "loguru" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "python-jose", extra = ["cryptography"] },
     { name = "python-multipart" },
@@ -1204,6 +1232,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+    { name = "pytest-sugar" },
     { name = "respx" },
     { name = "ruff" },
     { name = "sqlalchemy-data-model-visualizer" },
@@ -1221,6 +1250,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "psycopg", extras = ["binary"], specifier = "~=3.1" },
     { name = "pydantic", specifier = "~=2.13" },
+    { name = "pydantic-settings", specifier = "~=2.15" },
     { name = "python-dotenv", specifier = "~=1.2" },
     { name = "python-jose", extras = ["cryptography"], specifier = "~=3.5" },
     { name = "python-multipart", specifier = "~=0.0.9" },
@@ -1248,6 +1278,7 @@ dev = [
     { name = "pytest-asyncio", specifier = "~=0.23" },
     { name = "pytest-cov", specifier = "~=4.1" },
     { name = "pytest-mock", specifier = "~=3.12" },
+    { name = "pytest-sugar", specifier = "~=1.1" },
     { name = "respx", specifier = "~=0.21" },
     { name = "ruff", specifier = "~=0.14" },
     { name = "sqlalchemy-data-model-visualizer", specifier = "~=0.1" },
@@ -1337,6 +1368,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8d/36/a566ba401ba9cbf5da74a7697e0ae3d1294a8ab7211bb1d7d18f0ce42b3f/starlette_admin-0.16.1.tar.gz", hash = "sha256:f34bdba033f0a2a4b39188e8e70a684956ef6b774db01762f44d022cde418b3a", size = 2104666, upload-time = "2026-06-06T20:10:40.307Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/7c/add7d4be6690fb61f4d30b672e544b1ac541c824f05a7de50ff5d8985db5/starlette_admin-0.16.1-py3-none-any.whl", hash = "sha256:a5e6cb0beb2e9bdc65b07dbb4bd01726aaad34764595e3bc3ff8578e698ff98a", size = 2176514, upload-time = "2026-06-06T20:10:42.308Z" },
+]
+
+[[package]]
+name = "termcolor"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/79/cf31d7a93a8fdc6aa0fbb665be84426a8c5a557d9240b6239e9e11e35fc5/termcolor-3.3.0.tar.gz", hash = "sha256:348871ca648ec6a9a983a13ab626c0acce02f515b9e1983332b17af7979521c5", size = 14434, upload-time = "2025-12-29T12:55:21.882Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl", hash = "sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5", size = 7734, upload-time = "2025-12-29T12:55:20.718Z" },
 ]
 
 [[package]]
