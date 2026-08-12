@@ -336,3 +336,14 @@ def override_settings(mock_settings):
     fastapi_app.dependency_overrides[get_settings] = lambda: mock_settings
     yield
     fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def test_get_settings():
+    """
+    Version of get_settings that doesn't use .env file,
+    doesn't cache
+    """
+    def get_settings_no_env() -> SettingsNoEnv:
+        return SettingsNoEnv()
+    return get_settings_no_env
