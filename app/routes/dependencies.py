@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
+from ..config import get_settings, Settings
 from ..db import SessionLocal
 from ..db.models.core import AppUser
 from ..services.credits import SBP_BUNDLE_CREDIT_ACTOR, SBP_USER_CREDIT_ALLOWANCE
@@ -94,11 +95,12 @@ def get_db() -> Generator[Session]:
 def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> UUID:
     # HTTPBearer automatically extracts the token from "Bearer <token>"
     token = credentials.credentials
 
-    claims = verify_access_token_claims(token)
+    claims = verify_access_token_claims(token, settings=settings)
     auth0_user_id = cast(str, claims["sub"])
     user = db.execute(
         select(AppUser).where(AppUser.auth0_user_id == auth0_user_id)
@@ -178,9 +180,10 @@ def _grant_sbp_bundle_credit_if_approved(
 
 def require_workflow_execution_role(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     """Raise HTTP 403 if the token does not carry the workflow execution role."""
-    claims = verify_access_token_claims(credentials.credentials)
+    claims = verify_access_token_claims(credentials.credentials, settings=settings)
     if not _has_workflow_execution_role(claims):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -193,9 +196,10 @@ AGENT_HEALTH_PERMISSION = "read:agent-health"
 
 def require_agent_health_permission(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     """Raise HTTP 403 if the token does not carry the agent-health permission."""
-    claims = verify_access_token_claims(credentials.credentials)
+    claims = verify_access_token_claims(credentials.credentials, settings=settings)
 
     permissions = claims.get("permissions", [])
     if not isinstance(permissions, list) or AGENT_HEALTH_PERMISSION not in permissions:
