@@ -7,9 +7,11 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.models import QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
@@ -854,10 +856,11 @@ def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
     assert "Workflow execution role required" in response.json()["detail"]
 
 
-def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch):
-    """create_app() raises RuntimeError when required workflow env vars are missing."""
-    monkeypatch.delenv("WORKFLOW_EXECUTION_ROLE")
-    with pytest.raises(RuntimeError, match="WORKFLOW_EXECUTION_ROLE"):
+def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch,mocker, test_get_settings):
+    """create_app() raises ValidationError when required workflow env vars are missing."""
+    monkeypatch.delenv("AUTH_WORKFLOW_EXECUTION_ROLE")
+    mocker.patch("app.main.get_settings", test_get_settings)
+    with pytest.raises(ValidationError, match="workflow_execution_role"):
         from app.main import create_app
 
         create_app()
@@ -1195,9 +1198,13 @@ TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_deducts_credits_when_enabled(mock_prepare, client, test_engine, monkeypatch):
+def test_launch_deducts_credits_when_enabled(
+    mock_prepare, client, test_engine, monkeypatch, mock_settings
+):
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
+    mock_settings.enable_credits = True
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1223,9 +1230,13 @@ def test_launch_deducts_credits_when_enabled(mock_prepare, client, test_engine, 
 
 
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_rejected_when_insufficient_credits(mock_prepare, client, test_engine, monkeypatch):
+def test_launch_rejected_when_insufficient_credits(
+    mock_prepare, client, test_engine, monkeypatch, mock_settings
+):
     """With credits enabled, an unaffordable launch is rejected (402) and not queued."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
+    mock_settings.enable_credits = True
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=10))
         db.commit()

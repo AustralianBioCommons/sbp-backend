@@ -46,10 +46,13 @@ def mock_s3_client():
         yield mock_client
 
 
-def test_get_s3_client_success(mock_env_vars):
+def test_get_s3_client_success(mock_env_vars, mock_settings):
     """Test successful S3 client creation."""
+    mock_settings.aws.access_key_id = "test-key-id"
+    mock_settings.aws.secret_access_key = "test-secret-key"
+    mock_settings.aws.region = "us-east-1"
     with patch("app.services.s3.boto3.client") as mock_boto3:
-        get_s3_client()
+        get_s3_client(settings=mock_settings)
         mock_boto3.assert_called_once_with(
             "s3",
             aws_access_key_id="test-key-id",
@@ -58,12 +61,14 @@ def test_get_s3_client_success(mock_env_vars):
         )
 
 
-def test_get_s3_client_missing_credentials():
+def test_get_s3_client_missing_credentials(mock_settings):
     """Test S3 client creation with missing credentials."""
-    with patch.dict("os.environ", {}, clear=True):
-        with patch("app.services.s3.boto3.client") as mock_boto3:
-            get_s3_client()
-            mock_boto3.assert_called_once_with("s3", region_name="ap-southeast-2")
+    mock_settings.aws.access_key_id = ""
+    mock_settings.aws.secret_access_key = ""
+    mock_settings.aws.region = "ap-southeast-2"
+    with patch("app.services.s3.boto3.client") as mock_boto3:
+        get_s3_client(settings=mock_settings)
+        mock_boto3.assert_called_once_with("s3", region_name="ap-southeast-2")
 
 
 @pytest.mark.asyncio

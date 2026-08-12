@@ -47,28 +47,28 @@ class _DB:
         self.rolled_back = True
 
 
-def test_get_current_user_id_missing_header(monkeypatch: pytest.MonkeyPatch):
+def test_get_current_user_id_missing_header(monkeypatch: pytest.MonkeyPatch, mock_settings):
     # HTTPBearer will automatically raise 403 for missing credentials
     # So we test with empty credentials
     monkeypatch.setenv("AUTH_DOMAIN", "dev.login.aai.test.biocommons.org.au")
     monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="")
     with pytest.raises(HTTPException) as exc:
-        get_current_user_id(credentials, _DB(None))
+        get_current_user_id(credentials, _DB(None), mock_settings)
     assert exc.value.status_code == 401
 
 
-def test_get_current_user_id_success(mocker: MockerFixture):
+def test_get_current_user_id_success(mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims", return_value={"sub": "auth0|x"}
     )
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     user = SimpleNamespace(id="u-1", name="Existing User", email="existing@example.com")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    assert get_current_user_id(credentials, _DB(user)) == "u-1"
+    assert get_current_user_id(credentials, _DB(user), mock_settings) == "u-1"
 
 
-def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
+def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "auth0|x", "name": "Test User", "email": "Test@Example.com"},
@@ -76,7 +76,7 @@ def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     db = _DB(None)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    _ = get_current_user_id(credentials, db)
+    _ = get_current_user_id(credentials, db, mock_settings)
     assert db.committed is True
     assert len(db.added) == 1
     created_user = db.added[0]
@@ -85,7 +85,7 @@ def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture):
     assert created_user.email == "test@example.com"
 
 
-def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: MockerFixture):
+def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "auth0|no-email"},
@@ -93,12 +93,12 @@ def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: Mo
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     db = _DB(None)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    _ = get_current_user_id(credentials, db)
+    _ = get_current_user_id(credentials, db, mock_settings)
     created_user = db.added[0]
     assert created_user.email == "auth0_no-email@unknown.local"
 
 
-def test_get_current_user_id_race_conflict_fetches_existing(mocker: MockerFixture):
+def test_get_current_user_id_race_conflict_fetches_existing(mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "auth0|x", "name": "Test User", "email": "test@example.com"},
@@ -113,11 +113,11 @@ def test_get_current_user_id_race_conflict_fetches_existing(mocker: MockerFixtur
 
     db.commit = _raise_conflict
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    assert get_current_user_id(credentials, db) == "u-existing"
+    assert get_current_user_id(credentials, db, mock_settings) == "u-existing"
     assert db.rolled_back is True
 
 
-def test_get_current_user_id_fetches_userinfo_when_claims_missing(mocker: MockerFixture):
+def test_get_current_user_id_fetches_userinfo_when_claims_missing(mocker: MockerFixture, mock_settings):
     USERINFO_CACHE.clear()
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -129,15 +129,15 @@ def test_get_current_user_id_fetches_userinfo_when_claims_missing(mocker: Mocker
     )
     db = _DB(None)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    _ = get_current_user_id(credentials, db)
-    _ = get_current_user_id(credentials, db)
+    _ = get_current_user_id(credentials, db, mock_settings)
+    _ = get_current_user_id(credentials, db, mock_settings)
     created_user = db.added[0]
     assert created_user.name == "From UserInfo"
     assert created_user.email == "userinfo@example.com"
     assert fetch_userinfo_mock.call_count == 1
 
 
-def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture):
+def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "auth0|db-create", "name": "DB User", "email": "Db@Example.com"},
@@ -145,7 +145,7 @@ def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    created_user_id = get_current_user_id(credentials, test_db)
+    created_user_id = get_current_user_id(credentials, test_db, mock_settings)
 
     created_user = test_db.get(AppUser, created_user_id)
     assert created_user is not None
@@ -154,7 +154,7 @@ def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture
     assert created_user.email == "db@example.com"
 
 
-def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: MockerFixture):
+def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: MockerFixture, mock_settings):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -172,13 +172,13 @@ def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: Mock
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    user_id = get_current_user_id(credentials, test_db)
+    user_id = get_current_user_id(credentials, test_db, mock_settings)
 
     assert user_id == existing_id
     assert test_db.query(AppUser).filter(AppUser.auth0_user_id == "auth0|db-existing").count() == 1
 
 
-def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker: MockerFixture):
+def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker: MockerFixture, mock_settings):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -200,7 +200,7 @@ def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    user_id = get_current_user_id(credentials, test_db)
+    user_id = get_current_user_id(credentials, test_db, mock_settings)
 
     refreshed = test_db.get(AppUser, user_id)
     assert refreshed is not None
@@ -209,7 +209,7 @@ def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker
 
 
 def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
-    test_db, mocker: MockerFixture
+    test_db, mocker: MockerFixture, mock_settings
 ):
     existing_id = uuid4()
     existing_user = AppUser(
@@ -231,7 +231,7 @@ def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    user_id = get_current_user_id(credentials, test_db)
+    user_id = get_current_user_id(credentials, test_db, mock_settings)
 
     granted_user = test_db.get(AppUser, user_id)
     assert granted_user.credit == 1000
@@ -239,7 +239,7 @@ def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
     assert granted_user.sbp_bundle_credit_granted_at is not None
 
 
-def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(test_db, mocker: MockerFixture):
+def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(test_db, mocker: MockerFixture, mock_settings):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -264,15 +264,15 @@ def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(test_db, moc
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    user_id = get_current_user_id(credentials, test_db)
-    get_current_user_id(credentials, test_db)
+    user_id = get_current_user_id(credentials, test_db, mock_settings)
+    get_current_user_id(credentials, test_db, mock_settings)
 
     granted_user = test_db.get(AppUser, user_id)
     assert granted_user.credit == 2000  # granted once, on top of the pre-existing 1000
     assert granted_user.sbp_bundle_credit_granted_at is not None
 
 
-def test_get_current_user_id_no_grant_without_role(test_db, mocker: MockerFixture):
+def test_get_current_user_id_no_grant_without_role(test_db, mocker: MockerFixture, mock_settings):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -290,61 +290,71 @@ def test_get_current_user_id_no_grant_without_role(test_db, mocker: MockerFixtur
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    user_id = get_current_user_id(credentials, test_db)
+    user_id = get_current_user_id(credentials, test_db, mock_settings)
 
     unchanged_user = test_db.get(AppUser, user_id)
     assert unchanged_user.credit == 0
     assert unchanged_user.sbp_bundle_credit_granted_at is None
 
 
-def test_require_agent_health_permission_allows_when_present(mocker: MockerFixture):
+def test_require_agent_health_permission_allows_when_present(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "m2m-client@clients", "permissions": ["read:agent-health"]},
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
-    assert require_agent_health_permission(credentials) is None
+    assert require_agent_health_permission(credentials, mock_settings) is None
 
 
-def test_require_agent_health_permission_rejects_missing_permission(mocker: MockerFixture):
+def test_require_agent_health_permission_rejects_missing_permission(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "m2m-client@clients", "permissions": ["read:something-else"]},
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
     with pytest.raises(HTTPException) as exc:
-        require_agent_health_permission(credentials)
+        require_agent_health_permission(credentials, mock_settings)
     assert exc.value.status_code == 403
 
 
-def test_require_agent_health_permission_rejects_non_list_claim(mocker: MockerFixture):
+def test_require_agent_health_permission_rejects_non_list_claim(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "m2m-client@clients", "permissions": "read:agent-health"},
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
     with pytest.raises(HTTPException) as exc:
-        require_agent_health_permission(credentials)
+        require_agent_health_permission(credentials, mock_settings)
     assert exc.value.status_code == 403
 
 
-def test_require_agent_health_permission_rejects_missing_claim(mocker: MockerFixture):
+def test_require_agent_health_permission_rejects_missing_claim(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "m2m-client@clients"},
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
     with pytest.raises(HTTPException) as exc:
-        require_agent_health_permission(credentials)
+        require_agent_health_permission(credentials, mock_settings)
     assert exc.value.status_code == 403
 
 
-def test_require_agent_health_permission_invalid_token_raises_401(mocker: MockerFixture):
+def test_require_agent_health_permission_invalid_token_raises_401(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         side_effect=HTTPException(status_code=401, detail="Invalid token"),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="bad-token")
     with pytest.raises(HTTPException) as exc:
-        require_agent_health_permission(credentials)
+        require_agent_health_permission(credentials, mock_settings)
     assert exc.value.status_code == 401

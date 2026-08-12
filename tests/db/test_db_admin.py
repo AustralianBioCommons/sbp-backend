@@ -16,6 +16,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette_admin._types import RequestAction
 
+from app.config import get_settings
 from app.db.admin import (
     AppUserAdmin,
     DataTransferAdmin,
@@ -32,7 +33,6 @@ from app.db.admin import (
 )
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
-from app.config import get_settings
 from tests.conftest import SettingsNoEnv
 
 DB_ADMIN_REQUIRED_ENV = {
@@ -442,18 +442,13 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
     assert any(item["run_id"] == str(run_id) for item in outputs_json["items"])
 
 
-def test_claims_has_admin_role_from_direct_claim(mocker) -> None:
+def test_claims_has_admin_role_from_direct_claim(mock_settings) -> None:
     required_role = "biocommons/role/sbp/admin"
     roles_claim_name = "https://biocommons.org.au/roles"
-    mocker.patch.dict(
-        os.environ,
-        {
-            "DB_ADMIN_REQUIRED_ROLE": required_role,
-            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
-        },
-    )
+    mock_settings.auth.required_role = required_role
+    mock_settings.admin.roles_claim = roles_claim_name
     claims = {roles_claim_name: [required_role]}
-    assert _claims_has_admin_role(claims) is True
+    assert _claims_has_admin_role(claims, mock_settings) is True
 
 
 def test_claims_has_admin_role_from_roles_claim_list(mocker, mock_settings) -> None:
