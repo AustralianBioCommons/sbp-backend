@@ -12,7 +12,13 @@ def validate_url(s: str) -> str:
 
 def split_by_comma(v: str | list[str]) -> list[str]:
     if isinstance(v, str):
-        return [item.strip() for item in v.split(",")]
+        result = []
+        for item in v.split(","):
+            if item.strip():
+                result.append(item.strip())
+        if not result:
+            raise ValueError(f"List is empty after splitting: {v}")
+        return result
     return v
 
 
