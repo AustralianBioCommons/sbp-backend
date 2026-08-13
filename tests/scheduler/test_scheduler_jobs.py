@@ -381,9 +381,7 @@ def test_sync_data_transfers_dry_run_does_not_call_globus_transfer(
     """dry_run only counts eligible rows - it must never touch Globus or the DB."""
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     workflow_run = WorkflowRunFactory.create_sync()
-    DataTransferFactory.create_sync(
-        workflow_run=workflow_run, provider="globus", status="pending"
-    )
+    DataTransferFactory.create_sync(workflow_run=workflow_run, provider="globus", status="pending")
     DataTransferFactory.create_sync(
         workflow_run=workflow_run, provider="globus", status="completed"
     )
@@ -406,6 +404,4 @@ def test_sync_data_transfers_calls_globus_transfer_sync(
 
     scheduler_jobs.sync_data_transfers(dry_run=False)
 
-    mock_sync.assert_called_once_with(
-        test_db, limit=scheduler_jobs.DATA_TRANSFER_SYNC_BATCH_LIMIT
-    )
+    mock_sync.assert_called_once_with(test_db, limit=scheduler_jobs.DATA_TRANSFER_SYNC_BATCH_LIMIT)

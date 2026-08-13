@@ -325,9 +325,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     params_text = queued_job.launch_payload["paramsText"]
-    staged_pdb_location = (
-        f"/test/input/de-novo-design/{workflow_run.id}/test.pdb"
-    )
+    staged_pdb_location = f"/test/input/de-novo-design/{workflow_run.id}/test.pdb"
     assert "out_dir: s3://my-bucket/run-output-id" in params_text
     assert f"input_pdb: {staged_pdb_location}" in params_text
     assert "hotspot_residues: A20,A21" in params_text
@@ -348,9 +346,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert pdb_transfer.destination_location == staged_pdb_location
     assert pdb_transfer.status == "pending"
 
-    run_input = test_db.scalar(
-        select(RunInput).where(RunInput.data_transfer_id == pdb_transfer.id)
-    )
+    run_input = test_db.scalar(select(RunInput).where(RunInput.data_transfer_id == pdb_transfer.id))
     assert run_input is not None
     assert run_input.run_id == workflow_run.id
     assert run_input.s3_object_id == "inputs/test.pdb"

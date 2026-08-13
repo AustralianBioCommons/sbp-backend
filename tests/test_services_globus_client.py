@@ -64,7 +64,9 @@ def test_get_transfer_client_builds_client_app_from_env(monkeypatch):
     mock_app = MagicMock()
     mock_transfer_client = MagicMock()
     with (
-        patch("app.services.globus_client.globus_sdk.ClientApp", return_value=mock_app) as mock_app_cls,
+        patch(
+            "app.services.globus_client.globus_sdk.ClientApp", return_value=mock_app
+        ) as mock_app_cls,
         patch(
             "app.services.globus_client.globus_sdk.TransferClient",
             return_value=mock_transfer_client,
@@ -100,9 +102,7 @@ def test_get_transfer_client_only_requests_data_access_scope_for_gadi_collection
     ):
         get_transfer_client()
 
-    mock_transfer_client.add_app_data_access_scope.assert_called_once_with(
-        "the-gadi-collection-id"
-    )
+    mock_transfer_client.add_app_data_access_scope.assert_called_once_with("the-gadi-collection-id")
 
 
 def test_get_transfer_client_is_cached(monkeypatch):

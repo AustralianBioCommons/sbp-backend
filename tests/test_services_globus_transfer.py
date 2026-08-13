@@ -213,9 +213,7 @@ def test_poll_transfer_api_error_records_message_without_changing_status(
     assert "Poll failed" in data_transfer.error_message
 
 
-def test_poll_transfer_succeeded_marks_completed(
-    test_db, persistent_models, mock_transfer_client
-):
+def test_poll_transfer_succeeded_marks_completed(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
     workflow_run = WorkflowRunFactory.create_sync()
     data_transfer = DataTransferFactory.create_sync(
@@ -227,9 +225,7 @@ def test_poll_transfer_succeeded_marks_completed(
     assert data_transfer.status == "completed"
 
 
-def test_poll_transfer_failed_records_fatal_error(
-    test_db, persistent_models, mock_transfer_client
-):
+def test_poll_transfer_failed_records_fatal_error(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {
         "status": "FAILED",
         "fatal_error": {"description": "no such file"},
@@ -245,9 +241,7 @@ def test_poll_transfer_failed_records_fatal_error(
     assert data_transfer.error_message == "no such file"
 
 
-def test_poll_transfer_active_stays_in_progress(
-    test_db, persistent_models, mock_transfer_client
-):
+def test_poll_transfer_active_stays_in_progress(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "ACTIVE"}
     workflow_run = WorkflowRunFactory.create_sync()
     data_transfer = DataTransferFactory.create_sync(
@@ -387,9 +381,7 @@ def test_notify_launcher_flips_to_pending_once_all_input_transfers_complete(
 # ============================================================================
 
 
-def test_sync_data_transfers_submits_and_notifies(
-    test_db, persistent_models, mock_transfer_client
-):
+def test_sync_data_transfers_submits_and_notifies(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
 
@@ -415,9 +407,7 @@ def test_sync_data_transfers_submits_and_notifies(
     assert result.errored == 0
 
 
-def test_sync_data_transfers_polls_and_completes(
-    test_db, persistent_models, mock_transfer_client
-):
+def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
 
     workflow_run = WorkflowRunFactory.create_sync()
