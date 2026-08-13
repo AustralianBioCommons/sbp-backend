@@ -425,7 +425,6 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_wisps_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -434,6 +433,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
             revision="dev",
             output_id="output-queued",
             user_details=_USER_DETAILS.model_copy(update={"user_email": "user@test.com"}),
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
         )
 
     queued_job = test_db.scalar(
@@ -457,7 +457,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/output-queued" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "input: /test/input/interaction-screening/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "tools: boltz" in queued_job.launch_payload["paramsText"]
@@ -526,7 +526,7 @@ async def test_launch_wisps_workflow_missing_output_id(monkeypatch):
     ):
         await prepare_wisps_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -559,7 +559,7 @@ async def test_launch_wisps_workflow_empty_output_id(monkeypatch):
     ):
         await prepare_wisps_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
@@ -592,7 +592,7 @@ async def test_launch_wisps_workflow_missing_run_name(monkeypatch):
     ):
         await prepare_wisps_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",

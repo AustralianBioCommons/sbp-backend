@@ -160,7 +160,6 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_bindflow_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -168,6 +167,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             revision="main",
             output_id="run-output-id",
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
         )
 
     queued_job = test_db.scalar(
@@ -191,7 +191,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "input: /test/input/de-novo-design/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode:" not in queued_job.launch_payload["paramsText"]

@@ -10,7 +10,13 @@ from app.db.models.core import AppUser
 from app.routes.dependencies import get_current_user_id
 from app.scheduler import jobs as scheduler_jobs
 from app.services.seqera import WorkflowLaunchResult
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    DataTransferFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+)
 
 
 def _get_db_override(db):
@@ -367,3 +373,39 @@ def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
     scheduler_jobs.refresh_user_credits()
     test_db.refresh(user)
     assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
+
+
+def test_sync_data_transfers_dry_run_does_not_call_globus_transfer(
+    test_db, persistent_models, monkeypatch, mocker: MockerFixture
+):
+    """dry_run only counts eligible rows - it must never touch Globus or the DB."""
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    workflow_run = WorkflowRunFactory.create_sync()
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run, provider="globus", status="pending"
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run, provider="globus", status="completed"
+    )
+    DataTransferFactory.create_sync(workflow_run=workflow_run, provider="s3", status="pending")
+    mock_sync = mocker.patch.object(scheduler_jobs.globus_transfer, "sync_data_transfers")
+
+    scheduler_jobs.sync_data_transfers(dry_run=True)
+
+    mock_sync.assert_not_called()
+
+
+def test_sync_data_transfers_calls_globus_transfer_sync(
+    test_db, monkeypatch, mocker: MockerFixture
+):
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    mock_result = SimpleNamespace(checked=2, submitted=1, completed=1, failed=0, errored=0)
+    mock_sync = mocker.patch.object(
+        scheduler_jobs.globus_transfer, "sync_data_transfers", return_value=mock_result
+    )
+
+    scheduler_jobs.sync_data_transfers(dry_run=False)
+
+    mock_sync.assert_called_once_with(
+        test_db, limit=scheduler_jobs.DATA_TRANSFER_SYNC_BATCH_LIMIT
+    )

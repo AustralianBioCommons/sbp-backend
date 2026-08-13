@@ -355,7 +355,6 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
@@ -370,6 +369,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
                     "ip_address": "127.0.0.1",
                 }
             ),
+            staged_input_location="/test/input/single-prediction/run-id/test.csv",
         )
 
     queued_job = test_db.scalar(
@@ -393,7 +393,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "input: /test/input/single-prediction/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode: colabfold" in queued_job.launch_payload["paramsText"]
@@ -420,13 +420,13 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     ):
         await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="dataset_abc",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             output_id=None,
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
         )
 
 
@@ -439,13 +439,13 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     ):
         await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="dataset_abc",
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
             config_path="/fake/proteinfold.config",
             output_id="   ",
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
         )
 
 

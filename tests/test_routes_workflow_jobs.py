@@ -200,6 +200,46 @@ async def test_list_jobs_pending_queued_job_skips_seqera_lookup(test_db, persist
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_staging_queued_job_skips_seqera_lookup(test_db, persistent_models):
+    """Staging queued jobs (Globus input data transfer still in flight) are
+    rendered as "Staging", not "Pending" or a Seqera lookup that has no run yet."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    owned_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        binder_name=None,
+        run_name="Staging Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        tool="colabfold",
+    )
+    QueuedJobFactory.create_sync(
+        workflow_run=owned_run,
+        workflow=workflow,
+        launch_payload={},
+        status="staging",
+    )
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].id == str(owned_run.id)
+    assert response.jobs[0].jobName == "Staging Job"
+    assert response.jobs[0].status == "Staging"
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_failed_queued_job_skips_seqera_lookup(test_db, persistent_models):
     """Failed queued jobs are rendered from local DB state without querying Seqera."""
     user = AppUserFactory.create_sync()

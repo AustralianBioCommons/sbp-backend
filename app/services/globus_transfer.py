@@ -149,7 +149,12 @@ def poll_transfer(db: Session, data_transfer: DataTransfer) -> None:
 
     globus_status = task["status"]
     if globus_status == "INACTIVE":
-        age = datetime.now(UTC) - data_transfer.created_at
+        # SQLite (used in tests) returns naive datetimes even for DateTime(timezone=True)
+        # columns, unlike Postgres - normalize so this subtraction works on both.
+        created_at = data_transfer.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        age = datetime.now(UTC) - created_at
         if age > STALE_TRANSFER_TIMEOUT:
             data_transfer.status = "failed"
             data_transfer.error_message = (
