@@ -85,7 +85,9 @@ def test_get_current_user_id_unknown_user_auto_creates(mocker: MockerFixture, mo
     assert created_user.email == "test@example.com"
 
 
-def test_get_current_user_id_unknown_user_without_email_uses_fallback(mocker: MockerFixture, mock_settings):
+def test_get_current_user_id_unknown_user_without_email_uses_fallback(
+    mocker: MockerFixture, mock_settings
+):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "auth0|no-email"},
@@ -117,7 +119,9 @@ def test_get_current_user_id_race_conflict_fetches_existing(mocker: MockerFixtur
     assert db.rolled_back is True
 
 
-def test_get_current_user_id_fetches_userinfo_when_claims_missing(mocker: MockerFixture, mock_settings):
+def test_get_current_user_id_fetches_userinfo_when_claims_missing(
+    mocker: MockerFixture, mock_settings
+):
     USERINFO_CACHE.clear()
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -154,7 +158,9 @@ def test_get_current_user_id_real_db_creates_user(test_db, mocker: MockerFixture
     assert created_user.email == "db@example.com"
 
 
-def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: MockerFixture, mock_settings):
+def test_get_current_user_id_real_db_returns_existing_user(
+    test_db, mocker: MockerFixture, mock_settings
+):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -178,7 +184,9 @@ def test_get_current_user_id_real_db_returns_existing_user(test_db, mocker: Mock
     assert test_db.query(AppUser).filter(AppUser.auth0_user_id == "auth0|db-existing").count() == 1
 
 
-def test_get_current_user_id_real_db_updates_placeholder_profile(test_db, mocker: MockerFixture, mock_settings):
+def test_get_current_user_id_real_db_updates_placeholder_profile(
+    test_db, mocker: MockerFixture, mock_settings
+):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -239,7 +247,9 @@ def test_get_current_user_id_grants_sbp_bundle_credit_on_role_approval(
     assert granted_user.sbp_bundle_credit_granted_at is not None
 
 
-def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(test_db, mocker: MockerFixture, mock_settings):
+def test_get_current_user_id_does_not_grant_sbp_bundle_credit_twice(
+    test_db, mocker: MockerFixture, mock_settings
+):
     existing_id = uuid4()
     existing_user = AppUser(
         id=existing_id,
@@ -297,9 +307,7 @@ def test_get_current_user_id_no_grant_without_role(test_db, mocker: MockerFixtur
     assert unchanged_user.sbp_bundle_credit_granted_at is None
 
 
-def test_require_agent_health_permission_allows_when_present(
-    mocker: MockerFixture, mock_settings
-):
+def test_require_agent_health_permission_allows_when_present(mocker: MockerFixture, mock_settings):
     mocker.patch(
         "app.routes.dependencies.verify_access_token_claims",
         return_value={"sub": "m2m-client@clients", "permissions": ["read:agent-health"]},

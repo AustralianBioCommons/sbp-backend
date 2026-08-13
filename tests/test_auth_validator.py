@@ -130,7 +130,9 @@ def test_get_auth0_settings_success(monkeypatch: pytest.MonkeyPatch, test_get_se
     assert settings.auth.algorithms == ["RS256", "ES256"]
 
 
-def test_get_auth0_settings_raises_if_domain_missing(monkeypatch: pytest.MonkeyPatch, test_get_settings):
+def test_get_auth0_settings_raises_if_domain_missing(
+    monkeypatch: pytest.MonkeyPatch, test_get_settings
+):
     monkeypatch.delenv("AUTH_DOMAIN", raising=False)
     monkeypatch.setenv("AUTH_AUDIENCE", "https://api.example.test")
 
@@ -224,7 +226,9 @@ def test_get_rsa_key_retries_once_and_returns_none(mocker):
     assert fetch_mock.call_count == 2
 
 
-def test_verify_access_token_sub_success(monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings):
+def test_verify_access_token_sub_success(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     """Test JWT validation with actual token instead of mocking decode."""
     _set_required_env(monkeypatch)
 
@@ -334,7 +338,9 @@ def test_verify_access_token_sub_invalid_header(
     assert exc.value.status_code == 401
 
 
-def test_verify_access_token_sub_http_error(monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings):
+def test_verify_access_token_sub_http_error(
+    monkeypatch: pytest.MonkeyPatch, mocker, test_get_settings
+):
     _set_required_env(monkeypatch)
     request = httpx.Request("GET", "https://tenant/.well-known/jwks.json")
     mocker.patch(

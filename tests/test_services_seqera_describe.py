@@ -49,9 +49,7 @@ async def test_describe_workflow_with_custom_workspace(mock_settings):
     mock_response.json.return_value = {"workflow": {"id": "wf-456"}}
 
     with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
-        await describe_workflow(
-            "wf-456", workspace_id="custom-workspace", settings=mock_settings
-        )
+        await describe_workflow("wf-456", workspace_id="custom-workspace", settings=mock_settings)
 
     # Verify that custom workspace was used
     call_kwargs = mock_get.call_args.kwargs

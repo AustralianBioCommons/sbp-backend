@@ -1,4 +1,5 @@
 """Database setup for SQLAlchemy and Alembic."""
+
 from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 

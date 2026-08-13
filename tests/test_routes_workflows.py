@@ -856,7 +856,7 @@ def test_launch_denied_without_workflow_role(role_check_client, monkeypatch):
     assert "Workflow execution role required" in response.json()["detail"]
 
 
-def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch,mocker, test_get_settings):
+def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch, mocker, test_get_settings):
     """create_app() raises ValidationError when required workflow env vars are missing."""
     monkeypatch.delenv("AUTH_WORKFLOW_EXECUTION_ROLE")
     mocker.patch("app.main.get_settings", test_get_settings)

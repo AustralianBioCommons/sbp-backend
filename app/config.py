@@ -10,6 +10,7 @@ def validate_url(s: str) -> str:
     http_url.validate_python(s)
     return s
 
+
 def split_by_comma(v: str | list[str]) -> list[str]:
     if isinstance(v, str):
         result = []
@@ -24,12 +25,15 @@ def split_by_comma(v: str | list[str]) -> list[str]:
 
 UrlStr = Annotated[str, AfterValidator(validate_url)]
 
+
 class NestedSettings(BaseSettings):
     """
     Used to declare nested settings with their own
     prefix
     """
+
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="match_prefix")
+
 
 class SeqeraSettings(NestedSettings):
     api_url: UrlStr
@@ -73,11 +77,13 @@ class AdminSettings(NestedSettings):
 
     model_config = SettingsConfigDict(env_prefix="DB_ADMIN_")
 
+
 class HpcSettings(NestedSettings):
     gadi_project: str = "yz52"
     max_concurrent_workflows: int = 25
 
     model_config = SettingsConfigDict(env_prefix="HPC_")
+
 
 class AuthSettings(NestedSettings):
     # domain without http or slashes e.g. dev.biocommons.org.au
@@ -104,6 +110,7 @@ class Settings(BaseSettings):
     Settings for specific areas are nested under
     seqera, aws, etc.
     """
+
     # Comma-separated list of allowed origins for CORS
     allowed_origins: Annotated[list[str], NoDecode, BeforeValidator(split_by_comma)]
     # Single URL including username and password

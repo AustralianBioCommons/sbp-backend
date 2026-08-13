@@ -453,9 +453,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_with_prerun_script_path(
-    wisps_settings, persistent_models
-):
+async def test_launch_wisps_workflow_with_prerun_script_path(wisps_settings, persistent_models):
     """prerun_script_path is forwarded to get_executor_script."""
     mock_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
     prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"

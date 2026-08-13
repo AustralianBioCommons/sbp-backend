@@ -652,7 +652,9 @@ def _verify_admin_request(request: StarletteRequest, settings: Settings) -> dict
 
     session_cookie = request.cookies.get(_get_admin_session_cookie_name())
     session_claims = (
-        _parse_admin_session_value(session_cookie, settings) if isinstance(session_cookie, str) else None
+        _parse_admin_session_value(session_cookie, settings)
+        if isinstance(session_cookie, str)
+        else None
     )
     if not session_claims:
         raise HTTPException(
@@ -662,7 +664,9 @@ def _verify_admin_request(request: StarletteRequest, settings: Settings) -> dict
     return session_claims
 
 
-def require_admin_access(request: StarletteRequest, settings: Settings = Depends(get_settings)) -> dict[str, object]:
+def require_admin_access(
+    request: StarletteRequest, settings: Settings = Depends(get_settings)
+) -> dict[str, object]:
     return _verify_admin_request(request, settings=settings)
 
 

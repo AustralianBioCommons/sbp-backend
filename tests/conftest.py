@@ -316,6 +316,7 @@ class SettingsNoEnv(Settings):
     """
     Settings class that ignores any .env files for testing
     """
+
     model_config = {**Settings.model_config, "env_file": None}
     seqera: SeqeraSettings = Field(default_factory=SeqeraSettingsNoEnv)
     aws: AwsSettings = Field(default_factory=AwsSettingsNoEnv)
@@ -326,9 +327,7 @@ class SettingsNoEnv(Settings):
 @pytest.fixture
 def mock_settings():
     """Mock settings for testing."""
-    return SettingsNoEnv(
-        database_url="sqlite:///:memory:"
-    )
+    return SettingsNoEnv(database_url="sqlite:///:memory:")
 
 
 @pytest.fixture(autouse=True)
@@ -344,6 +343,8 @@ def test_get_settings():
     Version of get_settings that doesn't use .env file,
     doesn't cache
     """
+
     def get_settings_no_env() -> SettingsNoEnv:
         return SettingsNoEnv()
+
     return get_settings_no_env

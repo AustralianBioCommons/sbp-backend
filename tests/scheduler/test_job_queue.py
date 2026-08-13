@@ -36,7 +36,9 @@ def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | N
     )
 
 
-def test_submit_pending_jobs_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch, mock_settings):
+def test_submit_pending_jobs_skips_when_seqera_unavailable(
+    test_db, persistent_models, monkeypatch, mock_settings
+):
     due_job = _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
     scheduler = _make_scheduler()
     checked_sessions = []
