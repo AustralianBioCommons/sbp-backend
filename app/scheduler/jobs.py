@@ -56,8 +56,9 @@ def get_retry_delay(job: QueuedJob) -> timedelta:
     return timedelta(seconds=RETRY_DELAY_BASE * (2**job.attempts - 1))
 
 
-def is_seqera_available(db_session: Session) -> bool:
-    system_status = asyncio.run(health.get_system_status(db_session))
+def is_seqera_available(db_session: Session, settings: Settings | None = None) -> bool:
+    settings = settings or get_settings()
+    system_status = asyncio.run(health.get_system_status(db_session, settings=settings))
     logger.info(f"System status is {system_status.overall_status}.")
     return system_status.overall_status == "healthy"
 
@@ -65,6 +66,7 @@ def is_seqera_available(db_session: Session) -> bool:
 def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     logger.info(f"Launching job {job_id}...")
     db_session = next(get_db())
+    settings = get_settings()
 
     ok_to_launch = is_seqera_available(db_session)
     if not ok_to_launch:
@@ -74,7 +76,6 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     if job is None:
         return
 
-    settings = get_settings()
     now = datetime.now(tz=UTC)
     launch_func: LaunchFunction
     workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
@@ -125,12 +126,13 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
         return
 
 
-def get_available_workflow_capacity() -> int:
+def get_available_workflow_capacity(settings: Settings | None = None) -> int:
     """
     How many more workflows can be submitted to Gadi right now, per the Seqera API's
     count of workflows still occupying a job slot there (see MAX_CONCURRENT_WORKFLOWS).
     """
-    active_workflow_count = asyncio.run(seqera.count_active_workflows())
+    settings = settings or get_settings()
+    active_workflow_count = asyncio.run(seqera.count_active_workflows(settings=settings))
     capacity = max(0, MAX_CONCURRENT_WORKFLOWS - active_workflow_count)
     logger.info(
         f"{active_workflow_count}/{MAX_CONCURRENT_WORKFLOWS} workflows active on Gadi "
@@ -240,7 +242,7 @@ def sync_completed_workflow_runs(dry_run: bool = False):
         logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
         return
 
-    ok_to_sync = is_seqera_available(db_session)
+    ok_to_sync = is_seqera_available(db_session, get_settings())
     if not ok_to_sync:
         logger.warning("Skipping workflow run result sync while system status is unhealthy.")
         return

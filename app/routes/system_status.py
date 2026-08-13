@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.admin import require_admin_access
 from ..schemas.health import SystemStatusAdminResponse, SystemStatusDowntimeResponse
 from ..services import health
@@ -38,10 +39,11 @@ async def get_admin_system_status(
         description="Bypass the shared database cache and re-run the probes now",
     ),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> SystemStatusAdminResponse:
     """Return verbose, admin-only runtime health of the submission components."""
-    status_obj = await health.get_system_status(db, force_refresh=refresh)
-    return SystemStatusAdminResponse.model_validate(health.to_admin_dict(status_obj))
+    status_obj = await health.get_system_status(db, force_refresh=refresh, settings=settings)
+    return SystemStatusAdminResponse.model_validate(health.to_admin_dict(status_obj, settings))
 
 
 @router.get("/system-status/history", response_model=SystemStatusDowntimeResponse)

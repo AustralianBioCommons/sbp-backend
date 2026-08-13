@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from ...config import Settings, get_settings
 from ...db.models.core import DataTransfer, RunInput, RunMetric, RunOutput, WorkflowRun
 from ...schemas.workflows.shared import (
     TERMINAL_SEQERA_STATUSES,
@@ -91,6 +92,7 @@ async def cancel_workflow(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> CancelWorkflowResponse:
     """Cancel a pending or running workflow run."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -102,7 +104,7 @@ async def cancel_workflow(
 
     if owned_run.seqera_run_id is not None:
         try:
-            await cancel_workflow_raw(owned_run.seqera_run_id)
+            await cancel_workflow_raw(owned_run.seqera_run_id, settings=settings)
         except SeqeraAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -126,6 +128,7 @@ async def list_jobs(
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
     user_runs = get_user_job_list_rows(db, current_user_id)
@@ -138,7 +141,7 @@ async def list_jobs(
         if not seqera_run_id:
             return user_run.run_id, {}
         try:
-            return user_run.run_id, await describe_workflow(seqera_run_id)
+            return user_run.run_id, await describe_workflow(seqera_run_id, settings=settings)
         except SeqeraAPIError as exc:
             if exc.status_code is not None and exc.status_code < 500:
                 return user_run.run_id, None
@@ -267,6 +270,7 @@ async def get_job_details(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> JobDetailsResponse:
     """Retrieve a single job with normalized status and score."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -286,7 +290,7 @@ async def get_job_details(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
             )
         try:
-            seqera_payload = await describe_workflow(seqera_run_id)
+            seqera_payload = await describe_workflow(seqera_run_id, settings=settings)
         except SeqeraConfigurationError as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -345,6 +349,7 @@ async def delete_job(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> DeleteJobResponse:
     """Delete a single job. Running jobs are cancelled before deletion."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -359,13 +364,13 @@ async def delete_job(
         queued_job.cancel_pending_job(session=db)
     if seqera_run_id:
         try:
-            payload = await describe_workflow(seqera_run_id)
+            payload = await describe_workflow(seqera_run_id, settings=settings)
             pipeline_status = extract_pipeline_status(payload)
             if pipeline_status in {"SUBMITTED", "RUNNING"}:
-                await cancel_workflow_raw(seqera_run_id)
+                await cancel_workflow_raw(seqera_run_id, settings=settings)
                 cancelled = True
 
-            await delete_workflow_raw(seqera_run_id)
+            await delete_workflow_raw(seqera_run_id, settings=settings)
         except SeqeraConfigurationError as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -395,6 +400,7 @@ async def bulk_delete_jobs(
     payload: BulkDeleteJobsRequest,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> BulkDeleteJobsResponse:
     """Delete multiple jobs. Each running job is cancelled before deletion."""
     deleted: list[str] = []
@@ -417,9 +423,9 @@ async def bulk_delete_jobs(
 
         if owned_run.seqera_run_id is not None:
             try:
-                details = await describe_workflow(owned_run.seqera_run_id)
+                details = await describe_workflow(owned_run.seqera_run_id, settings=settings)
                 if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
-                    await cancel_workflow_raw(owned_run.seqera_run_id)
+                    await cancel_workflow_raw(owned_run.seqera_run_id, settings=settings)
                 run_status["seqera_cancelled"] = True
                 run_status["seqera_id"] = owned_run.seqera_run_id
             except (SeqeraConfigurationError, SeqeraAPIError) as exc:
@@ -435,7 +441,7 @@ async def bulk_delete_jobs(
     if delete_from_seqera:
         try:
             seqera_ids = [run_status["seqera_id"] for run_id, run_status in delete_from_seqera]
-            await delete_workflows_raw(seqera_ids)
+            await delete_workflows_raw(seqera_ids, settings=settings)
         except (SeqeraConfigurationError, SeqeraAPIError) as exc:
             for run_id, _run_status in delete_from_seqera:
                 failed[run_id] = str(exc)

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Any, cast
 
 import httpx
 
 from ..config import Settings, get_settings
-from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from .seqera_errors import SeqeraAPIError
 
 
 class SeqeraClient:
@@ -61,21 +60,15 @@ class SeqeraClient:
             return await client.get(url, params=params, headers=request_headers)
 
 
-def _get_required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
-
-
-def _get_api_context(workspace_id: str | None = None) -> tuple[str, str, dict[str, str]]:
-    api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    token = _get_required_env("SEQERA_ACCESS_TOKEN")
-    resolved_workspace = workspace_id or os.getenv("WORK_SPACE")
-    params: dict[str, str] = {}
-    if resolved_workspace:
-        params["workspaceId"] = resolved_workspace
-    return api_url, token, params
+def _get_api_context(
+    workspace_id: str | None = None,
+    settings: Settings | None = None,
+) -> tuple[str, str, dict[str, str]]:
+    settings = settings or get_settings()
+    api_url = settings.seqera.api_url.rstrip("/")
+    token = settings.seqera.access_token
+    resolved_workspace = workspace_id or settings.seqera.work_space
+    return api_url, token, {"workspaceId": resolved_workspace}
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -89,8 +82,9 @@ async def list_workflows_raw(
     workspace_id: str | None = None,
     search_query: str | None = None,
     max_results: int | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any] | list[Any]:
-    api_url, token, params = _get_api_context(workspace_id)
+    api_url, token, params = _get_api_context(workspace_id, settings)
     if search_query:
         params["search"] = search_query
     if max_results is not None:
@@ -109,9 +103,9 @@ async def list_workflows_raw(
 
 
 async def describe_workflow_raw(
-    workflow_id: str, workspace_id: str | None = None
+    workflow_id: str, workspace_id: str | None = None, settings: Settings | None = None
 ) -> dict[str, Any]:
-    api_url, token, params = _get_api_context(workspace_id)
+    api_url, token, params = _get_api_context(workspace_id, settings)
     url = f"{api_url}/workflow/{workflow_id}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
         response = await client.get(url, headers=_headers(token), params=params)
@@ -127,8 +121,9 @@ async def describe_workflow_raw(
 async def get_workflow_logs_raw(
     workflow_id: str,
     workspace_id: str | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
-    api_url, token, params = _get_api_context(workspace_id)
+    api_url, token, params = _get_api_context(workspace_id, settings)
     url = f"{api_url}/workflow/{workflow_id}/log"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
         response = await client.get(url, headers=_headers(token), params=params)
@@ -141,8 +136,10 @@ async def get_workflow_logs_raw(
     return cast(dict[str, Any], response.json())
 
 
-async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
-    api_url, token, params = _get_api_context(workspace_id)
+async def cancel_workflow_raw(
+    workflow_id: str, workspace_id: str | None = None, settings: Settings | None = None
+) -> None:
+    api_url, token, params = _get_api_context(workspace_id, settings)
     url = f"{api_url}/workflow/{workflow_id}/cancel"
     payload: dict[str, Any] = {}
     headers = _headers(token)
@@ -157,8 +154,10 @@ async def cancel_workflow_raw(workflow_id: str, workspace_id: str | None = None)
         )
 
 
-async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None) -> None:
-    api_url, token, params = _get_api_context(workspace_id)
+async def delete_workflow_raw(
+    workflow_id: str, workspace_id: str | None = None, settings: Settings | None = None
+) -> None:
+    api_url, token, params = _get_api_context(workspace_id, settings)
     url = f"{api_url}/workflow/{workflow_id}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
         response = await client.delete(url, headers=_headers(token), params=params)
@@ -172,8 +171,10 @@ async def delete_workflow_raw(workflow_id: str, workspace_id: str | None = None)
         )
 
 
-async def delete_workflows_raw(workflow_ids: list[str], workspace_id: str | None = None) -> None:
-    api_url, token, params = _get_api_context(workspace_id)
+async def delete_workflows_raw(
+    workflow_ids: list[str], workspace_id: str | None = None, settings: Settings | None = None
+) -> None:
+    api_url, token, params = _get_api_context(workspace_id, settings)
     url = f"{api_url}/workflow/delete"
     payload = {"workflowIds": workflow_ids}
     async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
@@ -26,6 +25,7 @@ import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models.system_status import SystemStatusCache, SystemStatusIncident
 from ..schemas.health import (
     COMPONENT_COMPUTE_ENV,
@@ -35,7 +35,6 @@ from ..schemas.health import (
     ProbeResult,
     SystemStatus,
 )
-from .seqera_errors import SeqeraConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +42,12 @@ logger = logging.getLogger(__name__)
 # dashboard / submission pre-flight check.
 PROBE_TIMEOUT_SECONDS = 5.0
 
-# Tower Agent liveness probe (opt-in via ENABLE_AGENT_HEALTHCHECK). This actively
+# Tower Agent liveness probe (opt-in via settings.seqera.enable_agent_healthcheck). This actively
 # verifies the agent by cloning the monitored compute env, creating a throwaway
 # copy (which forces Seqera to validate the agent connection), reading its status,
 # then deleting it. It mutates Seqera state, so it is off by default.
 _AGENT_HEALTHCHECK_NAME_PREFIX = "sbp-agent-healthcheck-"
 # Total time budget to wait for the throwaway env to reach a terminal state.
-_AGENT_PROBE_TIMEOUT_SECONDS = float(os.getenv("HEALTHCHECK_AGENT_TIMEOUT_SECONDS", "20"))
 _AGENT_PROBE_POLL_INTERVAL_SECONDS = 2.0
 # Best-effort retries when deleting the throwaway env, so we don't leak resources.
 _AGENT_PROBE_DELETE_ATTEMPTS = 3
@@ -57,7 +55,6 @@ _AGENT_PROBE_DELETE_ATTEMPTS = 3
 # Cache the whole computed status in the database. 30s TTL keeps repeated polls
 # (admin every 30s, portal every 60s, scheduler checks) off the Seqera API while
 # staying fresh enough to be useful across processes.
-_CACHE_TTL_SECONDS = float(os.getenv("HEALTH_CACHE_TTL_SECONDS", "30"))
 _CACHE_KEY = "system_status"
 _CACHE_LOCK_ID = hash(_CACHE_KEY)
 
@@ -71,20 +68,12 @@ _COMPUTE_ENV_STATE_MAP: dict[str, HealthStatus] = {
 }
 
 
-def _agent_probe_enabled() -> bool:
-    return os.getenv("ENABLE_AGENT_HEALTHCHECK", "false").strip().lower() in {"1", "true", "yes"}
+def _agent_probe_enabled(settings: Settings) -> bool:
+    return settings.seqera.enable_agent_healthcheck
 
 
-def _required_env(key: str) -> str:
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
-
-
-def _seqera_headers() -> dict[str, str]:
-    token = _required_env("SEQERA_ACCESS_TOKEN")
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+def _seqera_headers(settings: Settings) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.seqera.access_token}", "Accept": "application/json"}
 
 
 def _worst(statuses: list[HealthStatus]) -> HealthStatus:
@@ -101,25 +90,21 @@ def _truncate(text: str, limit: int = 500) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-async def probe_seqera_api() -> ProbeResult:
+async def probe_seqera_api(settings: Settings | None = None) -> ProbeResult:
     """Probe Seqera Platform reachability *and* credential validity via /user-info.
 
     ``/user-info`` is an authenticated endpoint, so a 2xx confirms three things at
-    once: the platform is reachable, ``SEQERA_API_URL`` is correct, and our
-    ``SEQERA_ACCESS_TOKEN`` is accepted. We treat 401/403 specially so a rejected
+    once: the platform is reachable, the Seqera API URL is correct, and our
+    Seqera access token is accepted. We treat 401/403 specially so a rejected
     or expired token is reported as a credential problem rather than a generic
-    outage. (``WORK_SPACE`` is validated separately by the workspace-scoped
+    outage. (the workspace ID is validated separately by the workspace-scoped
     compute-env probe below.) Non-2xx or timeout -> unhealthy, which lets us
     distinguish a Seqera-side / credential problem from a compute-env problem.
     """
     name = COMPONENT_SEQERA_API
-    try:
-        api_url = _required_env("SEQERA_API_URL").rstrip("/")
-        headers = _seqera_headers()
-    except SeqeraConfigurationError as exc:
-        return ProbeResult(
-            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
-        )
+    settings = settings or get_settings()
+    api_url = settings.seqera.api_url.rstrip("/")
+    headers = _seqera_headers(settings)
 
     url = f"{api_url}/user-info"
     start = time.perf_counter()
@@ -176,22 +161,18 @@ async def probe_seqera_api() -> ProbeResult:
     return ProbeResult(name=name, status="healthy", latency_ms=latency_ms)
 
 
-async def probe_compute_env() -> ProbeResult:
+async def probe_compute_env(settings: Settings | None = None) -> ProbeResult:
     """Probe the Gadi-backed compute environment status via the Seqera API.
 
-    Reads ``GET /compute-envs/{COMPUTE_ID}?workspaceId={WORK_SPACE}`` and maps the
+    Reads ``GET /compute-envs/{compute_id}?workspaceId={workspace_id}`` and maps the
     ``computeEnv.status`` field, which reflects the Tower Agent connection state.
     """
     name = COMPONENT_COMPUTE_ENV
-    try:
-        api_url = _required_env("SEQERA_API_URL").rstrip("/")
-        compute_id = _required_env("COMPUTE_ID")
-        workspace_id = _required_env("WORK_SPACE")
-        headers = _seqera_headers()
-    except SeqeraConfigurationError as exc:
-        return ProbeResult(
-            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
-        )
+    settings = settings or get_settings()
+    api_url = settings.seqera.api_url.rstrip("/")
+    compute_id = settings.seqera.compute_id
+    workspace_id = settings.seqera.work_space
+    headers = _seqera_headers(settings)
 
     url = f"{api_url}/compute-envs/{compute_id}"
     params = {"workspaceId": workspace_id}
@@ -224,11 +205,14 @@ async def probe_compute_env() -> ProbeResult:
 
     if response.is_error:
         # If we cannot read the compute env, we cannot vouch for the agent. A
-        # 403/404 here typically means a wrong WORK_SPACE / COMPUTE_ID or a token
+        # 403/404 here typically means a wrong workspace/compute env or a token
         # without access to them, so call that out explicitly.
         error_message = f"Could not read compute environment (HTTP {response.status_code})"
         if response.status_code in (403, 404):
-            error_message = f"{error_message}; check COMPUTE_ID, WORK_SPACE, and the access token"
+            error_message = (
+                f"{error_message}; check SEQERA_COMPUTE_ID, SEQERA_WORK_SPACE, "
+                "and the access token"
+            )
         return ProbeResult(
             name=name,
             status="unhealthy",
@@ -297,6 +281,7 @@ async def _poll_compute_env_state(
     compute_env_id: str,
     params: dict[str, str],
     headers: dict[str, str],
+    timeout_seconds: int,
 ) -> tuple[HealthStatus, str | None, dict[str, Any]]:
     """Poll a freshly-created compute env until it reaches a terminal state.
 
@@ -305,7 +290,7 @@ async def _poll_compute_env_state(
     deadline -> degraded (could not confirm in time).
     """
     url = f"{api_url}/compute-envs/{compute_env_id}"
-    deadline = time.perf_counter() + _AGENT_PROBE_TIMEOUT_SECONDS
+    deadline = time.perf_counter() + timeout_seconds
     last_state = "UNKNOWN"
     while True:
         resp = await client.get(url, headers=headers, params=params)
@@ -326,32 +311,29 @@ async def _poll_compute_env_state(
         if time.perf_counter() >= deadline:
             return (
                 "degraded",
-                f"Tower Agent not confirmed within {int(_AGENT_PROBE_TIMEOUT_SECONDS)}s "
+                f"Tower Agent not confirmed within {int(timeout_seconds)}s "
                 f"(compute env still {last_state})",
                 {"lastState": last_state},
             )
         await asyncio.sleep(_AGENT_PROBE_POLL_INTERVAL_SECONDS)
 
 
-async def probe_tower_agent() -> ProbeResult:
+async def probe_tower_agent(settings: Settings | None = None) -> ProbeResult:
     """Actively verify Tower Agent liveness via a clone-create-delete cycle.
 
-    Clones the monitored compute env (``COMPUTE_ID``) — reusing its platform,
+    Clones the monitored compute env — reusing its platform,
     config and tw-agent credential — to create a throwaway copy. Creating an
     agent-backed env forces Seqera to validate the agent connection, so the
     resulting env status is a live liveness signal that the plain compute-env
     ``status`` cannot give. The throwaway env is always deleted afterwards.
     """
     name = COMPONENT_TOWER_AGENT
-    try:
-        api_url = _required_env("SEQERA_API_URL").rstrip("/")
-        compute_id = _required_env("COMPUTE_ID")
-        workspace_id = _required_env("WORK_SPACE")
-        headers = _seqera_headers()
-    except SeqeraConfigurationError as exc:
-        return ProbeResult(
-            name=name, status="unhealthy", message=str(exc), detail={"error": str(exc)}
-        )
+    settings = settings or get_settings()
+    api_url = settings.seqera.api_url.rstrip("/")
+    compute_id = settings.seqera.compute_id
+    workspace_id = settings.seqera.work_space
+    headers = _seqera_headers(settings)
+    agent_probe_timeout = settings.seqera.healthcheck_agent_timeout_seconds
 
     params = {"workspaceId": workspace_id}
     post_headers = {**headers, "Content-Type": "application/json"}
@@ -424,7 +406,7 @@ async def probe_tower_agent() -> ProbeResult:
 
             # 3. Poll until the env validates (or the time budget runs out).
             status, message, detail = await _poll_compute_env_state(
-                client, api_url, created_id, params, headers
+                client, api_url, created_id, params, headers, agent_probe_timeout
             )
     except httpx.TimeoutException:
         status, message, detail = (
@@ -453,15 +435,16 @@ async def probe_tower_agent() -> ProbeResult:
     )
 
 
-async def collect_system_status() -> SystemStatus:
+async def collect_system_status(settings: Settings | None = None) -> SystemStatus:
     """Run the probes concurrently and aggregate into an overall status.
 
-    The Tower Agent probe is opt-in (ENABLE_AGENT_HEALTHCHECK) because it mutates
+    The Tower Agent probe is opt-in because it mutates
     Seqera state (creates and deletes a throwaway compute env).
     """
-    probes = [probe_seqera_api(), probe_compute_env()]
-    if _agent_probe_enabled():
-        probes.append(probe_tower_agent())
+    settings = settings or get_settings()
+    probes = [probe_seqera_api(settings), probe_compute_env(settings)]
+    if _agent_probe_enabled(settings):
+        probes.append(probe_tower_agent(settings))
 
     components = list(await asyncio.gather(*probes))
     overall = _worst([c.status for c in components])
@@ -536,11 +519,12 @@ def _update_incidents(db: Session, status: SystemStatus) -> None:
             db.add(open_incident)
 
 
-async def refresh_db_cache(db: Session) -> SystemStatus:
+async def refresh_db_cache(db: Session, settings: Settings | None = None) -> SystemStatus:
     """Run probes, replace the single shared DB cache row, and log incidents."""
-    status = await collect_system_status()
+    settings = settings or get_settings()
+    status = await collect_system_status(settings)
     now = datetime.now(UTC)
-    expires_at = now + timedelta(seconds=_CACHE_TTL_SECONDS)
+    expires_at = now + timedelta(seconds=settings.seqera.health_cache_ttl_seconds)
     payload = status.model_dump(mode="json")
 
     row = db.get(SystemStatusCache, _CACHE_KEY)
@@ -569,13 +553,15 @@ async def get_system_status(
     *,
     force_refresh: bool = False,
     allow_stale: bool = True,
+    settings: Settings | None = None,
 ) -> SystemStatus:
     """Return the system status using the shared DB cache when available.
 
     If ``db`` is None, this function runs the probes directly without caching.
     """
+    settings = settings or get_settings()
     if db is None:
-        return await collect_system_status()
+        return await collect_system_status(settings)
 
     now = datetime.now(UTC)
     row = db.get(SystemStatusCache, _CACHE_KEY)
@@ -587,11 +573,11 @@ async def get_system_status(
         if is_locked_by_other:
             if allow_stale and not force_refresh:
                 return row.get_status()
-            return await collect_system_status()
+            return await collect_system_status(settings)
     else:
         is_locked_by_other = not _try_acquire_cache_refresh_lock(db)
         if is_locked_by_other:
-            return await collect_system_status()
+            return await collect_system_status(settings)
 
     db.expire_all()
     row = db.get(SystemStatusCache, _CACHE_KEY)
@@ -600,18 +586,19 @@ async def get_system_status(
         return row.get_status()
 
     try:
-        return await refresh_db_cache(db)
+        return await refresh_db_cache(db, settings)
     except Exception:
         db.rollback()
         raise
 
 
-def _cloudwatch_log_group_url() -> str | None:
+def _cloudwatch_log_group_url(settings: Settings | None = None) -> str | None:
     """Build a console link to the backend log group, if configured."""
-    log_group = os.getenv("SBP_BACKEND_LOG_GROUP", "").strip()
+    settings = settings or get_settings()
+    log_group = (settings.aws.log_group or "").strip()
     if not log_group:
         return None
-    region = os.getenv("AWS_REGION", "ap-southeast-2").strip() or "ap-southeast-2"
+    region = settings.aws.region.strip() or "ap-southeast-2"
     # CloudWatch console encodes the log-group path with a double-encoding scheme.
     encoded = quote(quote(log_group, safe=""), safe="")
     return (
@@ -749,7 +736,7 @@ def to_downtime_dict(
     return {"windowHours": hours, "since": since, "until": until, "components": components}
 
 
-def to_admin_dict(status: SystemStatus) -> dict[str, Any]:
+def to_admin_dict(status: SystemStatus, settings: Settings | None = None) -> dict[str, Any]:
     """Verbose projection: includes raw probe detail and a CloudWatch link."""
     return {
         "overallStatus": status.overall_status,
@@ -764,5 +751,5 @@ def to_admin_dict(status: SystemStatus) -> dict[str, Any]:
             }
             for c in status.components
         ],
-        "cloudwatchLogGroupUrl": _cloudwatch_log_group_url(),
+        "cloudwatchLogGroupUrl": _cloudwatch_log_group_url(settings),
     }

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ...config import Settings, get_settings
 from ...schemas.workflows.shared import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
@@ -76,6 +77,7 @@ async def get_result_logs(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultLogsResponse:
     """Return Seqera workflow logs for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -87,7 +89,7 @@ async def get_result_logs(
         )
 
     try:
-        payload = await get_workflow_logs_raw(owned_run.seqera_run_id)
+        payload = await get_workflow_logs_raw(owned_run.seqera_run_id, settings=settings)
     except SeqeraConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +11,7 @@ import yaml
 
 from ..config import Settings, get_settings
 from .seqera_client import SeqeraClient, list_workflows_raw
-from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from .seqera_errors import SeqeraAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,9 @@ async def post_seqera_launch(
     )
 
 
-async def count_active_workflows(workspace_id: str | None = None) -> int:
+async def count_active_workflows(
+    workspace_id: str | None = None, settings: Settings | None = None
+) -> int:
     """Count Seqera workflow runs that are still queued or running on Gadi.
 
     Used to cap how many new workflows the scheduler submits at once, since each
@@ -94,19 +95,14 @@ async def count_active_workflows(workspace_id: str | None = None) -> int:
     total = 0
     for status in ACTIVE_PIPELINE_STATUSES:
         data = await list_workflows_raw(
-            workspace_id, search_query=f"status:{status}", max_results=1
+            workspace_id,
+            search_query=f"status:{status}",
+            max_results=1,
+            settings=settings,
         )
         if isinstance(data, dict):
             total += data.get("totalSize") or 0
     return total
-
-
-def _get_required_env(key: str) -> str:
-    """Get required environment variable or raise error."""
-    value = os.getenv(key)
-    if not value:
-        raise SeqeraConfigurationError(f"Missing required environment variable: {key}")
-    return value
 
 
 def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
@@ -149,22 +145,23 @@ def _extract_workflow_type(workflow_data: dict) -> str | None:
     return project_name or pipeline or None
 
 
-async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -> dict[str, Any]:
+async def describe_workflow(
+    workflow_id: str, workspace_id: str | None = None, settings: Settings | None = None
+) -> dict[str, Any]:
     """
     Get detailed information about a specific workflow run.
 
     Args:
         workflow_id: Seqera workflow run ID
-        workspace_id: Seqera workspace ID (uses env var if not provided)
+        workspace_id: Seqera workspace ID (uses settings if not provided)
 
     Returns:
         Workflow details dictionary
     """
-    seqera_api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
-    seqera_token = _get_required_env("SEQERA_ACCESS_TOKEN")
-
-    if not workspace_id:
-        workspace_id = _get_required_env("WORK_SPACE")
+    settings = settings or get_settings()
+    seqera_api_url = settings.seqera.api_url.rstrip("/")
+    seqera_token = settings.seqera.access_token
+    workspace_id = workspace_id or settings.seqera.work_space
 
     url = f"{seqera_api_url}/workflow/{workflow_id}"
     params = {"workspaceId": workspace_id}
