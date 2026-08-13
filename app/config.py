@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import AfterValidator, BeforeValidator, Field, HttpUrl, TypeAdapter
+from pydantic import AfterValidator, BeforeValidator, Field, HttpUrl, TypeAdapter, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -41,6 +41,14 @@ class SeqeraSettings(NestedSettings):
     enable_agent_healthcheck: bool = False
     healthcheck_agent_timeout_seconds: int = 20
     health_cache_ttl_seconds: int = 30
+
+    @field_validator("work_dir")
+    @classmethod
+    def normalize_work_dir(cls, value: str) -> str:
+        normalized = value.rstrip("/")
+        if not normalized:
+            raise ValueError("work_dir must not be empty")
+        return normalized
 
     model_config = SettingsConfigDict(env_prefix="SEQERA_")
 

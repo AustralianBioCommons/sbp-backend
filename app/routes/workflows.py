@@ -309,7 +309,7 @@ async def launch_workflow(
 
     run_id = uuid4()
     workflow_name = workflow.name.lower()
-    run_work_dir = f"{settings.seqera.work_dir.rstrip('/')}/{run_id}"
+    run_work_dir = f"{settings.seqera.work_dir}/{run_id}"
     submission_timestamp = datetime.now(UTC)
 
     # Reserve DB row first so a queued workflow always has a DB entry.
@@ -336,7 +336,7 @@ async def launch_workflow(
     s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    input_destination = f"{settings.seqera.work_dir.rstrip('/')}/input/{workflow_name}/{run_id}/"
+    input_destination = f"{settings.seqera.work_dir}/input/{workflow_name}/{run_id}/"
     input_transfer = DataTransfer(
         workflow_run_id=run_id,
         direction="input",
