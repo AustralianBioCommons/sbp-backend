@@ -9,6 +9,7 @@ from loguru import logger
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models.core import AppUser
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
@@ -43,6 +44,7 @@ class LaunchFunction(Protocol):
         self,
         *,
         queued_job: QueuedJob,
+        settings: Settings,
         dry_run: bool = False,
     ) -> Awaitable[WorkflowLaunchResult | None]: ...
 
@@ -72,6 +74,7 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     if job is None:
         return
 
+    settings = get_settings()
     now = datetime.now(tz=UTC)
     launch_func: LaunchFunction
     workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
@@ -89,7 +92,7 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     else:
         raise ValueError(f"Unsupported workflow: {job.workflow.name}")
     try:
-        result = asyncio.run(launch_func(queued_job=job, dry_run=dry_run))
+        result = asyncio.run(launch_func(queued_job=job, settings=settings, dry_run=dry_run))
         if dry_run:
             logger.info("Dry run - not updating job status")
         else:

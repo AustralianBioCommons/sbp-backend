@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import yaml
 
+from ..config import Settings, get_settings
 from .seqera_client import SeqeraClient, list_workflows_raw
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
@@ -43,10 +44,12 @@ async def post_seqera_launch(
     payload: dict[str, Any],
     *,
     workflow_label: str,
+    settings: Settings | None = None,
 ) -> WorkflowLaunchResult:
     """Post a workflow launch payload to Seqera and return the launch result."""
-    seqera_client = SeqeraClient()
-    workspace_id = _get_required_env("WORK_SPACE")
+    settings = settings or get_settings()
+    seqera_client = SeqeraClient(settings=settings)
+    workspace_id = settings.seqera.work_space
     path = f"/workflow/launch?workspaceId={workspace_id}"
     response = await seqera_client.post(path, payload)
 

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
@@ -24,7 +24,6 @@ from .launch_payloads import (
 )
 from .seqera import (
     WorkflowLaunchResult,
-    _get_required_env,
     params_to_yaml_text,
     post_seqera_launch,
 )
@@ -33,10 +32,19 @@ from .seqera_errors import SeqeraConfigurationError
 logger = logging.getLogger(__name__)
 
 
+def _aws_prerun_env(settings: Settings) -> dict[str, str]:
+    return {
+        "AWS_ACCESS_KEY_ID": settings.aws.access_key_id,
+        "AWS_SECRET_ACCESS_KEY": settings.aws.secret_access_key,
+        "AWS_REGION": settings.aws.region,
+    }
+
+
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
     s3_input_key: str,
     *,
+    settings: Settings,
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
@@ -47,10 +55,10 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    work_dir = _get_required_env("WORK_DIR")
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    workspace_id = settings.seqera.work_space
+    compute_env_id = settings.seqera.compute_id
+    work_dir = settings.seqera.work_dir
+    s3_bucket = settings.aws.s3_bucket
 
     run_name = (form.runName or "").strip()
     if not run_name:
@@ -105,9 +113,11 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     *,
     queued_job: QueuedJob,
+    settings: Settings | None = None,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch a bindflow workflow on the Seqera Platform."""
+    settings = settings or get_settings()
     launch_payload = queued_job.launch_payload
 
     # Log the complete params being sent
@@ -126,11 +136,7 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-        },
+        env=_aws_prerun_env(settings),
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload, prerun_script=prerun_script
@@ -139,4 +145,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     if dry_run:
         logger.info("Dry run - not launching bindflow workflow")
         return None
-    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="Bindflow")
+    return await post_seqera_launch(
+        {"launch": runtime_payload}, workflow_label="Bindflow", settings=settings
+    )

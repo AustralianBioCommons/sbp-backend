@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import httpx
 
+from ..config import Settings, get_settings
 from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 
@@ -19,14 +20,16 @@ class SeqeraClient:
     def __init__(
         self,
         timeout: httpx.Timeout | float = 60,
+        settings: Settings | None = None,
     ) -> None:
-        seqera_token = os.getenv("SEQERA_ACCESS_TOKEN")
+        settings = settings or get_settings()
+        seqera_token = settings.seqera.access_token
         self.default_headers = {
             "Authorization": f"Bearer {seqera_token}",
             "Accept": "application/json",
         }
         self.timeout = timeout
-        self.api_url = _get_required_env("SEQERA_API_URL").rstrip("/")
+        self.api_url = settings.seqera.api_url.rstrip("/")
 
     def get_url(self, path: str) -> str:
         return f"{self.api_url}/{path.lstrip('/')}"

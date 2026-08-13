@@ -384,6 +384,7 @@ async def launch_workflow(
             queued_job = await prepare_proteinfold_workflow(
                 proteinfold_launch_form,
                 s3_input_key,
+                settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
@@ -402,6 +403,7 @@ async def launch_workflow(
             if tool_mode.lower() == "rfdiffusion":
                 queued_job = await prepare_proteindj_workflow(
                     de_novo_launch_form,
+                    settings=settings,
                     db_session=db_session,
                     workflow_run=workflow_run,
                     pipeline=workflow.repo_url,
@@ -415,6 +417,7 @@ async def launch_workflow(
                 queued_job = await prepare_bindflow_workflow(
                     de_novo_launch_form,
                     s3_input_key,
+                    settings=settings,
                     db_session=db_session,
                     workflow_run=workflow_run,
                     pipeline=workflow.repo_url,
@@ -429,6 +432,7 @@ async def launch_workflow(
             queued_job = await prepare_wisps_workflow(
                 wisps_launch_form,
                 s3_input_key,
+                settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=workflow.repo_url,
