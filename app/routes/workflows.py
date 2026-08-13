@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..config import get_settings, Settings
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob
 from ..db.models.core import (
     AppUser,
@@ -43,7 +43,7 @@ from ..schemas.workflows.single_prediction import (
     SinglePredictionEntity,
     validate_single_prediction_entities,
 )
-from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
+from ..services.bindflow_executor import prepare_bindflow_workflow
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -309,7 +309,7 @@ async def launch_workflow(
 
     run_id = uuid4()
     workflow_name = workflow.name.lower()
-    run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
+    run_work_dir = f"{settings.seqera.work_dir.rstrip('/')}/{run_id}"
     submission_timestamp = datetime.now(UTC)
 
     # Reserve DB row first so a queued workflow always has a DB entry.
@@ -332,13 +332,11 @@ async def launch_workflow(
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
 
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    s3_bucket = settings.aws.s3_bucket
     s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    input_destination = (
-        f"{_get_required_env('WORK_DIR').rstrip('/')}/input/{workflow_name}/{run_id}/"
-    )
+    input_destination = f"{settings.seqera.work_dir.rstrip('/')}/input/{workflow_name}/{run_id}/"
     input_transfer = DataTransfer(
         workflow_run_id=run_id,
         direction="input",
@@ -567,10 +565,11 @@ async def get_details(run_id: str) -> LaunchDetails:
 )
 async def upload_dataset(
     payload: DatasetUploadRequest,
+    settings: Settings = Depends(get_settings),
 ) -> S3DatasetUploadResponse:
     """Generate a CSV from form data and upload directly to S3."""
     try:
-        result = await upload_csv_to_s3(payload.formData)
+        result = await upload_csv_to_s3(payload.formData, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except S3ConfigurationError as exc:
@@ -605,6 +604,7 @@ _WISPS_BASE_PATHS: dict[str, str] = {
 async def upload_wisps_dataset_endpoint(
     workflow_name: Literal["interaction-screening", "bulk-prediction"],
     payload: WispsDatasetUploadRequest,
+    settings: Settings = Depends(get_settings),
 ) -> S3DatasetUploadResponse:
     """Build and upload a WISPS samplesheet directly to S3."""
     base_path = _WISPS_BASE_PATHS[workflow_name]
@@ -615,6 +615,7 @@ async def upload_wisps_dataset_endpoint(
             base_path,
             workflow_name,
             include_group=workflow_name == "interaction-screening",
+            settings=settings,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -646,6 +647,7 @@ async def get_run_input_samplesheet(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db_session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> RunInputPresignedUrlResponse:
     """Return a pre-signed URL to download the input samplesheet for a workflow run.
 
@@ -677,6 +679,7 @@ async def get_run_input_samplesheet(
             expiration=3600,
             response_content_type="text/csv",
             response_content_disposition="attachment",
+            settings=settings,
         )
     except S3ConfigurationError as exc:
         raise HTTPException(

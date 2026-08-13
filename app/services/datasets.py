@@ -12,6 +12,7 @@ import string
 from datetime import UTC, datetime
 from typing import Any
 
+from ..config import Settings
 from ..schemas.workflows.interaction_screening import WispsSequenceItem
 from .s3 import S3UploadResult, upload_file_to_s3
 
@@ -61,6 +62,7 @@ BULK_PREDICTION_BASE_PATH = "/g/data/yz52/sbp-service/input/bulk_prediction"
 
 async def upload_csv_to_s3(
     form_data: dict[str, Any],
+    settings: Settings | None = None,
 ) -> S3UploadResult:
     """Generate a CSV from form_data and upload directly to S3."""
     if not form_data:
@@ -76,6 +78,7 @@ async def upload_csv_to_s3(
         filename="samplesheet.csv",
         content_type="text/csv",
         folder="inputs/samplesheets",
+        settings=settings,
     )
 
     logger.info("CSV samplesheet uploaded to S3", extra={"s3Key": result.file_key})
@@ -89,6 +92,7 @@ async def upload_wisps_samplesheet_to_s3(
     label: str,
     *,
     include_group: bool,
+    settings: Settings | None = None,
 ) -> tuple[S3UploadResult, str]:
     """Build and upload a WISPS samplesheet to S3, returning (result, split_output_dir).
 
@@ -140,6 +144,7 @@ async def upload_wisps_samplesheet_to_s3(
         filename="samplesheet.csv",
         content_type="text/csv",
         folder="inputs/samplesheets",
+        settings=settings,
     )
 
     logger.info(

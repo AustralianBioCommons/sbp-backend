@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Generator
 from datetime import UTC, datetime
 from time import time
@@ -16,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
-from ..config import get_settings, Settings
+from ..config import Settings, get_settings
 from ..db import SessionLocal
 from ..db.models.core import AppUser
 from ..services.credits import SBP_BUNDLE_CREDIT_ACTOR, SBP_USER_CREDIT_ALLOWANCE
@@ -139,20 +138,19 @@ def get_current_user_id(
         if should_update:
             db.commit()
 
-    _grant_sbp_bundle_credit_if_approved(user, claims, db)
+    _grant_sbp_bundle_credit_if_approved(user, claims, db, settings)
 
     return cast(UUID, user.id)
 
 
-def _has_workflow_execution_role(claims: dict[str, object]) -> bool:
-    roles_claim = os.getenv("DB_ADMIN_ROLES_CLAIM", "").strip()
-    required_role = os.getenv("WORKFLOW_EXECUTION_ROLE", "").strip()
-    roles = claims.get(roles_claim, [])
+def _has_workflow_execution_role(claims: dict[str, object], settings: Settings) -> bool:
+    required_role = settings.auth.workflow_execution_role
+    roles = claims.get(settings.admin.roles_claim, [])
     return bool(required_role) and isinstance(roles, list) and required_role in roles
 
 
 def _grant_sbp_bundle_credit_if_approved(
-    user: AppUser, claims: dict[str, object], db: Session
+    user: AppUser, claims: dict[str, object], db: Session, settings: Settings
 ) -> None:
     """Grant the one-time SBP bundle credit the first time this user's token
     carries the workflow execution role. The ``WHERE ... IS NULL`` guard and
@@ -161,7 +159,7 @@ def _grant_sbp_bundle_credit_if_approved(
     and double-grant. The monthly refresh job (``refresh_user_credits``) only
     ever touches users who already have this flag set, so it can't race with
     a role approval landing between refreshes."""
-    if not _has_workflow_execution_role(claims):
+    if not _has_workflow_execution_role(claims, settings):
         return
 
     now = datetime.now(UTC)
@@ -184,7 +182,7 @@ def require_workflow_execution_role(
 ) -> None:
     """Raise HTTP 403 if the token does not carry the workflow execution role."""
     claims = verify_access_token_claims(credentials.credentials, settings=settings)
-    if not _has_workflow_execution_role(claims):
+    if not _has_workflow_execution_role(claims, settings):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Workflow execution role required.",
