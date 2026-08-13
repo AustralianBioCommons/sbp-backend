@@ -70,7 +70,9 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
-    default_params = get_bindflow_default_params(out_dir, dataset_url)
+    default_params = get_bindflow_default_params(
+        out_dir, dataset_url, gadi_project=settings.seqera.gadi_project
+    )
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)

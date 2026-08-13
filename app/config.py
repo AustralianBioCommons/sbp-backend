@@ -41,6 +41,7 @@ class SeqeraSettings(NestedSettings):
     compute_id: str
     work_space: str
     work_dir: str
+    gadi_project: str = "yz52"
     enable_agent_healthcheck: bool = False
     healthcheck_agent_timeout_seconds: int = 20
     health_cache_ttl_seconds: int = 30
@@ -76,13 +77,6 @@ class AdminSettings(NestedSettings):
     roles_claim: str
 
     model_config = SettingsConfigDict(env_prefix="DB_ADMIN_")
-
-
-class HpcSettings(NestedSettings):
-    gadi_project: str = "yz52"
-    max_concurrent_workflows: int = 25
-
-    model_config = SettingsConfigDict(env_prefix="HPC_")
 
 
 class AuthSettings(NestedSettings):

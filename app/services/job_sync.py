@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from ..config import Settings
 from ..db.models.core import WorkflowRun
 from ..schemas.workflows.shared import (
     TERMINAL_SEQERA_STATUSES,
@@ -92,6 +93,7 @@ async def sync_workflow_runs(
     limit: int = 100,
     suppress_s3_errors: bool = False,
     describe_func: DescribeWorkflow = describe_workflow,
+    settings: Settings | None = None,
 ) -> WorkflowRunSyncBatchResult:
     """Poll Seqera and sync results for a batch of workflow runs."""
     runs = get_runs_requiring_sync(db, limit=limit)
@@ -104,6 +106,7 @@ async def sync_workflow_runs(
                 run,
                 suppress_s3_errors=suppress_s3_errors,
                 describe_func=describe_func,
+                settings=settings,
             )
         except (SeqeraAPIError, SeqeraConfigurationError) as exc:
             db.rollback()
@@ -129,6 +132,7 @@ async def sync_workflow_run(
     force: bool = False,
     suppress_s3_errors: bool = False,
     describe_func: DescribeWorkflow = describe_workflow,
+    settings: Settings | None = None,
 ) -> WorkflowRunSyncResult:
     """Poll Seqera for one run and persist final status/result metadata when available."""
     if not run.seqera_run_id:
@@ -152,7 +156,10 @@ async def sync_workflow_run(
 
     status = _normalize_status(run.seqera_final_status)
     if force or status not in TERMINAL_SEQERA_STATUSES:
-        payload = await describe_func(run.seqera_run_id)
+        if describe_func is describe_workflow:
+            payload = await describe_workflow(run.seqera_run_id, settings=settings)
+        else:
+            payload = await describe_func(run.seqera_run_id)
         status = _normalize_status(extract_pipeline_status(payload))
         if status not in TERMINAL_SEQERA_STATUSES:
             return WorkflowRunSyncResult(
@@ -176,6 +183,7 @@ async def sync_workflow_run(
             db,
             run,
             suppress_s3_errors=suppress_s3_errors,
+            settings=settings,
         )
 
     if sync_incomplete or force:
@@ -199,6 +207,7 @@ async def _sync_completed_run_results(
     run: WorkflowRun,
     *,
     suppress_s3_errors: bool,
+    settings: Settings | None = None,
 ) -> int:
     try:
         spec = get_output_spec(run)
@@ -206,14 +215,27 @@ async def _sync_completed_run_results(
         logger.warning("Skipping result sync for run %s: %s", run.id, exc)
         return 0
 
-    synced_keys = await sync_workflow_outputs(
-        db,
-        run=run,
-        spec=spec,
-        suppress_s3_errors=suppress_s3_errors,
-    )
-    await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value)
-    await sync_service_usage(db, run, UIStatus.COMPLETED.value)
+    if settings is None:
+        synced_keys = await sync_workflow_outputs(
+            db,
+            run=run,
+            spec=spec,
+            suppress_s3_errors=suppress_s3_errors,
+        )
+        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value)
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value)
+    else:
+        synced_keys = await sync_workflow_outputs(
+            db,
+            run=run,
+            spec=spec,
+            suppress_s3_errors=suppress_s3_errors,
+            settings=settings,
+        )
+        await ensure_completed_run_score(
+            db, run, UIStatus.COMPLETED.value, settings=settings
+        )
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings)
     return len(synced_keys)
 
 

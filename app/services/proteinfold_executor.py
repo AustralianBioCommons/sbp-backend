@@ -123,6 +123,7 @@ async def prepare_proteinfold_workflow(
         "configText": get_proteinfold_config_text(
             config_path,
             user_details=user_details,
+            gadi_project=settings.seqera.gadi_project,
         ),
         "resume": False,
     }

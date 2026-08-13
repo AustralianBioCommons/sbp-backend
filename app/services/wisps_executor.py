@@ -80,6 +80,7 @@ async def prepare_wisps_workflow(
     config_text = get_wisps_config_text(
         config_path,
         user_details=user_details,
+        gadi_project=settings.seqera.gadi_project,
     )
 
     launch_payload: dict[str, Any] = {

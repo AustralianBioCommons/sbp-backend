@@ -61,7 +61,7 @@ def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     db_session = next(get_db())
     settings = get_settings()
 
-    ok_to_launch = is_seqera_available(db_session)
+    ok_to_launch = is_seqera_available(db_session, settings=settings)
     if not ok_to_launch:
         logger.warning("Skipping job launching while system status is unhealthy.")
         return
@@ -140,7 +140,7 @@ def submit_pending_jobs(dry_run: bool = False):
     logger.info("Checking for pending jobs...")
     db_session = next(get_db())
     settings = get_settings()
-    ok_to_launch = is_seqera_available(db_session)
+    ok_to_launch = is_seqera_available(db_session, settings=settings)
     if not ok_to_launch:
         logger.warning("Skipping pending job submission while system status is unhealthy.")
         return
@@ -237,13 +237,17 @@ def sync_completed_workflow_runs(dry_run: bool = False):
         logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
         return
 
-    ok_to_sync = is_seqera_available(db_session, get_settings())
+    ok_to_sync = is_seqera_available(db_session, settings=settings)
     if not ok_to_sync:
         logger.warning("Skipping workflow run result sync while system status is unhealthy.")
         return
 
     result = asyncio.run(
-        sync_workflow_runs(db_session, limit=settings.seqera.workflow_sync_batch_limit)
+        sync_workflow_runs(
+            db_session,
+            limit=settings.seqera.workflow_sync_batch_limit,
+            settings=settings,
+        )
     )
     logger.info(
         "Finished syncing workflow runs: "

@@ -41,6 +41,7 @@ async def get_result_setting_params(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> JobSettingParamsResponse:
     """Return the submitted form settings for a workflow result view.
 
@@ -52,7 +53,7 @@ async def get_result_setting_params(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    form_data: dict[str, Any] = await resolve_run_form_data(owned_run) or {}
+    form_data: dict[str, Any] = await resolve_run_form_data(owned_run, settings=settings) or {}
 
     queued_job = owned_run.get_queued_job(session=db)
     if queued_job:
@@ -141,6 +142,7 @@ async def get_result_downloads(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultDownloadsResponse:
     """Return pre-signed output download links for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -148,7 +150,7 @@ async def get_result_downloads(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     try:
-        downloads = await get_result_output_downloads(db, owned_run)
+        downloads = await get_result_output_downloads(db, owned_run, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -167,6 +169,7 @@ async def get_result_download_all(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
@@ -175,7 +178,7 @@ async def get_result_download_all(
     filename = f"results-{owned_run.run_name or run_id}.zip"
     content_disposition = _format_attachment_content_disposition(filename)
     try:
-        zipped_downloads = await get_all_downloads_zipped(db, owned_run)
+        zipped_downloads = await get_all_downloads_zipped(db, owned_run, settings=settings)
         return StreamingResponse(
             zipped_downloads,
             media_type="application/zip",
@@ -194,6 +197,7 @@ async def get_result_snapshots(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultSnapshotsResponse:
     """Return pre-signed snapshot download links for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -201,7 +205,7 @@ async def get_result_snapshots(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     try:
-        snapshots = await get_result_snapshot_downloads(db, owned_run)
+        snapshots = await get_result_snapshot_downloads(db, owned_run, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -220,6 +224,7 @@ async def get_result_report(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultReportResponse:
     """Return one pre-signed HTML report link for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -227,7 +232,7 @@ async def get_result_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     try:
-        report = await get_result_report_download(db, owned_run)
+        report = await get_result_report_download(db, owned_run, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except S3ConfigurationError as exc:

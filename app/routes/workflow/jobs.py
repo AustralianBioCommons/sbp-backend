@@ -231,12 +231,16 @@ async def list_jobs(
         score = db_score
         sync_incomplete = owned_run.sync_completed_at is None
         if score is None and sync_incomplete:
-            score = await ensure_completed_run_score(db, owned_run, ui_status)
+            score = await ensure_completed_run_score(
+                db, owned_run, ui_status, settings=settings
+            )
 
         # Keep request-time sync as a fallback only until the scheduler has
         # completed result syncing for this run.
         if sync_incomplete and owned_run.service_usage is None:
-            await sync_service_usage(db, run=owned_run, ui_status=ui_status)
+            await sync_service_usage(
+                db, run=owned_run, ui_status=ui_status, settings=settings
+            )
 
         jobs.append(
             JobListItem(
@@ -316,9 +320,13 @@ async def get_job_details(
         score = _resolve_stored_score(owned_run)
         sync_incomplete = owned_run.sync_completed_at is None
         if score is None and sync_incomplete:
-            score = await ensure_completed_run_score(db, owned_run, ui_status)
+            score = await ensure_completed_run_score(
+                db, owned_run, ui_status, settings=settings
+            )
         if sync_incomplete and owned_run.service_usage is None:
-            await sync_service_usage(db, run=owned_run, ui_status=ui_status)
+            await sync_service_usage(
+                db, run=owned_run, ui_status=ui_status, settings=settings
+            )
 
     raw_tool: str | None = getattr(owned_run, "tool", None) or None
     if not raw_tool:
