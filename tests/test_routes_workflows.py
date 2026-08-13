@@ -355,6 +355,16 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
         mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
     )
     assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
+    # rfdiffusion's s3InputKey is the starting PDB's own URI (no samplesheet exists
+    # for it), and prepare_proteindj_workflow stages that file itself - so the
+    # generic launch flow must not also create a DataTransfer for it here.
+    with Session(test_engine) as db:
+        transfer_count = db.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(DataTransfer.workflow_run_id == UUID(data["runId"]))
+        )
+        assert transfer_count == 0
 
 
 def test_launch_invalid_payload(client: TestClient):

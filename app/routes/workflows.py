@@ -447,9 +447,12 @@ async def launch_workflow(
     # Validation above must run before any of this, since it involves real S3/Globus
     # I/O that a malformed request shouldn't pay the cost of (and shouldn't be able
     # to trigger before its own formData is validated).
-    is_bindcraft_launch = (
+    is_rfdiffusion_launch = (
         workflow_name in ("de-novo-design", "bindflow", "bindcraft")
-        and selected_tool.lower() != "rfdiffusion"
+        and selected_tool.lower() == "rfdiffusion"
+    )
+    is_bindcraft_launch = (
+        workflow_name in ("de-novo-design", "bindflow", "bindcraft") and not is_rfdiffusion_launch
     )
     is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
     if is_bindcraft_launch:
@@ -469,23 +472,34 @@ async def launch_workflow(
             workflow_name=workflow_name,
         )
 
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
-    s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
-    if db_session.get(S3Object, s3_input_key) is None:
-        db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    staged_input_location = build_gadi_input_path(
-        run_id, workflow_name, os.path.basename(s3_input_key)
-    )
-    input_transfer = DataTransfer(
-        workflow_run_id=run_id,
-        direction="input",
-        provider="globus",
-        source_location=s3_input_uri,
-        destination_location=staged_input_location,
-    )
-    db_session.add(input_transfer)
-    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
-    db_session.flush()
+    staged_input_location: str | None = None
+    if not is_rfdiffusion_launch:
+        # rfdiffusion (ProteinDJ) has no samplesheet: s3InputKey for it is the
+        # starting PDB's own S3 URI, not a bare key (see de-novo-design.ts, which
+        # skips the samplesheet upload for this tool and reuses starting_pdb's URI
+        # directly). prepare_proteindj_workflow stages that PDB itself via its own
+        # DataTransfer, so staging "s3InputKey" here too would both double-prefix
+        # the URI (it's already a full s3:// URI, not a bare key) and create a
+        # second, unused DataTransfer for the same file.
+        s3_bucket = _get_required_env("AWS_S3_BUCKET")
+        s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
+        if db_session.get(S3Object, s3_input_key) is None:
+            db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
+        staged_input_location = build_gadi_input_path(
+            run_id, workflow_name, os.path.basename(s3_input_key)
+        )
+        input_transfer = DataTransfer(
+            workflow_run_id=run_id,
+            direction="input",
+            provider="globus",
+            source_location=s3_input_uri,
+            destination_location=staged_input_location,
+        )
+        db_session.add(input_transfer)
+        db_session.add(
+            RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer)
+        )
+        db_session.flush()
 
     try:
         queued_job: QueuedJob
@@ -494,6 +508,7 @@ async def launch_workflow(
             # single-prediction → proteinfold executor.
             # selected_tool carries the chosen algorithm ("colabfold", "alphafold2", "boltz").
             tool_algo = selected_tool
+            assert staged_input_location is not None
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_proteinfold_workflow(
                 proteinfold_launch_form,
@@ -526,6 +541,7 @@ async def launch_workflow(
                     user_details=user_details,
                 )
             else:
+                assert staged_input_location is not None
                 queued_job = await prepare_bindflow_workflow(
                     de_novo_launch_form,
                     db_session=db_session,
@@ -539,6 +555,7 @@ async def launch_workflow(
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
+            assert staged_input_location is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_wisps_workflow(
                 wisps_launch_form,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -108,21 +107,8 @@ async def launch_wisps_workflow(
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
-    if not queued_job.workflow_run.submitted_form_data:
-        raise ValueError("No submitted form data found for queued job")
-    form_data = WorkflowFormData.model_validate(queued_job.workflow_run.submitted_form_data)
-
-    fasta_s3_uri = form_data.extra_fields.get("fastaS3Uri", "").strip()
-    split_output_dir = form_data.extra_fields.get("splitOutputDir", "").strip()
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
-            "D": split_output_dir,
-        },
     )
     runtime_payload = inject_prerun_script(
         launch_payload=queued_job.launch_payload, prerun_script=prerun_script

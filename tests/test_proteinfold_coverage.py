@@ -302,7 +302,6 @@ async def test_launch_proteinfold_workflow_success(seqera_env, persistent_models
     posted_payload = mock_post.call_args.args[0]["launch"]
     assert "module load singularity" in posted_payload["preRunScript"]
     assert "module load nextflow" in posted_payload["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio
@@ -499,32 +498,13 @@ def test_get_proteinfold_default_params_is_dict():
     assert len(result) > 0
 
 
-def test_get_executor_script_env_var_substitution():
+def test_get_executor_script_loads_modules():
     script = get_executor_script(
         prerun_script_path=None,
         module_loads=["singularity", "nextflow"],
-        env={
-            "AWS_ACCESS_KEY_ID": "KEY123",
-            "AWS_SECRET_ACCESS_KEY": "SECRET456",
-            "AWS_REGION": "us-east-1",
-        },
     )
-    assert "KEY123" in script
-    assert "SECRET456" in script
-    assert "us-east-1" in script
     assert "module load singularity" in script
     assert "module load nextflow" in script
-    assert "export AWS_ACCESS_KEY_ID" in script
-    assert "export AWS_SECRET_ACCESS_KEY" in script
-    assert "export AWS_REGION" in script
-
-
-def test_get_executor_script_defaults():
-    script = get_executor_script(
-        prerun_script_path=None,
-        env={"AWS_REGION": "ap-southeast-2"},
-    )
-    assert "ap-southeast-2" in script
 
 
 def test_get_proteinfold_config_profiles_returns_list():

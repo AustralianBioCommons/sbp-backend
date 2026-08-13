@@ -140,103 +140,32 @@ def test_get_wisps_default_params_with_tool():
     assert params["tools"] == "boltz"
 
 
-def _wisps_executor_script(
-    fasta_s3_uri: str = "s3://bucket/path.fa",
-    split_output_dir: str = "/tmp/seqs",
-    aws_access_key: str = "",
-    aws_secret_key: str = "",
-    aws_region: str = "ap-southeast-2",
-    prerun_script_path: str | None = None,
-) -> str:
-    return get_executor_script(
-        prerun_script_path=prerun_script_path,
-        env={
-            "AWS_ACCESS_KEY_ID": aws_access_key,
-            "AWS_SECRET_ACCESS_KEY": aws_secret_key,
-            "AWS_REGION": aws_region,
-            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
-            "D": split_output_dir,
-        },
-    )
-
-
-def test_get_executor_script_header_contains_s3_path():
-    script = _wisps_executor_script(
-        fasta_s3_uri="s3://bucket/path.fa",
-        split_output_dir="/tmp/seqs",
-    )
-    assert "bucket/path.fa" in script
-
-
-def test_get_executor_script_header_contains_split_output_dir():
-    script = _wisps_executor_script(
-        fasta_s3_uri="s3://bucket/path.fa",
-        split_output_dir="/tmp/seqs",
-    )
-    assert "/tmp/seqs" in script
-
-
-def test_get_executor_script_header_contains_aws_credentials():
-    script = _wisps_executor_script(
-        fasta_s3_uri="s3://bucket/path.fa",
-        split_output_dir="/tmp/seqs",
-        aws_access_key="KEY",
-        aws_secret_key="SECRET",
-    )
-    assert "KEY" in script
-    assert "SECRET" in script
-
-
-def test_get_executor_script_header_default_region():
-    script = _wisps_executor_script(
-        fasta_s3_uri="s3://bucket/path.fa",
-        split_output_dir="/tmp/seqs",
-    )
-    assert "ap-southeast-2" in script
-
-
-def test_get_executor_script_header_custom_region():
-    script = _wisps_executor_script(
-        fasta_s3_uri="s3://bucket/path.fa",
-        split_output_dir="/tmp/seqs",
-        aws_region="us-east-1",
-    )
-    assert "us-east-1" in script
-
-
 def test_get_executor_script_fetches_from_url():
     """When prerun_script_path is set, the body is fetched and appended after the header."""
-    fetched_body = "module load singularity\nmodule load nextflow\nexport AWS_ACCESS_KEY_ID\n"
+    fetched_body = "some prerun script content\n"
     with patch(
         "app.services.launch_payloads.fetch_workflow_config", return_value=fetched_body
     ) as mock_fetch:
-        script = _wisps_executor_script(
-            fasta_s3_uri="s3://bucket/path.fa",
-            split_output_dir="/tmp/seqs",
-            aws_access_key="KEY",
-            aws_secret_key="SECRET",
-            aws_region="ap-southeast-2",
+        script = get_executor_script(
             prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
+            module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_called_once_with(
         "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
     )
     assert fetched_body in script
-    assert "KEY" in script
-    assert "bucket/path.fa" in script
-    assert "/tmp/seqs" in script
+    assert "module load singularity" in script
 
 
 def test_get_executor_script_no_path_returns_header_only():
-    """When prerun_script_path is None, only the variable-assignment header is returned."""
+    """When prerun_script_path is None, only the module-load header is returned."""
     with patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch:
-        script = _wisps_executor_script(
-            fasta_s3_uri="s3://bucket/path.fa",
-            split_output_dir="/tmp/seqs",
+        script = get_executor_script(
+            prerun_script_path=None,
+            module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_not_called()
-    assert "export S3_PATH=bucket/path.fa" in script
-    assert "export D=/tmp/seqs" in script
+    assert script == "module load singularity\nmodule load nextflow\n"
 
 
 def test_get_wisps_config_profiles_returns_list():
@@ -387,9 +316,7 @@ async def test_launch_wisps_workflow_success(monkeypatch, persistent_models):
 
     assert result.workflow_id == "wf_xyz"
     posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
-    assert "export S3_PATH=bucket/seqs.fa" in posted_payload["preRunScript"]
-    assert "export D=/tmp/split" in posted_payload["preRunScript"]
+    assert "preRunScript" in posted_payload
 
 
 @pytest.mark.anyio

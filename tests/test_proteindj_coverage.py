@@ -575,7 +575,6 @@ async def test_launch_proteindj_workflow_success(seqera_env, persistent_models):
     posted_payload = mock_post.call_args.args[0]["launch"]
     assert "module load singularity" in posted_payload["preRunScript"]
     assert "module load nextflow" in posted_payload["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio

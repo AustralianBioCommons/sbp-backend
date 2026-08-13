@@ -179,7 +179,16 @@ def poll_transfer(db: Session, data_transfer: DataTransfer) -> None:
 
 
 def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
-    """After an input transfer settles, move the run's QueuedJob out of "staging"."""
+    """After an input transfer settles, move the run's QueuedJob out of "staging".
+
+    Observed once in production: all input transfers for a run showed
+    ``completed`` minutes before Nextflow started, yet the first process still
+    failed with Singularity reporting the staged input directory didn't exist
+    to mount, though it existed both before and after. Timestamps ruled out a
+    race in this gating logic - looked like a transient negative-cache/
+    automount hiccup on Gadi's ``/g/data`` mount on that compute node. Revisit
+    if it recurs.
+    """
     if data_transfer.direction != "input" or data_transfer.status not in (
         "completed",
         "failed",

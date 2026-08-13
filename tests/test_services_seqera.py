@@ -125,7 +125,6 @@ async def test_launch_success_minimal(persistent_models):
     payload = json.loads(request.content)
     assert "module load singularity" in payload["launch"]["preRunScript"]
     assert "module load nextflow" in payload["launch"]["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in payload["launch"]["preRunScript"]
 
 
 @pytest.mark.asyncio

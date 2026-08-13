@@ -181,11 +181,6 @@ async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-        },
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload, prerun_script=prerun_script
