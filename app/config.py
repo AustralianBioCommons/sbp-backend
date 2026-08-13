@@ -35,12 +35,13 @@ class SeqeraSettings(NestedSettings):
     api_url: UrlStr
     access_token: str
     compute_id: str
-    # TODO: worth making this a Path?
     work_space: str
     work_dir: str
     enable_agent_healthcheck: bool = False
     healthcheck_agent_timeout_seconds: int = 20
     health_cache_ttl_seconds: int = 30
+    max_concurrent_workflows: int = 25
+    workflow_sync_batch_limit: int = 50
 
     @field_validator("work_dir")
     @classmethod

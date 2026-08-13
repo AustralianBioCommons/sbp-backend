@@ -1,5 +1,4 @@
 import asyncio
-import os
 from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
@@ -27,13 +26,6 @@ from . import SCHEDULER
 
 LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
-
-# Gadi's gpuhopper PBS queue holds 50 job slots and each workflow run occupies approximately 2 of
-# them (Nextflow's queueSize), so 25 workflows can run concurrently. Hardcoded as a
-# temporary MVP value, configurable via env var.
-MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
-WORKFLOW_SYNC_BATCH_LIMIT = int(os.getenv("WORKFLOW_SYNC_BATCH_LIMIT", "50"))
-
 
 class LaunchFunction(Protocol):
     """
@@ -133,9 +125,9 @@ def get_available_workflow_capacity(settings: Settings | None = None) -> int:
     """
     settings = settings or get_settings()
     active_workflow_count = asyncio.run(seqera.count_active_workflows(settings=settings))
-    capacity = max(0, MAX_CONCURRENT_WORKFLOWS - active_workflow_count)
+    capacity = max(0, settings.seqera.max_concurrent_workflows - active_workflow_count)
     logger.info(
-        f"{active_workflow_count}/{MAX_CONCURRENT_WORKFLOWS} workflows active on Gadi "
+        f"{active_workflow_count}/{settings.seqera.max_concurrent_workflows} workflows active on Gadi "
         f"({capacity} submission slot(s) available)."
     )
     return capacity
@@ -146,13 +138,14 @@ def submit_pending_jobs(dry_run: bool = False):
     job_offset = 10
     logger.info("Checking for pending jobs...")
     db_session = next(get_db())
+    settings = get_settings()
     ok_to_launch = is_seqera_available(db_session)
     if not ok_to_launch:
         logger.warning("Skipping pending job submission while system status is unhealthy.")
         return
 
     try:
-        available_capacity = get_available_workflow_capacity()
+        available_capacity = get_available_workflow_capacity(settings=settings)
     except (SeqeraAPIError, SeqeraConfigurationError) as e:
         logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
         return
@@ -237,8 +230,9 @@ def refresh_user_credits(dry_run: bool = False):
 def sync_completed_workflow_runs(dry_run: bool = False):
     logger.info("Checking for completed workflow runs to sync...")
     db_session = next(get_db())
+    settings = get_settings()
     if dry_run:
-        runs = get_runs_requiring_sync(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT)
+        runs = get_runs_requiring_sync(db_session, limit=settings.seqera.workflow_sync_batch_limit)
         logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
         return
 
@@ -247,7 +241,7 @@ def sync_completed_workflow_runs(dry_run: bool = False):
         logger.warning("Skipping workflow run result sync while system status is unhealthy.")
         return
 
-    result = asyncio.run(sync_workflow_runs(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT))
+    result = asyncio.run(sync_workflow_runs(db_session, limit=settings.seqera.workflow_sync_batch_limit))
     logger.info(
         "Finished syncing workflow runs: "
         f"checked={result.checked}, completed={result.completed}, "
