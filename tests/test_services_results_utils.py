@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zipfile import ZipFile
 
@@ -202,7 +202,7 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
     assert get_sample_id_for_result(run_empty) is None
 
 
-def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
+def test_bindcraft_helpers_classify_keys_and_build_prefixes(mock_settings):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
     assert classify_bindcraft_output_key(" ") is None
@@ -248,10 +248,13 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
         f"{run.id}/generate/",
     ]
 
-    monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
-    assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
-    monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-    assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+    mock_settings.aws.s3_bucket = "test-bucket"
+    assert (
+        _build_s3_uri("path/to/file.txt", settings=mock_settings)
+        == "s3://test-bucket/path/to/file.txt"
+    )
+    mock_settings.aws.s3_bucket = ""
+    assert _build_s3_uri("path/to/file.txt", settings=mock_settings) == "path/to/file.txt"
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
@@ -308,7 +311,7 @@ async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
         score = await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv")
 
     assert score == pytest.approx(0.913)
-    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv")
+    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv", settings=ANY)
 
 
 @pytest.mark.asyncio
@@ -357,7 +360,7 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
-    async def read_bytes(key: str) -> bytes:
+    async def read_bytes(key: str, **_kwargs) -> bytes:
         return output_contents[key]
 
     with patch(
@@ -411,7 +414,7 @@ async def test_extract_bindcraft_max_score_reads_average_i_ptm():
         score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
 
     assert score == 0.91
-    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv")
+    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv", settings=ANY)
 
 
 @pytest.mark.parametrize(
@@ -444,7 +447,7 @@ async def test_extract_proteinfold_max_score_reads_ranked_tsv():
         score = await extract_proteinfold_max_score("run-1/boltz/T1024/T1024_ptm.tsv")
 
     assert score == 0.91
-    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv", settings=ANY)
 
 
 def test_all_workflow_output_specs_have_score_hooks():
@@ -573,7 +576,7 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
     )
 
     assert await spec.get_max_score(test_db, run) == 0.91
-    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv", settings=ANY)
 
 
 @pytest.mark.asyncio
@@ -622,7 +625,7 @@ async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
         service_units = await spec.get_service_units(test_db, run)
 
     assert service_units == 3.45
-    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv")
+    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv", settings=ANY)
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
@@ -1057,7 +1060,9 @@ async def test_extract_wisps_max_score_returns_max_iptm():
         score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
 
     assert score == 0.91
-    mock_read.assert_awaited_once_with("run/collect/boltz_confidence_scores_full.csv")
+    mock_read.assert_awaited_once_with(
+        "run/collect/boltz_confidence_scores_full.csv", settings=ANY
+    )
 
 
 @pytest.mark.asyncio
@@ -1110,7 +1115,7 @@ async def test_get_run_service_usage():
         service_usage = await get_run_service_usage("run-1/UsageReport.csv")
 
     assert service_usage == 3.45
-    mock_read.assert_awaited_once_with("run-1/UsageReport.csv")
+    mock_read.assert_awaited_once_with("run-1/UsageReport.csv", settings=ANY)
 
 
 # ---------------------------------------------------------------------------

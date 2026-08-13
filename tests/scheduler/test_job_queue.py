@@ -48,7 +48,7 @@ def test_submit_pending_jobs_skips_when_seqera_unavailable(
     monkeypatch.setattr(
         scheduler_jobs,
         "is_seqera_available",
-        lambda db_session: checked_sessions.append(db_session) or False,
+        lambda db_session, **_kwargs: checked_sessions.append(db_session) or False,
     )
 
     scheduler_jobs.submit_pending_jobs()
@@ -75,7 +75,7 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_jobs,
         "get_available_workflow_capacity",
@@ -110,7 +110,7 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_jobs,
         "get_available_workflow_capacity",
@@ -130,7 +130,7 @@ def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_mod
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 0)
 
     scheduler_jobs.submit_pending_jobs()
@@ -150,7 +150,7 @@ def test_submit_pending_jobs_caps_submissions_to_available_capacity(
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 2)
 
     scheduler_jobs.submit_pending_jobs()

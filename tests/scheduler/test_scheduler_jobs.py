@@ -66,7 +66,7 @@ def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: False)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: False)
 
     scheduler_jobs.launch_job(queued_job.id)
 
@@ -78,7 +78,7 @@ def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, mo
 
 def test_launch_job_ignores_missing_job(test_db, monkeypatch):
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
 
     scheduler_jobs.launch_job(uuid4())
 
@@ -92,7 +92,7 @@ def test_launch_job_submits_successful_bindflow_job(test_db, persistent_models, 
         return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -120,7 +120,7 @@ def test_launch_job_dry_run_does_not_update_job(test_db, persistent_models, monk
         return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id, dry_run=True)
@@ -152,7 +152,7 @@ def test_launch_job_dispatches_proteindj_for_rfdiffusion_tool(
         raise AssertionError("launch_bindflow_workflow should not be called for rfdiffusion")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _successful_launch)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _unexpected_bindflow_launch)
 
@@ -179,7 +179,7 @@ def test_launch_job_dispatches_bindflow_for_bindcraft_tool(test_db, persistent_m
         raise AssertionError("launch_proteindj_workflow should not be called for bindcraft")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
     monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _unexpected_proteindj_launch)
 
@@ -203,7 +203,7 @@ def test_launch_job_dispatches_wisps_workflows(test_db, persistent_models, monke
         return None
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_wisps_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -226,7 +226,7 @@ def test_launch_job_dispatches_proteinfold_workflows(test_db, persistent_models,
         return None
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_proteinfold_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -243,7 +243,7 @@ def test_launch_job_dispatches_proteinfold_workflows(test_db, persistent_models,
 def test_launch_job_rejects_unsupported_workflow(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job(workflow_name="unsupported-workflow")
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
 
     with pytest.raises(ValueError, match="Unsupported workflow"):
         scheduler_jobs.launch_job(queued_job.id)
@@ -252,7 +252,7 @@ def test_launch_job_rejects_unsupported_workflow(test_db, persistent_models, mon
 def test_launch_job_dry_run_failure_does_not_update_job(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id, dry_run=True)
@@ -270,7 +270,7 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
 ):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -289,7 +289,7 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
 def test_launch_job_marks_failed_after_max_failed_attempts(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job(attempts=scheduler_jobs.LAUNCH_MAX_ATTEMPTS - 1)
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
