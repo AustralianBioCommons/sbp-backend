@@ -1060,9 +1060,7 @@ async def test_extract_wisps_max_score_returns_max_iptm():
         score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
 
     assert score == 0.91
-    mock_read.assert_awaited_once_with(
-        "run/collect/boltz_confidence_scores_full.csv", settings=ANY
-    )
+    mock_read.assert_awaited_once_with("run/collect/boltz_confidence_scores_full.csv", settings=ANY)
 
 
 @pytest.mark.asyncio

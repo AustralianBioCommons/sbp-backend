@@ -232,9 +232,7 @@ async def _sync_completed_run_results(
             suppress_s3_errors=suppress_s3_errors,
             settings=settings,
         )
-        await ensure_completed_run_score(
-            db, run, UIStatus.COMPLETED.value, settings=settings
-        )
+        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value, settings=settings)
         await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings)
     return len(synced_keys)
 

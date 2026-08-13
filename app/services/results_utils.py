@@ -88,9 +88,7 @@ class WorkflowResultsSpec:
             return shared_output
         return self.classifier(key, sample_id)
 
-    async def get_max_score(
-        self, db: Session, run: WorkflowRun, settings: Settings | None = None
-    ):
+    async def get_max_score(self, db: Session, run: WorkflowRun, settings: Settings | None = None):
         settings = settings or get_settings()
         keys = _get_run_output_keys(db, run)
         sample_id = get_sample_id_for_result(run)
@@ -243,7 +241,7 @@ async def resolve_fasta_form_data(
                 response_content_disposition=_format_attachment_content_disposition(filename),
                 settings=settings,
             )
-        except (S3ConfigurationError, S3ServiceError):
+        except S3ConfigurationError, S3ServiceError:
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -286,7 +284,7 @@ async def resolve_pdb_presigned_urls(
             settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except (S3ConfigurationError, S3ServiceError):
+    except S3ConfigurationError, S3ServiceError:
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
@@ -1225,9 +1223,7 @@ async def get_result_snapshot_downloads(
     return downloads
 
 
-async def get_run_service_usage(
-    usage_file: str, settings: Settings | None = None
-) -> float | None:
+async def get_run_service_usage(usage_file: str, settings: Settings | None = None) -> float | None:
     settings = settings or get_settings()
     content = await read_s3_file(usage_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))

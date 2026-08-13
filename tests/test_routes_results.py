@@ -135,7 +135,9 @@ async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(test_db, mock_settings):
+async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-pdb-user",
         name="PDB User",
@@ -258,7 +260,9 @@ async def test_get_result_logs_returns_404_for_missing_owned_run(test_db, mock_s
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(test_db, mock_settings):
+async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-logs-top-level",
         name="Results User Logs",
@@ -351,7 +355,9 @@ async def test_get_result_logs_maps_seqera_api_error_to_502(test_db, mock_settin
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(test_db, mock_settings):
+async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-5",
         name="Results User 5",
@@ -424,7 +430,9 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_all_returns_valid_zip_file(test_db, persistent_models, mock_settings):
+async def test_get_result_download_all_returns_valid_zip_file(
+    test_db, persistent_models, mock_settings
+):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design")
     run = WorkflowRunFactory.create_sync(
@@ -651,7 +659,9 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db, mock_s
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(test_db, mock_settings):
+async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-1",
         name="Results User Snapshots 1",
@@ -775,7 +785,9 @@ async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db, mock_s
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_returns_single_presigned_html_for_tracked_output(test_db, mock_settings):
+async def test_get_result_report_returns_single_presigned_html_for_tracked_output(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-7",
         name="Results User 7",
@@ -1048,7 +1060,9 @@ async def test_get_result_setting_params_overlays_queued_job_payload(test_db, mo
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(test_db, mock_settings):
+async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(
+    test_db, mock_settings
+):
     from app.db.models.core import Workflow
     from app.db.models.job_queue import QueuedJob
 
