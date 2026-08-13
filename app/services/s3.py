@@ -56,7 +56,7 @@ def get_s3_client(settings: Settings | None = None):
             "AWS credentials are incomplete. Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY or neither."
         )
 
-    client_kwargs = {}
+    client_kwargs: dict[str, Any] = {}
     if aws_region:
         client_kwargs["region_name"] = aws_region
     if aws_access_key and aws_secret_key:
