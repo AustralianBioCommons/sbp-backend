@@ -335,7 +335,7 @@ def test_refresh_user_credits_only_resets_approved_users(test_db, monkeypatch):
 
 
 def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
-    test_db, monkeypatch, mocker: MockerFixture
+    test_db, monkeypatch, mocker: MockerFixture, mock_settings
 ):
     """Once a user is approved and refreshed, a later refresh cycle must not
     stack another SBP_USER_CREDIT_ALLOWANCE on top of their current balance."""
@@ -359,7 +359,7 @@ def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    get_current_user_id(credentials, test_db)
+    get_current_user_id(credentials, test_db, mock_settings)
     test_db.refresh(user)
     assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
 
