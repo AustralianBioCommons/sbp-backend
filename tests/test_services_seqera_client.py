@@ -20,11 +20,11 @@ from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 
 
 @pytest.mark.asyncio
-async def test_seqera_client_post_uses_default_headers(monkeypatch):
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+async def test_seqera_client_post_uses_default_headers(mock_settings):
+    mock_settings.seqera.access_token = "token"
     ok = AsyncMock(spec=httpx.Response)
 
-    client = SeqeraClient()
+    client = SeqeraClient(settings=mock_settings)
 
     with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
         response = await client.post(
@@ -45,11 +45,11 @@ async def test_seqera_client_post_uses_default_headers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seqera_client_post_headers_override_defaults(monkeypatch):
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+async def test_seqera_client_post_headers_override_defaults(mock_settings):
+    mock_settings.seqera.access_token = "token"
     ok = AsyncMock(spec=httpx.Response)
 
-    client = SeqeraClient()
+    client = SeqeraClient(settings=mock_settings)
 
     with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
         await client.post(
@@ -70,39 +70,44 @@ async def test_seqera_client_post_headers_override_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_workflows_raw_missing_config(monkeypatch):
-    monkeypatch.delenv("SEQERA_API_URL", raising=False)
-    with pytest.raises(SeqeraConfigurationError):
+async def test_list_workflows_raw_missing_config(mocker):
+    mocker.patch(
+        "app.services.seqera_client.get_settings",
+        side_effect=SeqeraConfigurationError("Missing required setting"),
+    )
+    with pytest.raises(SeqeraConfigurationError, match="Missing required setting"):
         await list_workflows_raw()
 
 
 @pytest.mark.asyncio
-async def test_describe_and_list_success(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+async def test_describe_and_list_success(mock_settings):
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "token"
 
     ok = AsyncMock(spec=httpx.Response)
     ok.is_error = False
     ok.json.return_value = {"ok": True}
 
     with patch("httpx.AsyncClient.get", return_value=ok):
-        assert await list_workflows_raw() == {"ok": True}
-        assert await describe_workflow_raw("wf-1") == {"ok": True}
-        assert await get_workflow_logs_raw("wf-1") == {"ok": True}
+        assert await list_workflows_raw(settings=mock_settings) == {"ok": True}
+        assert await describe_workflow_raw("wf-1", settings=mock_settings) == {"ok": True}
+        assert await get_workflow_logs_raw("wf-1", settings=mock_settings) == {"ok": True}
 
 
 @pytest.mark.asyncio
-async def test_list_workflows_raw_passes_max_and_search_params(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
-    monkeypatch.setenv("WORK_SPACE", "ws-1")
+async def test_list_workflows_raw_passes_max_and_search_params(mock_settings):
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "token"
+    mock_settings.seqera.work_space = "ws-1"
 
     ok = AsyncMock(spec=httpx.Response)
     ok.is_error = False
     ok.json.return_value = {"workflows": []}
 
     with patch("httpx.AsyncClient.get", return_value=ok) as mock_get:
-        result = await list_workflows_raw(search_query="status:RUNNING", max_results=100)
+        result = await list_workflows_raw(
+            search_query="status:RUNNING", max_results=100, settings=mock_settings
+        )
 
     assert result == {"workflows": []}
     mock_get.assert_awaited_once_with(
@@ -113,35 +118,35 @@ async def test_list_workflows_raw_passes_max_and_search_params(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_workflows_raw_omits_max_when_not_given(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
-    monkeypatch.delenv("WORK_SPACE", raising=False)
+async def test_list_workflows_raw_uses_settings_workspace_when_not_given(mock_settings):
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "token"
+    mock_settings.seqera.work_space = "ws-default"
 
     ok = AsyncMock(spec=httpx.Response)
     ok.is_error = False
     ok.json.return_value = {"workflows": []}
 
     with patch("httpx.AsyncClient.get", return_value=ok) as mock_get:
-        await list_workflows_raw()
+        await list_workflows_raw(settings=mock_settings)
 
     mock_get.assert_awaited_once_with(
         "https://api.seqera.test/workflow",
-        params={},
+        params={"workspaceId": "ws-default"},
         headers={"Authorization": "Bearer token", "Accept": "application/json"},
     )
 
 
 @pytest.mark.asyncio
-async def test_cancel_and_delete_paths(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+async def test_cancel_and_delete_paths(mock_settings):
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "token"
 
     ok = AsyncMock(spec=httpx.Response)
     ok.is_error = False
 
     with patch("httpx.AsyncClient.post", return_value=ok) as mock_post:
-        await cancel_workflow_raw("wf-1")
+        await cancel_workflow_raw("wf-1", settings=mock_settings)
         assert mock_post.call_count == 1
 
     not_found = AsyncMock(spec=httpx.Response)
@@ -150,19 +155,19 @@ async def test_cancel_and_delete_paths(monkeypatch):
     not_found.text = "missing"
 
     with patch("httpx.AsyncClient.delete", return_value=not_found):
-        await delete_workflow_raw("wf-1")
+        await delete_workflow_raw("wf-1", settings=mock_settings)
 
     ok_post = AsyncMock(spec=httpx.Response)
     ok_post.is_error = False
 
     with patch("httpx.AsyncClient.post", return_value=ok_post):
-        await delete_workflows_raw(["wf-1", "wf-2"])
+        await delete_workflows_raw(["wf-1", "wf-2"], settings=mock_settings)
 
 
 @pytest.mark.asyncio
-async def test_cancel_and_delete_errors(monkeypatch):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "token")
+async def test_cancel_and_delete_errors(mock_settings):
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "token"
 
     err = AsyncMock(spec=httpx.Response)
     err.is_error = True
@@ -171,12 +176,12 @@ async def test_cancel_and_delete_errors(monkeypatch):
 
     with patch("httpx.AsyncClient.post", return_value=err):
         with pytest.raises(SeqeraAPIError):
-            await cancel_workflow_raw("wf-1")
+            await cancel_workflow_raw("wf-1", settings=mock_settings)
 
     with patch("httpx.AsyncClient.delete", return_value=err):
         with pytest.raises(SeqeraAPIError):
-            await delete_workflow_raw("wf-1")
+            await delete_workflow_raw("wf-1", settings=mock_settings)
 
     with patch("httpx.AsyncClient.post", return_value=err):
         with pytest.raises(SeqeraAPIError):
-            await delete_workflows_raw(["wf-1"])
+            await delete_workflows_raw(["wf-1"], settings=mock_settings)

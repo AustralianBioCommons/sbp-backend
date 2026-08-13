@@ -142,7 +142,7 @@ async def test_get_job_details_success(test_db):
 
 
 @pytest.mark.asyncio
-async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db):
+async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db, mock_settings):
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|user",
@@ -203,12 +203,12 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
             return_value=None,
         ) as mock_delete,
     ):
-        resp = await delete_job(str(run.id), user.id, test_db)
+        resp = await delete_job(str(run.id), user.id, test_db, mock_settings)
 
     assert resp.deleted is True
     assert resp.cancelledBeforeDelete is True
-    mock_cancel.assert_awaited_once_with("wf-1")
-    mock_delete.assert_awaited_once_with("wf-1")
+    mock_cancel.assert_awaited_once_with("wf-1", settings=mock_settings)
+    mock_delete.assert_awaited_once_with("wf-1", settings=mock_settings)
 
     assert test_db.get(WorkflowRun, run.id) is None
     assert test_db.execute(select(RunInput).where(RunInput.run_id == run.id)).first() is None
@@ -246,7 +246,7 @@ async def test_delete_job_cancels_pending_queued_job(test_db, persistent_models)
 
 
 @pytest.mark.asyncio
-async def test_bulk_delete_jobs_mixed_results():
+async def test_bulk_delete_jobs_mixed_results(mock_settings):
     db = Mock()
 
     def _owned(_db, _uid, run_id):
@@ -275,11 +275,12 @@ async def test_bulk_delete_jobs_mixed_results():
             BulkDeleteJobsRequest(runIds=["ok", "missing"]),
             UUID("11111111-1111-1111-1111-111111111111"),
             db,
+            mock_settings,
         )
 
     assert out.deleted == ["ok"]
     assert out.failed["missing"] == "Job not found"
-    mock_delete.assert_called_once_with(["seqera-ok"])
+    mock_delete.assert_called_once_with(["seqera-ok"], settings=mock_settings)
 
 
 @pytest.mark.asyncio

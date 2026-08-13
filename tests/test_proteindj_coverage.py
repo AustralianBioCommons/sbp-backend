@@ -92,16 +92,17 @@ def _mock_proteindj_db_context():
 
 
 @pytest.fixture
-def seqera_env(monkeypatch):
-    """Set required Seqera environment variables for launch tests."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test_token")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
+def seqera_env(mock_settings):
+    """Set required Seqera settings for launch tests."""
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "test_token"
+    mock_settings.seqera.work_space = "ws_123"
+    mock_settings.seqera.compute_id = "ce_456"
+    mock_settings.seqera.work_dir = "/work/dir"
+    mock_settings.aws.s3_bucket = "my-bucket"
+    mock_settings.aws.access_key_id = "test_key"
+    mock_settings.aws.secret_access_key = "test_secret"
+    return mock_settings
 
 
 def _proteindj_form_kwargs(**overrides) -> dict:
@@ -292,6 +293,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -350,6 +352,7 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
     ):
         prepared_job = await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -381,6 +384,7 @@ async def test_prepare_proteindj_workflow_missing_run_name(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -400,6 +404,7 @@ async def test_prepare_proteindj_workflow_missing_output_id(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -419,6 +424,7 @@ async def test_prepare_proteindj_workflow_empty_output_id(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -438,6 +444,7 @@ async def test_prepare_proteindj_workflow_missing_starting_pdb(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -462,6 +469,7 @@ async def test_prepare_proteindj_workflow_missing_hotspot_residues(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -486,6 +494,7 @@ async def test_prepare_proteindj_workflow_missing_num_designs(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -510,6 +519,7 @@ async def test_prepare_proteindj_workflow_missing_design_length(seqera_env):
     ):
         await prepare_proteindj_workflow(
             form=form,
+            settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
@@ -542,7 +552,9 @@ async def test_launch_proteindj_workflow_success(seqera_env, persistent_models):
             return_value=expected_result,
         ) as mock_post,
     ):
-        result = await launch_proteindj_workflow(queued_job=_queued_proteindj_job())
+        result = await launch_proteindj_workflow(
+            queued_job=_queued_proteindj_job(), settings=seqera_env
+        )
 
     assert result.workflow_id == "wf_success"
     assert result.status == "submitted"
@@ -569,7 +581,8 @@ async def test_launch_proteindj_workflow_with_prerun_script_path(seqera_env, per
         ) as mock_script,
     ):
         result = await launch_proteindj_workflow(
-            queued_job=_queued_proteindj_job(prerun_script_path="/some/prerun.sh")
+            queued_job=_queued_proteindj_job(prerun_script_path="/some/prerun.sh"),
+            settings=seqera_env,
         )
 
     assert result.workflow_id == "wf_prerun"
@@ -584,7 +597,9 @@ async def test_launch_proteindj_workflow_dry_run(seqera_env, persistent_models):
         "app.services.proteindj_executor.post_seqera_launch",
         new_callable=AsyncMock,
     ) as mock_post:
-        result = await launch_proteindj_workflow(queued_job=_queued_proteindj_job(), dry_run=True)
+        result = await launch_proteindj_workflow(
+            queued_job=_queued_proteindj_job(), settings=seqera_env, dry_run=True
+        )
 
     assert result is None
     mock_post.assert_not_called()
@@ -592,8 +607,12 @@ async def test_launch_proteindj_workflow_dry_run(seqera_env, persistent_models):
 
 @pytest.mark.anyio
 async def test_launch_proteindj_workflow_missing_env_var(monkeypatch, persistent_models):
-    monkeypatch.delenv("SEQERA_API_URL", raising=False)
-    monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "app.services.proteindj_executor.get_settings",
+        lambda: (_ for _ in ()).throw(
+            SeqeraConfigurationError("Missing required environment variable: SEQERA_API_URL")
+        ),
+    )
 
     with pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"):
         await launch_proteindj_workflow(queued_job=_queued_proteindj_job())

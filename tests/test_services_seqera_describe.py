@@ -9,17 +9,17 @@ import pytest
 
 from app.services.seqera import (
     SeqeraAPIError,
-    SeqeraConfigurationError,
     describe_workflow,
 )
+from app.services.seqera_errors import SeqeraConfigurationError
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_success(monkeypatch):
+async def test_describe_workflow_success(mock_settings):
     """Test successful workflow description."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "test-token"
+    mock_settings.seqera.work_space = "test-workspace"
 
     mock_response = AsyncMock(spec=httpx.Response)
     mock_response.is_error = False
@@ -32,24 +32,26 @@ async def test_describe_workflow_success(monkeypatch):
     }
 
     with patch("httpx.AsyncClient.get", return_value=mock_response):
-        result = await describe_workflow("wf-123")
+        result = await describe_workflow("wf-123", settings=mock_settings)
 
     assert result["workflow"]["id"] == "wf-123"
     assert result["workflow"]["runName"] == "Test Workflow"
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_with_custom_workspace(monkeypatch):
+async def test_describe_workflow_with_custom_workspace(mock_settings):
     """Test workflow description with custom workspace."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "test-token"
 
     mock_response = AsyncMock(spec=httpx.Response)
     mock_response.is_error = False
     mock_response.json.return_value = {"workflow": {"id": "wf-456"}}
 
     with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
-        await describe_workflow("wf-456", workspace_id="custom-workspace")
+        await describe_workflow(
+            "wf-456", workspace_id="custom-workspace", settings=mock_settings
+        )
 
     # Verify that custom workspace was used
     call_kwargs = mock_get.call_args.kwargs
@@ -57,11 +59,12 @@ async def test_describe_workflow_with_custom_workspace(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_missing_api_url(monkeypatch):
-    """Test error when SEQERA_API_URL is missing."""
-    monkeypatch.delenv("SEQERA_API_URL", raising=False)
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
+async def test_describe_workflow_missing_settings(mocker):
+    """Test error when settings cannot be loaded."""
+    mocker.patch(
+        "app.services.seqera.get_settings",
+        side_effect=SeqeraConfigurationError("Missing required setting: SEQERA_API_URL"),
+    )
 
     with pytest.raises(SeqeraConfigurationError) as exc_info:
         await describe_workflow("wf-123")
@@ -70,37 +73,11 @@ async def test_describe_workflow_missing_api_url(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_missing_access_token(monkeypatch):
-    """Test error when SEQERA_ACCESS_TOKEN is missing."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
-
-    with pytest.raises(SeqeraConfigurationError) as exc_info:
-        await describe_workflow("wf-123")
-
-    assert "SEQERA_ACCESS_TOKEN" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_describe_workflow_missing_workspace(monkeypatch):
-    """Test error when WORK_SPACE is missing."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.delenv("WORK_SPACE", raising=False)
-
-    with pytest.raises(SeqeraConfigurationError) as exc_info:
-        await describe_workflow("wf-123")
-
-    assert "WORK_SPACE" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_describe_workflow_api_error_404(monkeypatch):
+async def test_describe_workflow_api_error_404(mock_settings):
     """Test API error response with 404."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "test-token"
+    mock_settings.seqera.work_space = "test-workspace"
 
     mock_response = AsyncMock(spec=httpx.Response)
     mock_response.is_error = True
@@ -110,18 +87,18 @@ async def test_describe_workflow_api_error_404(monkeypatch):
 
     with patch("httpx.AsyncClient.get", return_value=mock_response):
         with pytest.raises(SeqeraAPIError) as exc_info:
-            await describe_workflow("nonexistent")
+            await describe_workflow("nonexistent", settings=mock_settings)
 
     assert "404" in str(exc_info.value)
     assert "Workflow not found" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_api_error_500(monkeypatch):
+async def test_describe_workflow_api_error_500(mock_settings):
     """Test API error response with 500."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
+    mock_settings.seqera.api_url = "https://api.seqera.test"
+    mock_settings.seqera.access_token = "test-token"
+    mock_settings.seqera.work_space = "test-workspace"
 
     mock_response = AsyncMock(spec=httpx.Response)
     mock_response.is_error = True
@@ -131,24 +108,24 @@ async def test_describe_workflow_api_error_500(monkeypatch):
 
     with patch("httpx.AsyncClient.get", return_value=mock_response):
         with pytest.raises(SeqeraAPIError) as exc_info:
-            await describe_workflow("wf-error")
+            await describe_workflow("wf-error", settings=mock_settings)
 
     assert "500" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_describe_workflow_strips_trailing_slash(monkeypatch):
+async def test_describe_workflow_strips_trailing_slash(mock_settings):
     """Test that trailing slash in API URL is stripped."""
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test/")
-    monkeypatch.setenv("SEQERA_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("WORK_SPACE", "test-workspace")
+    mock_settings.seqera.api_url = "https://api.seqera.test/"
+    mock_settings.seqera.access_token = "test-token"
+    mock_settings.seqera.work_space = "test-workspace"
 
     mock_response = AsyncMock(spec=httpx.Response)
     mock_response.is_error = False
     mock_response.json.return_value = {"workflow": {"id": "wf-789"}}
 
     with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
-        await describe_workflow("wf-789")
+        await describe_workflow("wf-789", settings=mock_settings)
 
     # Verify URL doesn't have double slashes
     call_args = mock_get.call_args.args

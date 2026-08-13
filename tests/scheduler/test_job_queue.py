@@ -160,7 +160,7 @@ def test_submit_pending_jobs_caps_submissions_to_available_capacity(
 
 
 def test_get_available_workflow_capacity_uses_seqera_active_count(monkeypatch):
-    async def _count_active_workflows():
+    async def _count_active_workflows(**_kwargs):
         return 20
 
     monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
@@ -170,7 +170,7 @@ def test_get_available_workflow_capacity_uses_seqera_active_count(monkeypatch):
 
 
 def test_get_available_workflow_capacity_floors_at_zero(monkeypatch):
-    async def _count_active_workflows():
+    async def _count_active_workflows(**_kwargs):
         return 30
 
     monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)

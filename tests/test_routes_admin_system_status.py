@@ -44,7 +44,7 @@ def _fake_status() -> SystemStatus:
 
 def _build_client(monkeypatch: MonkeyPatch) -> TestClient:
     async def fake_get_system_status(
-        db: object | None = None, *, force_refresh: bool = False
+        db: object | None = None, *, force_refresh: bool = False, **_kwargs
     ) -> SystemStatus:
         _ = (db, force_refresh)
         return _fake_status()
@@ -93,7 +93,7 @@ def test_admin_system_status_passes_refresh_flag(monkeypatch: MonkeyPatch):
     seen = {}
 
     async def fake_get_system_status(
-        db: object | None = None, *, force_refresh: bool = False
+        db: object | None = None, *, force_refresh: bool = False, **_kwargs
     ) -> SystemStatus:
         _ = db
         seen["force_refresh"] = force_refresh

@@ -50,10 +50,10 @@ def _create_queued_job(
 
 
 def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
-    async def _healthy_status(_db):
+    async def _healthy_status(_db, **_kwargs):
         return SimpleNamespace(overall_status="healthy")
 
-    async def _unhealthy_status(_db):
+    async def _unhealthy_status(_db, **_kwargs):
         return SimpleNamespace(overall_status="degraded")
 
     monkeypatch.setattr(scheduler_jobs.health, "get_system_status", _healthy_status)
@@ -98,7 +98,10 @@ def test_launch_job_submits_successful_bindflow_job(test_db, persistent_models, 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-123"
     assert queued_job.attempts == 1
     assert queued_job.status == "submitted"
@@ -123,7 +126,10 @@ def test_launch_job_dry_run_does_not_update_job(test_db, persistent_models, monk
     scheduler_jobs.launch_job(queued_job.id, dry_run=True)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": True}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.attempts == 0
     assert queued_job.status == "pending"
@@ -153,7 +159,10 @@ def test_launch_job_dispatches_proteindj_for_rfdiffusion_tool(
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-rfd"
     assert queued_job.status == "submitted"
 
@@ -177,7 +186,10 @@ def test_launch_job_dispatches_bindflow_for_bindcraft_tool(test_db, persistent_m
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-bc"
     assert queued_job.status == "submitted"
 
@@ -197,7 +209,10 @@ def test_launch_job_dispatches_wisps_workflows(test_db, persistent_models, monke
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.status == "submitted"
 
@@ -217,7 +232,10 @@ def test_launch_job_dispatches_proteinfold_workflows(test_db, persistent_models,
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.status == "submitted"
 
