@@ -411,10 +411,9 @@ def get_workflow_name(run: WorkflowRun) -> WorkflowName | None:
         return None
 
     workflow_name: str = run.workflow.name
-    assert workflow_name in get_args(WorkflowName), (
-        f"Workflow name {workflow_name!r} not recognized: "
-        f"expected one of {get_args(WorkflowName)}"
-    )
+    assert workflow_name in get_args(
+        WorkflowName
+    ), f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
     return cast(WorkflowName, workflow_name)
 
 
@@ -1136,6 +1135,32 @@ async def get_all_downloads_zipped(
             used_filenames.add(output_name)
     zip_file.seek(0)
     return zip_file
+
+
+async def read_result_output_file(db: Session, run: WorkflowRun, key: str, settings: Settings | None = None) -> tuple[bytes, str]:
+    """
+    Read one result file and return (content, label).
+
+    Only reads keys this run produced, so callers cannot reach other objects in
+    the bucket.
+
+    Raises:
+        KeyError: If the key is not one of this run's outputs.
+    """
+    settings = settings or get_settings()
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+
+    if key not in outputs:
+        outputs.update(
+            await list_workflow_outputs_from_s3(run, results_spec, suppress_s3_errors=False, settings=settings)
+        )
+
+    output = outputs.get(key)
+    if output is None or output.category in ("snapshot", "usage"):
+        raise KeyError(key)
+
+    return await read_s3_bytes(key, settings=settings), output.label
 
 
 async def get_result_report_download(
