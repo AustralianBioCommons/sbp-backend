@@ -485,12 +485,11 @@ class DataTransferAdmin(ModelView):
         "destination_location",
         "transfer_id",
         "status",
-        JSONField("provider_metadata"),
         "created_at",
         "updated_at",
         "error_message",
     ]
-    exclude_fields_from_list = ["provider_metadata", "error_message"]
+    exclude_fields_from_list = ["error_message"]
     fields_default_sort = [("created_at", True)]
 
     async def repr(self, obj: Any, request: Request) -> str:

@@ -109,14 +109,14 @@ def test_submit_pending_transfer_success(test_db, persistent_models, mock_transf
         source_location="s3://my-bucket/inputs/samplesheets/a.csv",
         destination_location="/test/input/single-prediction/run-1/a.csv",
         transfer_id=None,
-        provider_metadata=None,
     )
 
     submit_pending_transfer(test_db, data_transfer)
 
     assert data_transfer.status == "in_progress"
+    # transfer_id held the submission id mid-flight, but is overwritten with the
+    # real Globus task id once submission succeeds.
     assert data_transfer.transfer_id == "task-abc"
-    assert data_transfer.provider_metadata == {"submission_id": "sub-123"}
 
     submitted = mock_transfer_client.submit_transfer.call_args[0][0]
     assert submitted["source_endpoint"] == "test-s3-collection-id"
@@ -141,8 +141,9 @@ def test_submit_pending_transfer_reuses_existing_submission_id(
         status="pending",
         source_location="s3://my-bucket/inputs/samplesheets/a.csv",
         destination_location="/test/input/single-prediction/run-1/a.csv",
-        transfer_id=None,
-        provider_metadata={"submission_id": "already-committed-sub-id"},
+        # Simulates a crash after the submission id was committed to transfer_id
+        # but before submit_transfer completed - it must be reused, not replaced.
+        transfer_id="already-committed-sub-id",
     )
 
     submit_pending_transfer(test_db, data_transfer)
@@ -169,7 +170,6 @@ def test_submit_pending_transfer_api_error_marks_failed(
         source_location="s3://my-bucket/inputs/samplesheets/a.csv",
         destination_location="/test/input/single-prediction/run-1/a.csv",
         transfer_id=None,
-        provider_metadata=None,
     )
 
     submit_pending_transfer(test_db, data_transfer)
@@ -395,7 +395,6 @@ def test_sync_data_transfers_submits_and_notifies(test_db, persistent_models, mo
         source_location="s3://my-bucket/inputs/samplesheets/a.csv",
         destination_location="/test/input/single-prediction/run-1/a.csv",
         transfer_id=None,
-        provider_metadata=None,
     )
 
     result = sync_data_transfers(test_db)
@@ -484,7 +483,6 @@ def test_sync_data_transfers_counts_soft_submission_failure(
         source_location="s3://my-bucket/inputs/samplesheets/a.csv",
         destination_location="/test/input/single-prediction/run-1/a.csv",
         transfer_id=None,
-        provider_metadata=None,
     )
 
     result = sync_data_transfers(test_db)

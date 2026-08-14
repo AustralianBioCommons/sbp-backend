@@ -86,15 +86,15 @@ def submit_pending_transfer(db: Session, data_transfer: DataTransfer) -> None:
     s3_collection_id = _get_required_env("S3_COLLECTION_ID")
     transfer_client = get_transfer_client()
 
-    # Persist the submission_id before calling submit_transfer, and reuse it on
-    # retry: Globus dedupes submissions on this id, so a crash between submit and
-    # our own status-update commit must not mint a fresh id and double-submit.
-    metadata = dict(data_transfer.provider_metadata or {})
-    submission_id = cast(str | None, metadata.get("submission_id"))
+    # Persist the submission_id (temporarily held in transfer_id) before calling
+    # submit_transfer, and reuse it on retry: Globus dedupes submissions on this
+    # id, so a crash between submit and our own status-update commit must not
+    # mint a fresh id and double-submit. transfer_id is overwritten with the
+    # real Globus task id below once submission succeeds.
+    submission_id = data_transfer.transfer_id
     if not submission_id:
         submission_id = cast(str, transfer_client.get_submission_id()["value"])
-        metadata["submission_id"] = submission_id
-        data_transfer.provider_metadata = metadata
+        data_transfer.transfer_id = submission_id
         db.add(data_transfer)
         db.commit()
 
@@ -112,9 +112,13 @@ def submit_pending_transfer(db: Session, data_transfer: DataTransfer) -> None:
     except globus_sdk.GlobusAPIError as exc:
         # Covers both TransferAPIError (submission rejected) and AuthAPIError
         # (token/scope request rejected, e.g. UNKNOWN_SCOPE_ERROR) - both are
-        # structured API errors that won't resolve by retrying unchanged.
+        # structured API errors that won't resolve by retrying unchanged. Once
+        # failed, this row is never retried (sync_data_transfers only re-queries
+        # pending/in_progress), so the stashed submission id is no longer
+        # meaningful - clear it back to None.
         logger.warning("Globus transfer submission failed for %s: %s", data_transfer.id, exc)
         data_transfer.status = "failed"
+        data_transfer.transfer_id = None
         data_transfer.error_message = str(exc)
         data_transfer.updated_at = datetime.now(UTC)
         db.add(data_transfer)

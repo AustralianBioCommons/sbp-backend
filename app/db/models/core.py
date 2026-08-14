@@ -210,8 +210,7 @@ class DataTransfer(Base):
     Records a single data transfer (upload/download) performed as part of a
     workflow run. ``provider`` identifies which backend performed the
     transfer (e.g. "s3", "globus"), so new providers can be supported without
-    schema changes; provider-specific details that don't fit the common
-    columns can be stored in ``provider_metadata``.
+    schema changes.
     """
 
     __tablename__ = "data_transfers"
@@ -222,11 +221,14 @@ class DataTransfer(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)
     destination_location: Mapped[str] = mapped_column(Text, nullable=False)
+    # Before submission succeeds, holds Globus's submission id (an idempotency
+    # key generated up front so a crash-and-retry doesn't double-submit);
+    # overwritten with the real Globus task id once submission succeeds, which
+    # is what's used to poll status thereafter.
     transfer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[DataTransferStatus] = mapped_column(
         String(length=20), nullable=False, default="pending"
     )
-    provider_metadata: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
