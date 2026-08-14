@@ -17,7 +17,7 @@ from .seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
     WISPS_WORKFLOW_MODES,
     get_wisps_config_profiles,
@@ -59,12 +59,12 @@ async def prepare_wisps_workflow(
     s3_bucket = settings.aws.s3_bucket
 
     if not output_id or not output_id.strip():
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
     job_id = (form.runName or "").strip()
     if not job_id:
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
 
     mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
     sheet_url = f"s3://{s3_bucket}/{s3_input_key}"

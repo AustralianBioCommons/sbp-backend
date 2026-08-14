@@ -20,7 +20,7 @@ from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
-from ..services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from ..services.seqera_errors import SeqeraAPIError
 from ..services.wisps_executor import launch_wisps_workflow
 from . import SCHEDULER
 
@@ -147,7 +147,7 @@ def submit_pending_jobs(dry_run: bool = False):
 
     try:
         available_capacity = get_available_workflow_capacity(settings=settings)
-    except (SeqeraAPIError, SeqeraConfigurationError) as e:
+    except SeqeraAPIError as e:
         logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
         return
     if available_capacity <= 0:

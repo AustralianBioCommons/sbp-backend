@@ -23,7 +23,7 @@ from ..schemas.workflows.shared import (
 from .job_utils import ensure_completed_run_score, extract_pipeline_status, sync_service_usage
 from .results_utils import get_output_spec, sync_workflow_outputs
 from .seqera import describe_workflow
-from .seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from .seqera_errors import SeqeraAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ async def sync_workflow_runs(
                 describe_func=describe_func,
                 settings=settings,
             )
-        except (SeqeraAPIError, SeqeraConfigurationError) as exc:
+        except SeqeraAPIError as exc:
             db.rollback()
             logger.warning(
                 "Failed to sync workflow run %s from Seqera: %s",

@@ -59,7 +59,7 @@ from ..services.datasets import (
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
-from ..services.seqera_errors import SeqeraConfigurationError
+from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
 from .dependencies import (
     get_client_ip,
@@ -484,7 +484,7 @@ async def launch_workflow(
     except HTTPException:
         db_session.rollback()
         raise
-    except SeqeraConfigurationError as exc:
+    except WorkflowLaunchError as exc:
         db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)

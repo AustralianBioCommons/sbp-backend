@@ -27,7 +27,7 @@ from .seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +96,11 @@ async def prepare_proteinfold_workflow(
     s3_bucket = settings.aws.s3_bucket
 
     if not output_id or not output_id.strip():
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
 
     if not form.runName or not form.runName.strip():
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
 
     sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
     params_text = _build_params_text(

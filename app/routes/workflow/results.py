@@ -30,7 +30,7 @@ from ...services.results_utils import (
 )
 from ...services.s3 import S3ConfigurationError, S3ServiceError
 from ...services.seqera_client import get_workflow_logs_raw
-from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from ...services.seqera_errors import SeqeraAPIError
 from ..dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["results"], dependencies=[Depends(get_current_user_id)])
@@ -91,10 +91,6 @@ async def get_result_logs(
 
     try:
         payload = await get_workflow_logs_raw(owned_run.seqera_run_id, settings=settings)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

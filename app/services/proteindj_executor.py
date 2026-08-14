@@ -29,7 +29,7 @@ from .seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData
                 *_, field_name = loc  # last element of the location path is the field name
                 missing = str(field_name)
                 break
-        raise SeqeraConfigurationError(
+        raise WorkflowLaunchError(
             f"'{missing}' is required in formData for ProteinDJ workflow launch"
         ) from exc
 
@@ -87,11 +87,11 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
 
     run_name = (form.runName or "").strip()
     if not run_name:
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
     # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
     output_key = (output_id or "").strip()
     if not output_key:
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     proteindj_fields = _parse_proteindj_form_data(form_data)
