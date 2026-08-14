@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shlex
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_input_path
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .results_utils import s3_uri_to_key
 from .seqera import (
     WorkflowLaunchResult,
     _get_required_env,
@@ -107,8 +111,37 @@ async def launch_wisps_workflow(
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
+    if not queued_job.workflow_run.submitted_form_data:
+        raise ValueError("No submitted form data found for queued job")
+    form_data = WorkflowFormData.model_validate(queued_job.workflow_run.submitted_form_data)
+    fasta_uri = (form_data.extra_fields.get("fastaS3Uri") or "").strip()
+    split_output_dir = (form_data.extra_fields.get("splitOutputDir") or "").strip()
+    if not fasta_uri or not split_output_dir:
+        raise ValueError("Missing fastaS3Uri/splitOutputDir in submitted form data")
+
+    fasta_key = s3_uri_to_key(fasta_uri)
+    if not fasta_key:
+        raise ValueError(f"Invalid S3 URI for fastaS3Uri: {fasta_uri}")
+    if queued_job.workflow_run.workflow is None:
+        raise ValueError("Queued job's workflow run has no associated workflow")
+    # Matches the destination_location computed by _stage_wisps_fasta at queue
+    # time (app/routes/workflows.py) - the aggregated FASTA Globus stages to.
+    staged_fasta_location = build_gadi_input_path(
+        queued_job.workflow_run.id,
+        queued_job.workflow_run.workflow.name.lower(),
+        os.path.basename(fasta_key),
+    )
+
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
+    )
+    # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
+    # files the samplesheet references, reading F (input) and D (output dir) as
+    # shell vars - get_executor_script no longer injects per-run env, so prepend
+    # them here instead.
+    prerun_script = (
+        f"F={shlex.quote(staged_fasta_location)}\n"
+        f"D={shlex.quote(split_output_dir)}\n" + prerun_script
     )
     runtime_payload = inject_prerun_script(
         launch_payload=queued_job.launch_payload, prerun_script=prerun_script

@@ -274,6 +274,43 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
+def _stage_wisps_fasta(
+    *, db_session: Session, fasta_uri: str, run_id: UUID, workflow_name: str
+) -> None:
+    """Stage the aggregated multi-sequence FASTA (formData.fastaS3Uri) to Gadi via
+    Globus.
+
+    Unlike bindcraft/proteinfold, WISPS's samplesheet never references this file
+    directly - each row instead references a future per-sequence split file
+    under formData.splitOutputDir, produced by the prerun script. So there's no
+    samplesheet column to rewrite here, just the raw file to stage so that
+    split step has something local to read.
+    """
+    fasta_key = s3_uri_to_key(fasta_uri)
+    if not fasta_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid S3 URI for fastaS3Uri.",
+        )
+    if db_session.get(S3Object, fasta_key) is None:
+        db_session.add(S3Object(object_key=fasta_key, uri=fasta_uri))
+    db_session.add(
+        RunInput(
+            run_id=run_id,
+            s3_object_id=fasta_key,
+            data_transfer=DataTransfer(
+                workflow_run_id=run_id,
+                direction="input",
+                provider="globus",
+                source_location=fasta_uri,
+                destination_location=build_gadi_input_path(
+                    run_id, workflow_name, os.path.basename(fasta_key)
+                ),
+            ),
+        )
+    )
+
+
 @router.post("/me/sync")
 async def sync_current_user(
     current_user_id: UUID = Depends(get_current_user_id),
@@ -455,6 +492,7 @@ async def launch_workflow(
         workflow_name in ("de-novo-design", "bindflow", "bindcraft") and not is_rfdiffusion_launch
     )
     is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
+    is_wisps_launch = workflow_name in ("interaction-screening", "bulk-prediction")
     if is_bindcraft_launch:
         s3_input_key = await _stage_referenced_samplesheet_file(
             db_session=db_session,
@@ -468,6 +506,14 @@ async def launch_workflow(
             db_session=db_session,
             s3_input_key=s3_input_key,
             field_name="fasta",
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+    elif is_wisps_launch:
+        assert wisps_form_data is not None
+        _stage_wisps_fasta(
+            db_session=db_session,
+            fasta_uri=wisps_form_data.fastaS3Uri,
             run_id=run_id,
             workflow_name=workflow_name,
         )

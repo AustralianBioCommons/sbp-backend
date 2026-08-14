@@ -1084,6 +1084,19 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
         assert queued_job is not None
         assert queued_job.status == "staging"
 
+        # Both the samplesheet and the aggregated FASTA it references must be
+        # staged - _notify_launcher only flips "staging" -> "pending" once every
+        # input DataTransfer for this run is completed.
+        transfers = db.scalars(
+            select(DataTransfer).where(DataTransfer.workflow_run_id == created_run.id)
+        ).all()
+        assert len(transfers) == 2
+        sources = {t.source_location for t in transfers}
+        assert sources == {
+            "s3://test-s3-bucket/inputs/samplesheets/test.csv",
+            "s3://bucket/test.fasta",
+        }
+
 
 def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
     """Missing fastaS3Uri in formData should return 422."""

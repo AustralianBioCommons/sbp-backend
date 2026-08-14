@@ -316,7 +316,10 @@ async def test_launch_wisps_workflow_success(monkeypatch, persistent_models):
 
     assert result.workflow_id == "wf_xyz"
     posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert "preRunScript" in posted_payload
+    prerun_lines = posted_payload["preRunScript"].split("\n")
+    assert prerun_lines[0].startswith("F=/test/input/interaction-screening/")
+    assert prerun_lines[0].endswith("seqs.fa")
+    assert prerun_lines[1] == "D=/tmp/split"
 
 
 @pytest.mark.anyio
@@ -420,7 +423,9 @@ async def test_launch_wisps_workflow_with_prerun_script_path(monkeypatch, persis
     call_kwargs = mock_script.call_args.kwargs
     assert call_kwargs["prerun_script_path"] == prerun_url
     posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert posted_payload["preRunScript"] == "prerun_body"
+    assert posted_payload["preRunScript"].endswith("prerun_body")
+    assert "F=" in posted_payload["preRunScript"]
+    assert "D=/tmp/split" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio
