@@ -11,7 +11,6 @@ from app.services.seqera import (
     SeqeraAPIError,
     describe_workflow,
 )
-from app.services.seqera_errors import SeqeraConfigurationError
 
 
 @pytest.mark.asyncio
@@ -54,20 +53,6 @@ async def test_describe_workflow_with_custom_workspace(mock_settings):
     # Verify that custom workspace was used
     call_kwargs = mock_get.call_args.kwargs
     assert call_kwargs["params"]["workspaceId"] == "custom-workspace"
-
-
-@pytest.mark.asyncio
-async def test_describe_workflow_missing_settings(mocker):
-    """Test error when settings cannot be loaded."""
-    mocker.patch(
-        "app.services.seqera.get_settings",
-        side_effect=SeqeraConfigurationError("Missing required setting: SEQERA_API_URL"),
-    )
-
-    with pytest.raises(SeqeraConfigurationError) as exc_info:
-        await describe_workflow("wf-123")
-
-    assert "SEQERA_API_URL" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ from app.services.proteindj_executor import (
     prepare_proteindj_workflow,
 )
 from app.services.seqera import WorkflowLaunchResult
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera_errors import WorkflowLaunchError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _USER_DETAILS = WorkflowUserDetails(
@@ -380,7 +380,7 @@ async def test_prepare_proteindj_workflow_missing_run_name(seqera_env):
     form = _make_launch_form(runName="  ")
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="run name"),
+        pytest.raises(WorkflowLaunchError, match="run name"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -400,7 +400,7 @@ async def test_prepare_proteindj_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="output identifier"),
+        pytest.raises(WorkflowLaunchError, match="output identifier"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -420,7 +420,7 @@ async def test_prepare_proteindj_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="output identifier"),
+        pytest.raises(WorkflowLaunchError, match="output identifier"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -440,7 +440,7 @@ async def test_prepare_proteindj_workflow_missing_starting_pdb(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="starting_pdb"),
+        pytest.raises(WorkflowLaunchError, match="starting_pdb"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -465,7 +465,7 @@ async def test_prepare_proteindj_workflow_missing_hotspot_residues(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="target_hotspot_residues"),
+        pytest.raises(WorkflowLaunchError, match="target_hotspot_residues"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -490,7 +490,7 @@ async def test_prepare_proteindj_workflow_missing_num_designs(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="number_of_final_designs"),
+        pytest.raises(WorkflowLaunchError, match="number_of_final_designs"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -515,7 +515,7 @@ async def test_prepare_proteindj_workflow_missing_design_length(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteindj_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="min_length"),
+        pytest.raises(WorkflowLaunchError, match="min_length"),
     ):
         await prepare_proteindj_workflow(
             form=form,
@@ -604,15 +604,3 @@ async def test_launch_proteindj_workflow_dry_run(seqera_env, persistent_models):
     assert result is None
     mock_post.assert_not_called()
 
-
-@pytest.mark.anyio
-async def test_launch_proteindj_workflow_missing_env_var(monkeypatch, persistent_models):
-    monkeypatch.setattr(
-        "app.services.proteindj_executor.get_settings",
-        lambda: (_ for _ in ()).throw(
-            SeqeraConfigurationError("Missing required environment variable: SEQERA_API_URL")
-        ),
-    )
-
-    with pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"):
-        await launch_proteindj_workflow(queued_job=_queued_proteindj_job())

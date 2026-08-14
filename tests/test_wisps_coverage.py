@@ -19,7 +19,7 @@ from app.services.seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera_errors import WorkflowLaunchError
 from app.services.wisps_config import (
     get_wisps_config_profiles,
     get_wisps_config_text,
@@ -480,19 +480,6 @@ async def test_launch_wisps_workflow_with_prerun_script_path(wisps_settings, per
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_missing_env_var(monkeypatch, persistent_models):
-    monkeypatch.setattr(
-        "app.services.wisps_executor.get_settings",
-        lambda: (_ for _ in ()).throw(
-            SeqeraConfigurationError("Missing required environment variable: SEQERA_API_URL")
-        ),
-    )
-
-    with pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"):
-        await launch_wisps_workflow(queued_job=_queued_wisps_job())
-
-
-@pytest.mark.anyio
 async def test_launch_wisps_workflow_missing_output_id(wisps_settings):
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="test-run")
     form_data = WispsFormData(
@@ -503,7 +490,7 @@ async def test_launch_wisps_workflow_missing_output_id(wisps_settings):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="output identifier"),
+        pytest.raises(WorkflowLaunchError, match="output identifier"),
     ):
         await prepare_wisps_workflow(
             form=form,
@@ -530,7 +517,7 @@ async def test_launch_wisps_workflow_empty_output_id(wisps_settings):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError),
+        pytest.raises(WorkflowLaunchError),
     ):
         await prepare_wisps_workflow(
             form=form,
@@ -557,7 +544,7 @@ async def test_launch_wisps_workflow_missing_run_name(wisps_settings):
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="run name"),
+        pytest.raises(WorkflowLaunchError, match="run name"),
     ):
         await prepare_wisps_workflow(
             form=form,

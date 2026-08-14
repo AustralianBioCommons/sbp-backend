@@ -16,7 +16,7 @@ from app.services.seqera_client import (
     get_workflow_logs_raw,
     list_workflows_raw,
 )
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera_errors import SeqeraAPIError
 
 
 @pytest.mark.asyncio
@@ -67,16 +67,6 @@ async def test_seqera_client_post_headers_override_defaults(mock_settings):
         },
         json={"launch": {}},
     )
-
-
-@pytest.mark.asyncio
-async def test_list_workflows_raw_missing_config(mocker):
-    mocker.patch(
-        "app.services.seqera_client.get_settings",
-        side_effect=SeqeraConfigurationError("Missing required setting"),
-    )
-    with pytest.raises(SeqeraConfigurationError, match="Missing required setting"):
-        await list_workflows_raw()
 
 
 @pytest.mark.asyncio

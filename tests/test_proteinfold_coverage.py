@@ -30,7 +30,7 @@ from app.services.seqera import (
     params_to_yaml_text,
     post_seqera_launch,
 )
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera_errors import WorkflowLaunchError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _USER_DETAILS = WorkflowUserDetails(
@@ -407,24 +407,11 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
 
 
 @pytest.mark.anyio
-async def test_launch_proteinfold_workflow_missing_env_var(monkeypatch, persistent_models):
-    monkeypatch.setattr(
-        "app.services.proteinfold_executor.get_settings",
-        lambda: (_ for _ in ()).throw(
-            SeqeraConfigurationError("Missing required environment variable: SEQERA_API_URL")
-        ),
-    )
-
-    with pytest.raises(SeqeraConfigurationError, match="SEQERA_API_URL"):
-        await launch_proteinfold_workflow(queued_job=_queued_proteinfold_job())
-
-
-@pytest.mark.anyio
 async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="output identifier"),
+        pytest.raises(WorkflowLaunchError, match="output identifier"),
     ):
         await prepare_proteinfold_workflow(
             form=form,
@@ -444,7 +431,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     form = _make_launch_form()
     with (
         _mock_proteinfold_db_context() as (db_session, workflow_run, *_),
-        pytest.raises(SeqeraConfigurationError, match="output identifier"),
+        pytest.raises(WorkflowLaunchError, match="output identifier"),
     ):
         await prepare_proteinfold_workflow(
             form=form,

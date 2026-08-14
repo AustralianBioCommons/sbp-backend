@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.db.models import QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.services.seqera_errors import SeqeraConfigurationError
+from app.services.seqera_errors import WorkflowLaunchError
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
@@ -186,9 +186,7 @@ def test_launch_queue_preparation_configuration_error(
     mock_prepare, client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
-    mock_prepare.side_effect = SeqeraConfigurationError(
-        "Missing required environment variable: WORK_SPACE"
-    )
+    mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
 
     payload = {
         "launch": {
@@ -203,7 +201,7 @@ def test_launch_queue_preparation_configuration_error(
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 500
-    assert "WORK_SPACE" in response.json()["detail"]
+    assert "output identifier" in response.json()["detail"]
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count()).select_from(WorkflowRun).where(WorkflowRun.run_name == "test-run")
@@ -657,9 +655,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
 ):
     """Local queue payload configuration errors should return 500."""
     _add_proteinfold_workflow(test_engine)
-    mock_prepare.side_effect = SeqeraConfigurationError(
-        "Missing required environment variable: COMPUTE_ID"
-    )
+    mock_prepare.side_effect = WorkflowLaunchError("Missing run name for workflow launch")
 
     payload = {
         "launch": {
@@ -684,7 +680,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
 
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 500
-    assert "COMPUTE_ID" in response.json()["detail"]
+    assert "run name" in response.json()["detail"]
 
 
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
@@ -1047,9 +1043,7 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
     mock_prepare, wisps_client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
-    mock_prepare.side_effect = SeqeraConfigurationError(
-        "Missing required environment variable: AWS_S3_BUCKET"
-    )
+    mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
 
     payload = {
         "launch": {
@@ -1069,7 +1063,7 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 500
-    assert "AWS_S3_BUCKET" in response.json()["detail"]
+    assert "output identifier" in response.json()["detail"]
     with Session(test_engine) as db:
         count = db.scalar(
             select(func.count())

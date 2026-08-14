@@ -27,7 +27,7 @@ from app.routes.workflow.results import (
     get_result_snapshots,
 )
 from app.services.s3 import S3ConfigurationError, S3ServiceError
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
@@ -300,32 +300,6 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
     assert result.downloads == []
     assert result.entries == []
     assert result.formattedEntries == []
-
-
-@pytest.mark.asyncio
-async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db, mock_settings):
-    user = AppUser(
-        auth0_user_id="auth0|results-user-logs-config-error",
-        name="Results User Logs Config",
-        email="results-logs-config@example.com",
-    )
-    run = WorkflowRun(
-        owner=user,
-        seqera_run_id="wf-logs-config-error",
-        work_dir="/tmp/wf-logs-config-error",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    with patch(
-        "app.routes.workflow.results.get_workflow_logs_raw",
-        new=AsyncMock(side_effect=SeqeraConfigurationError("missing seqera config")),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await get_result_logs(str(run.id), user.id, test_db, mock_settings)
-
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "missing seqera config"
 
 
 @pytest.mark.asyncio

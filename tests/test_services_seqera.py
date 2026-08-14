@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
@@ -23,7 +22,7 @@ from app.services.seqera import (
     WorkflowLaunchResult,
     count_active_workflows,
 )
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
@@ -283,18 +282,6 @@ async def test_launch_missing_workflow_id_in_response(persistent_models):
 
     with pytest.raises(WorkflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
-
-
-def test_launch_missing_env_vars(persistent_models):
-    """Test that missing environment variables raise error."""
-    with (
-        patch(
-            "app.services.bindflow_executor.get_settings",
-            side_effect=SeqeraConfigurationError("Missing required environment variable"),
-        ),
-        pytest.raises(SeqeraConfigurationError),
-    ):
-        asyncio.run(launch_bindflow_workflow(queued_job=_queued_bindflow_job()))
 
 
 @pytest.mark.asyncio

@@ -396,36 +396,6 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
-    """When Seqera is misconfigured the job list falls back to DB data and flags seqeraUnavailable."""
-    from app.services.seqera_errors import SeqeraConfigurationError
-
-    with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
-        ),
-        patch(
-            "app.routes.workflow.jobs.describe_workflow",
-            new_callable=AsyncMock,
-            side_effect=SeqeraConfigurationError("Missing config"),
-        ),
-    ):
-        result = await list_jobs(
-            search=None,
-            status_filter=None,
-            limit=50,
-            offset=0,
-            current_user_id=mock_user_id,
-            db=mock_db,
-        )
-
-    assert result.seqeraUnavailable is True
-    assert len(result.jobs) == 1
-    assert result.jobs[0].status == "N/A"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("seqera_status", [403, 404])
 async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status):
     """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""
@@ -670,7 +640,7 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
+async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mock_settings):
     """Test that completed jobs trigger score calculation."""
     run_id = "run-score-test"
     run = WorkflowRunFactory.build(
@@ -706,7 +676,10 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
             offset=0,
             current_user_id=mock_user_id,
             db=mock_db,
+            settings=mock_settings,
         )
 
-    mock_ensure_score.assert_called_once_with(mock_db, user_run.run, "Completed")
+    mock_ensure_score.assert_called_once_with(
+        mock_db, user_run.run, "Completed", settings=mock_settings
+    )
     assert response.jobs[0].score == 0.88
