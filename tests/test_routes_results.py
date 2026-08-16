@@ -1181,7 +1181,9 @@ async def test_get_result_file_returns_structure_as_text(test_db, persistent_mod
         "app.services.results_utils.read_s3_bytes",
         new=AsyncMock(return_value=b"data_T1024\n"),
     ):
-        response = await get_result_file(str(run.id), structure_key, user.id, test_db, mock_settings)
+        response = await get_result_file(
+            str(run.id), structure_key, user.id, test_db, mock_settings
+        )
 
     assert response.body == b"data_T1024\n"
     assert response.media_type == "text/plain; charset=utf-8"
@@ -1189,7 +1191,9 @@ async def test_get_result_file_returns_structure_as_text(test_db, persistent_mod
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_returns_pae_matrix_as_text(test_db, persistent_models, mock_settings):
+async def test_get_result_file_returns_pae_matrix_as_text(
+    test_db, persistent_models, mock_settings
+):
     user, run, _, pae_key = _make_boltz_prediction_run(test_db, "pae")
 
     with patch(

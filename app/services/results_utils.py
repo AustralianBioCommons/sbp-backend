@@ -1137,7 +1137,9 @@ async def get_all_downloads_zipped(
     return zip_file
 
 
-async def read_result_output_file(db: Session, run: WorkflowRun, key: str, settings: Settings | None = None) -> tuple[bytes, str]:
+async def read_result_output_file(
+    db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
+) -> tuple[bytes, str]:
     """
     Read one result file and return (content, label).
 
@@ -1153,7 +1155,9 @@ async def read_result_output_file(db: Session, run: WorkflowRun, key: str, setti
 
     if key not in outputs:
         outputs.update(
-            await list_workflow_outputs_from_s3(run, results_spec, suppress_s3_errors=False, settings=settings)
+            await list_workflow_outputs_from_s3(
+                run, results_spec, suppress_s3_errors=False, settings=settings
+            )
         )
 
     output = outputs.get(key)

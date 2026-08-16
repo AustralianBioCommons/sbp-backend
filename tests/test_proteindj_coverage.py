@@ -603,4 +603,3 @@ async def test_launch_proteindj_workflow_dry_run(seqera_env, persistent_models):
 
     assert result is None
     mock_post.assert_not_called()
-
