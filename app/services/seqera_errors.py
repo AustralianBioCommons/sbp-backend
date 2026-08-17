@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 
-class SeqeraConfigurationError(RuntimeError):
-    """Raised when required Seqera configuration is missing."""
+class WorkflowLaunchError(RuntimeError):
+    """Raised when workflow launch preparation fails."""
 
 
 class SeqeraExecutorError(RuntimeError):

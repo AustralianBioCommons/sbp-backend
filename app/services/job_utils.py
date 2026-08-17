@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, Select, select
 from sqlalchemy.orm import Session, joinedload
 
+from ..config import Settings
 from ..db.models.core import RunMetric, WorkflowRun
 from ..db.models.job_queue import JobStatus, QueuedJob
 from .results_utils import (
@@ -176,7 +177,9 @@ def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
     return get_sample_id_for_result(run)
 
 
-async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+async def ensure_completed_run_score(
+    db: Session, run: WorkflowRun, ui_status: str, settings: Settings | None = None
+) -> float | None:
     if ui_status != "Completed":
         return None
 
@@ -193,9 +196,17 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
         logger.warning("Skipping score for run %s: %s", run.id, exc)
         return None
 
-    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+    if settings is None:
+        await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+    else:
+        await sync_workflow_outputs(
+            db, run=run, spec=spec, suppress_s3_errors=True, settings=settings
+        )
 
-    max_score = await spec.get_max_score(db, run)
+    if settings is None:
+        max_score = await spec.get_max_score(db, run)
+    else:
+        max_score = await spec.get_max_score(db, run, settings=settings)
     if max_score is None:
         return None
 
@@ -208,7 +219,9 @@ async def ensure_completed_run_score(db: Session, run: WorkflowRun, ui_status: s
     return _round_score(bounded_score)
 
 
-async def sync_service_usage(db: Session, run: WorkflowRun, ui_status: str) -> float | None:
+async def sync_service_usage(
+    db: Session, run: WorkflowRun, ui_status: str, settings: Settings | None = None
+) -> float | None:
     if ui_status != "Completed":
         return None
     if run.service_usage is not None:
@@ -220,9 +233,17 @@ async def sync_service_usage(db: Session, run: WorkflowRun, ui_status: str) -> f
         logger.warning(f"Can't get service usage for run {run.id} - can't get output spec: {exc}")
         return None
 
-    await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+    if settings is None:
+        await sync_workflow_outputs(db, run=run, spec=spec, suppress_s3_errors=True)
+    else:
+        await sync_workflow_outputs(
+            db, run=run, spec=spec, suppress_s3_errors=True, settings=settings
+        )
 
-    usage = await spec.get_service_units(db, run)
+    if settings is None:
+        usage = await spec.get_service_units(db, run)
+    else:
+        usage = await spec.get_service_units(db, run, settings=settings)
     if usage is None:
         return None
     else:

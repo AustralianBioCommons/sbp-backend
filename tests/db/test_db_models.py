@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
+import pytest
+from pydantic import ValidationError
 from sqlalchemy import inspect
 
 from app.db import Base, SessionLocal, _get_database_url, engine
@@ -18,30 +18,26 @@ from app.db.models import (
 )
 
 
-def test_get_database_url_with_env():
+def test_get_database_url_with_env(monkeypatch, mocker, test_get_settings):
     """Test _get_database_url returns DATABASE_URL from environment."""
     expected_url = "postgresql+psycopg://test:test@testhost:5432/testdb"
-    os.environ["DATABASE_URL"] = expected_url
+    monkeypatch.setenv("DATABASE_URL", expected_url)
+    mocker.patch("app.db.get_settings", test_get_settings)
     result = _get_database_url()
     assert result == expected_url
 
 
-def test_get_database_url_default():
-    """Test _get_database_url returns default when env var not set."""
-    # Save current value
-    current_url = os.environ.get("DATABASE_URL")
+def test_get_database_url_raises_when_missing(monkeypatch, mocker, test_get_settings):
+    """Test _get_database_url raises when DATABASE_URL is not configured."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    mocker.patch("app.db.get_settings", test_get_settings)
 
-    # Remove env var if it exists
-    if "DATABASE_URL" in os.environ:
-        del os.environ["DATABASE_URL"]
+    with pytest.raises(ValidationError) as exc:
+        _get_database_url()
 
-    result = _get_database_url()
-    assert result.startswith("postgresql+psycopg://postgres:postgres@localhost:")
-    assert result.endswith("/sbp")
-
-    # Restore original value
-    if current_url:
-        os.environ["DATABASE_URL"] = current_url
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("database_url",)
+    assert field_error["type"] == "missing"
 
 
 def test_base_class():

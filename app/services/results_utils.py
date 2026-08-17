@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import logging
-import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -16,6 +15,7 @@ from zipfile import ZipFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models.core import DataTransfer, RunOutput, S3Object, WorkflowRun
 from ..schemas.workflows.shared import (
     ResultDownloadItem,
@@ -47,6 +47,14 @@ class GetScoreFile(Protocol):
     def __call__(self, keys: list[str], sample_id: str | None) -> str | None: ...
 
 
+class ExtractMaxScore(Protocol):
+    """Extract a max score from an S3 object."""
+
+    def __call__(
+        self, score_file: str, settings: Settings | None = None
+    ) -> Awaitable[float | None]: ...
+
+
 @dataclass(frozen=True)
 class ClassifiedOutput:
     category: OutputCategory
@@ -66,7 +74,7 @@ class WorkflowResultsSpec:
     get_prefixes: Callable[[WorkflowRun], list[str]]
     classifier: OutputClassifier
     get_score_file: GetScoreFile
-    extract_max_score: Callable[[str], Awaitable[float | None]]
+    extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
 
     def classify_output(self, key: str, sample_id: str | None) -> ClassifiedOutput | None:
@@ -80,14 +88,15 @@ class WorkflowResultsSpec:
             return shared_output
         return self.classifier(key, sample_id)
 
-    async def get_max_score(self, db: Session, run: WorkflowRun):
+    async def get_max_score(self, db: Session, run: WorkflowRun, settings: Settings | None = None):
+        settings = settings or get_settings()
         keys = _get_run_output_keys(db, run)
         sample_id = get_sample_id_for_result(run)
         score_file = self.get_score_file(keys, sample_id)
         if score_file is None:
             return None
         try:
-            return await self.extract_max_score(score_file)
+            return await self.extract_max_score(score_file, settings=settings)
         except Exception as e:
             logger.warning("Failed to extract max score from %r: %s", score_file, e, exc_info=True)
             return None
@@ -102,13 +111,16 @@ class WorkflowResultsSpec:
                 return normalized
         return None
 
-    async def get_service_units(self, db: Session, run: WorkflowRun) -> float | None:
+    async def get_service_units(
+        self, db: Session, run: WorkflowRun, settings: Settings | None = None
+    ) -> float | None:
+        settings = settings or get_settings()
         keys = _get_run_output_keys(db, run)
         usage_file = self.get_usage_file(keys)
         if usage_file is None:
             return None
         try:
-            return await get_run_service_usage(usage_file)
+            return await get_run_service_usage(usage_file, settings=settings)
         except Exception as e:
             logger.warning("Failed to get service usage from %r: %s", usage_file, e, exc_info=True)
             return None
@@ -200,6 +212,7 @@ def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
 
 async def resolve_fasta_form_data(
     form_data: dict[str, Any] | None,
+    settings: Settings | None = None,
 ) -> dict[str, Any] | None:
     """Hide internal WISPS fields and replace FASTA S3 URIs with presigned download URLs.
 
@@ -209,6 +222,7 @@ async def resolve_fasta_form_data(
     """
     if not form_data:
         return form_data
+    settings = settings or get_settings()
 
     result = {k: v for k, v in form_data.items() if k != "splitOutputDir"}
 
@@ -225,6 +239,7 @@ async def resolve_fasta_form_data(
                 file_key=file_key,
                 expiration=3600,
                 response_content_disposition=_format_attachment_content_disposition(filename),
+                settings=settings,
             )
         except S3ConfigurationError, S3ServiceError:
             logger.warning(
@@ -239,6 +254,7 @@ async def resolve_fasta_form_data(
 
 async def resolve_pdb_presigned_urls(
     form_data: dict[str, Any] | None,
+    settings: Settings | None = None,
 ) -> dict[str, Any] | None:
     """Replace the ``starting_pdb`` S3 URI in form data with a presigned download URL.
 
@@ -249,6 +265,7 @@ async def resolve_pdb_presigned_urls(
     """
     if not form_data:
         return form_data
+    settings = settings or get_settings()
 
     pdb_value = form_data.get("starting_pdb")
     if not isinstance(pdb_value, str) or not pdb_value.startswith("s3://"):
@@ -264,6 +281,7 @@ async def resolve_pdb_presigned_urls(
             file_key=file_key,
             expiration=3600,
             response_content_disposition=_format_attachment_content_disposition(filename),
+            settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
     except S3ConfigurationError, S3ServiceError:
@@ -276,7 +294,9 @@ async def resolve_pdb_presigned_urls(
         return form_data
 
 
-async def resolve_run_form_data(run: WorkflowRun) -> dict[str, Any] | None:
+async def resolve_run_form_data(
+    run: WorkflowRun, settings: Settings | None = None
+) -> dict[str, Any] | None:
     """Return the fully-resolved settings dict for a workflow run's result view.
 
     Steps:
@@ -284,9 +304,10 @@ async def resolve_run_form_data(run: WorkflowRun) -> dict[str, Any] | None:
     2. Replace the ``starting_pdb`` S3 URI with a presigned download URL.
     3. Replace FASTA S3 URIs with presigned download URLs and strip internal fields.
     """
+    settings = settings or get_settings()
     form_data = resolve_submitted_form_data(run)
-    form_data = await resolve_pdb_presigned_urls(form_data)
-    form_data = await resolve_fasta_form_data(form_data)
+    form_data = await resolve_pdb_presigned_urls(form_data, settings=settings)
+    form_data = await resolve_fasta_form_data(form_data, settings=settings)
     return form_data
 
 
@@ -466,8 +487,11 @@ def get_bindcraft_score_file(keys: list[str], sample_id: str | None) -> str | No
     return None
 
 
-async def extract_bindcraft_max_score(score_file: str) -> float | None:
-    content = await read_s3_file(score_file)
+async def extract_bindcraft_max_score(
+    score_file: str, settings: Settings | None = None
+) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))
     values: list[float] = []
 
@@ -488,8 +512,11 @@ def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | 
     return None
 
 
-async def extract_proteinfold_max_score(score_file: str) -> float | None:
-    content = await read_s3_file(score_file)
+async def extract_proteinfold_max_score(
+    score_file: str, settings: Settings | None = None
+) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
     tsv = csv.reader(StringIO(content), delimiter="\t")
     # Max score should be the row with the lowest index
     max_row = min((row for row in tsv), key=lambda row: int(row[0]))
@@ -648,8 +675,11 @@ def get_wisps_score_file(keys: list[str], sample_id: str | None) -> str | None:
     return None
 
 
-async def extract_wisps_max_score(score_file: str) -> float | None:
-    content = await read_s3_file(score_file)
+async def extract_wisps_max_score(
+    score_file: str, settings: Settings | None = None
+) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))
     values: list[float] = []
     for row in csv_reader:
@@ -662,8 +692,11 @@ async def extract_wisps_max_score(score_file: str) -> float | None:
     return max(values) if values else None
 
 
-async def extract_bulk_prediction_max_score(score_file: str) -> float | None:
-    content = await read_s3_file(score_file)
+async def extract_bulk_prediction_max_score(
+    score_file: str, settings: Settings | None = None
+) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))
     values: list[float] = []
     for row in csv_reader:
@@ -738,8 +771,11 @@ def get_rfdiffusion_score_file(keys: list[str], sample_id: str | None) -> str | 
     return None
 
 
-async def extract_rfdiffusion_max_score(score_file: str) -> float | None:
-    content = await read_s3_file(score_file)
+async def extract_rfdiffusion_max_score(
+    score_file: str, settings: Settings | None = None
+) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))
     row = next(csv_reader, None)
     if row is None:
@@ -872,21 +908,24 @@ def _filter_outputs_by_category(
     return {key: output for key, output in outputs.items() if output.category == category}
 
 
-def _build_s3_uri(key: str) -> str:
-    bucket_name = os.getenv("AWS_S3_BUCKET")
+def _build_s3_uri(key: str, settings: Settings | None = None) -> str:
+    settings = settings or get_settings()
+    bucket_name = settings.aws.s3_bucket
     if bucket_name:
         return f"s3://{bucket_name}/{key}"
     return key
 
 
-def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> None:
+def _sync_run_output_records(
+    db: Session, run: WorkflowRun, keys: list[str], settings: Settings | None = None
+) -> None:
     existing_keys = set(_get_run_output_keys(db, run))
     changed = False
 
     # Every workflow config publishes its results under this same run-scoped
     # prefix, whether the pipeline calls the param "outdir" (bindflow,
     # proteinfold, wisps) or "out_dir" (proteindj) - the value is identical.
-    run_outdir = _build_s3_uri(str(run.id))
+    run_outdir = _build_s3_uri(str(run.id), settings=settings)
 
     for key in keys:
         normalized = key.strip()
@@ -897,7 +936,7 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
         if s3_object is None:
             s3_object = S3Object(
                 object_key=normalized,
-                uri=_build_s3_uri(normalized),
+                uri=_build_s3_uri(normalized, settings=settings),
             )
             db.add(s3_object)
 
@@ -922,14 +961,16 @@ async def list_workflow_outputs_from_s3(
     spec: WorkflowResultsSpec,
     *,
     suppress_s3_errors: bool = True,
+    settings: Settings | None = None,
 ) -> dict[str, ClassifiedOutput]:
     """Discover workflow result artifacts in S3"""
+    settings = settings or get_settings()
     outputs: dict[str, ClassifiedOutput] = {}
     sample_id = get_sample_id_for_result(run)
 
     for prefix in spec.get_prefixes(run):
         try:
-            files = await list_s3_files(prefix=prefix)
+            files = await list_s3_files(prefix=prefix, settings=settings)
         except (S3ConfigurationError, S3ServiceError) as exc:
             if suppress_s3_errors:
                 logger.warning(
@@ -964,26 +1005,32 @@ async def sync_workflow_outputs(
     spec: WorkflowResultsSpec,
     *,
     suppress_s3_errors: bool = True,
+    settings: Settings | None = None,
 ) -> list[str]:
+    settings = settings or get_settings()
     outputs = await list_workflow_outputs_from_s3(
         run,
         spec,
         suppress_s3_errors=suppress_s3_errors,
+        settings=settings,
     )
 
     keys = list(outputs)
     if keys:
-        _sync_run_output_records(db, run, keys)
+        _sync_run_output_records(db, run, keys, settings=settings)
 
     return keys
 
 
-async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
+async def sync_bindcraft_outputs(
+    db: Session, run: WorkflowRun, settings: Settings | None = None
+) -> list[str]:
     """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
+    settings = settings or get_settings()
     discovered: list[str] = []
     for prefix in build_bindcraft_output_listing_prefixes(run):
         try:
-            files = await list_s3_files(prefix=prefix)
+            files = await list_s3_files(prefix=prefix, settings=settings)
         except (S3ConfigurationError, S3ServiceError) as exc:
             logger.warning(
                 "Failed to list bindcraft outputs from S3",
@@ -1003,7 +1050,7 @@ async def sync_bindcraft_outputs(db: Session, run: WorkflowRun) -> list[str]:
                 discovered.append(key)
 
     if discovered:
-        _sync_run_output_records(db, run, discovered)
+        _sync_run_output_records(db, run, discovered, settings=settings)
 
     return discovered
 
@@ -1015,13 +1062,16 @@ def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
     return (category_order.get(output.category, 99), output.label.lower(), key)
 
 
-async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
+async def get_result_output_downloads(
+    db: Session, run: WorkflowRun, settings: Settings | None = None
+) -> list[ResultDownloadItem]:
     """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
+    settings = settings or get_settings()
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)
 
     if missing_required_categories(outputs, results_spec):
-        await sync_workflow_outputs(db, run, results_spec)
+        await sync_workflow_outputs(db, run, results_spec, settings=settings)
         outputs = collect_classified_outputs(db, run, results_spec)
 
     if missing_required_categories(outputs, results_spec):
@@ -1029,6 +1079,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
             run,
             results_spec,
             suppress_s3_errors=False,
+            settings=settings,
         )
         outputs.update(discovered)
 
@@ -1042,7 +1093,7 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
             ResultDownloadItem(
                 label=output.label,
                 key=key,
-                url=await generate_presigned_url(key),
+                url=await generate_presigned_url(key, settings=settings),
                 category=output.category,
             )
         )
@@ -1050,38 +1101,16 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
     return downloads
 
 
-async def read_result_output_file(db: Session, run: WorkflowRun, key: str) -> tuple[bytes, str]:
-    """
-    Read one result file and return (content, label).
-
-    Only reads keys this run produced, so callers cannot reach other objects in
-    the bucket.
-
-    Raises:
-        KeyError: If the key is not one of this run's outputs.
-    """
-    results_spec = get_output_spec(run)
-    outputs = collect_classified_outputs(db, run, results_spec)
-
-    if key not in outputs:
-        outputs.update(
-            await list_workflow_outputs_from_s3(run, results_spec, suppress_s3_errors=False)
-        )
-
-    output = outputs.get(key)
-    if output is None or output.category in ("snapshot", "usage"):
-        raise KeyError(key)
-
-    return await read_s3_bytes(key), output.label
-
-
-async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
+async def get_all_downloads_zipped(
+    db: Session, run: WorkflowRun, settings: Settings | None = None
+) -> BytesIO:
     """
     Get all results for a run as a zip file.
 
     Currently builds the zip in memory and returns a BytesIO object that can
     be used in StreamingResponse.
     """
+    settings = settings or get_settings()
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)
     # Exclude snapshots
@@ -1095,7 +1124,7 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     zip_file = BytesIO()
     with ZipFile(zip_file, "w") as zip_obj:
         for key, output in downloads:
-            content = await read_s3_bytes(key)
+            content = await read_s3_bytes(key, settings=settings)
             output_name = get_safe_zip_filename(output.category, output.label)
             # Simple protection against duplicate filenames
             if output_name in used_filenames:
@@ -1108,14 +1137,47 @@ async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:
     return zip_file
 
 
-async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDownloadItem | None:
+async def read_result_output_file(
+    db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
+) -> tuple[bytes, str]:
+    """
+    Read one result file and return (content, label).
+
+    Only reads keys this run produced, so callers cannot reach other objects in
+    the bucket.
+
+    Raises:
+        KeyError: If the key is not one of this run's outputs.
+    """
+    settings = settings or get_settings()
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+
+    if key not in outputs:
+        outputs.update(
+            await list_workflow_outputs_from_s3(
+                run, results_spec, suppress_s3_errors=False, settings=settings
+            )
+        )
+
+    output = outputs.get(key)
+    if output is None or output.category in ("snapshot", "usage"):
+        raise KeyError(key)
+
+    return await read_s3_bytes(key, settings=settings), output.label
+
+
+async def get_result_report_download(
+    db: Session, run: WorkflowRun, settings: Settings | None = None
+) -> ResultDownloadItem | None:
     """Return a single pre-signed HTML report link for the result view."""
+    settings = settings or get_settings()
     results_spec = get_output_spec(run)
     outputs = collect_classified_outputs(db, run, results_spec)
     report_outputs = _filter_outputs_by_category(outputs, "report")
 
     if not report_outputs:
-        await sync_workflow_outputs(db, run, results_spec)
+        await sync_workflow_outputs(db, run, results_spec, settings=settings)
         outputs = collect_classified_outputs(db, run, results_spec)
         report_outputs = _filter_outputs_by_category(outputs, "report")
 
@@ -1124,6 +1186,7 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDow
             run,
             results_spec,
             suppress_s3_errors=False,
+            settings=settings,
         )
         outputs.update(discovered)
         report_outputs = _filter_outputs_by_category(outputs, "report")
@@ -1143,13 +1206,17 @@ async def get_result_report_download(db: Session, run: WorkflowRun) -> ResultDow
             report_key,
             response_content_type="text/html",
             response_content_disposition="inline",
+            settings=settings,
         ),
         category=report_output.category,
     )
 
 
-async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[ResultDownloadItem]:
+async def get_result_snapshot_downloads(
+    db: Session, run: WorkflowRun, settings: Settings | None = None
+) -> list[ResultDownloadItem]:
     """Return pre-signed snapshot image links for the result view."""
+    settings = settings or get_settings()
     results_spec = get_output_spec(run)
     if not results_spec.supports_snapshots:
         return []
@@ -1158,7 +1225,7 @@ async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[R
     snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
     if not snapshot_outputs:
-        await sync_workflow_outputs(db, run, results_spec)
+        await sync_workflow_outputs(db, run, results_spec, settings=settings)
         outputs = collect_classified_outputs(db, run, results_spec)
         snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
@@ -1167,6 +1234,7 @@ async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[R
             run,
             results_spec,
             suppress_s3_errors=False,
+            settings=settings,
         )
         outputs.update(discovered)
         snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
@@ -1177,15 +1245,16 @@ async def get_result_snapshot_downloads(db: Session, run: WorkflowRun) -> list[R
             ResultDownloadItem(
                 label=snapshot_output.label,
                 key=snapshot_key,
-                url=await generate_presigned_url(snapshot_key),
+                url=await generate_presigned_url(snapshot_key, settings=settings),
                 category=snapshot_output.category,
             )
         )
     return downloads
 
 
-async def get_run_service_usage(usage_file: str) -> float | None:
-    content = await read_s3_file(usage_file)
+async def get_run_service_usage(usage_file: str, settings: Settings | None = None) -> float | None:
+    settings = settings or get_settings()
+    content = await read_s3_file(usage_file, settings=settings)
     csv_reader = csv.DictReader(StringIO(content))
     su_values: list[float] = []
     for row in csv_reader:

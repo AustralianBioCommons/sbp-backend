@@ -10,9 +10,12 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
+from ..db.models.core import DataTransfer, RunInput, S3Object
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_input_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -24,13 +27,13 @@ from .proteindj_config import (
     get_proteindj_config_text,
     get_proteindj_default_params,
 )
+from .results_utils import s3_uri_to_key
 from .seqera import (
     WorkflowLaunchResult,
-    _get_required_env,
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData
                 *_, field_name = loc  # last element of the location path is the field name
                 missing = str(field_name)
                 break
-        raise SeqeraConfigurationError(
+        raise WorkflowLaunchError(
             f"'{missing}' is required in formData for ProteinDJ workflow launch"
         ) from exc
 
@@ -61,6 +64,7 @@ def _parse_proteindj_form_data(form_data: WorkflowFormData) -> ProteinDjFormData
 async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
     *,
+    settings: Settings,
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
@@ -72,24 +76,48 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteindj launch payload."""
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    work_dir = _get_required_env("WORK_DIR")
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    workspace_id = settings.seqera.work_space
+    compute_env_id = settings.seqera.compute_id
+    work_dir = settings.seqera.work_dir
+    s3_bucket = settings.aws.s3_bucket
 
     run_name = (form.runName or "").strip()
     if not run_name:
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
     # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
     output_key = (output_id or "").strip()
     if not output_key:
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     proteindj_fields = _parse_proteindj_form_data(form_data)
+
+    pdb_key = s3_uri_to_key(proteindj_fields.starting_pdb)
+    if not pdb_key:
+        raise WorkflowLaunchError("Invalid S3 URI for starting_pdb")
+    if db_session.get(S3Object, pdb_key) is None:
+        db_session.add(S3Object(object_key=pdb_key, uri=proteindj_fields.starting_pdb))
+    staged_pdb_location = build_gadi_input_path(
+        workflow_run.id,
+        "de-novo-design",
+        os.path.basename(pdb_key),
+        globus_settings=settings.globus,
+    )
+    pdb_transfer = DataTransfer(
+        workflow_run_id=workflow_run.id,
+        direction="input",
+        provider="globus",
+        source_location=proteindj_fields.starting_pdb,
+        destination_location=staged_pdb_location,
+    )
+    db_session.add(pdb_transfer)
+    db_session.add(
+        RunInput(run_id=workflow_run.id, s3_object_id=pdb_key, data_transfer=pdb_transfer)
+    )
+
     default_params = get_proteindj_default_params(
         out_dir,
-        input_pdb=proteindj_fields.starting_pdb,
+        input_pdb=staged_pdb_location,
         hotspot_residues=proteindj_fields.target_hotspot_residues,
         num_designs=proteindj_fields.number_of_final_designs,
         design_length=_design_length(proteindj_fields),
@@ -136,9 +164,11 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
 async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
     *,
     queued_job: QueuedJob,
+    settings: Settings | None = None,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch a proteindj workflow on the Seqera Platform."""
+    settings = settings or get_settings()
     launch_payload = queued_job.launch_payload
 
     # Log the complete params being sent
@@ -157,11 +187,6 @@ async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-        },
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload, prerun_script=prerun_script
@@ -170,4 +195,6 @@ async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
     if dry_run:
         logger.info("Dry run - not launching proteindj workflow")
         return None
-    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="ProteinDJ")
+    return await post_seqera_launch(
+        {"launch": runtime_payload}, workflow_label="ProteinDJ", settings=settings
+    )

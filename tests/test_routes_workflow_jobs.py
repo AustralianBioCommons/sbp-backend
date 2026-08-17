@@ -200,6 +200,46 @@ async def test_list_jobs_pending_queued_job_skips_seqera_lookup(test_db, persist
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_staging_queued_job_skips_seqera_lookup(test_db, persistent_models):
+    """Staging queued jobs (Globus input data transfer still in flight) are
+    rendered as "Staging", not "Pending" or a Seqera lookup that has no run yet."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    owned_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        binder_name=None,
+        run_name="Staging Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        tool="colabfold",
+    )
+    QueuedJobFactory.create_sync(
+        workflow_run=owned_run,
+        workflow=workflow,
+        launch_payload={},
+        status="staging",
+    )
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].id == str(owned_run.id)
+    assert response.jobs[0].jobName == "Staging Job"
+    assert response.jobs[0].status == "Staging"
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_failed_queued_job_skips_seqera_lookup(test_db, persistent_models):
     """Failed queued jobs are rendered from local DB state without querying Seqera."""
     user = AppUserFactory.create_sync()
@@ -393,36 +433,6 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
     assert len(response.jobs) == 5
     assert response.limit == 5
     assert response.offset == 3
-
-
-@pytest.mark.asyncio
-async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
-    """When Seqera is misconfigured the job list falls back to DB data and flags seqeraUnavailable."""
-    from app.services.seqera_errors import SeqeraConfigurationError
-
-    with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
-        ),
-        patch(
-            "app.routes.workflow.jobs.describe_workflow",
-            new_callable=AsyncMock,
-            side_effect=SeqeraConfigurationError("Missing config"),
-        ),
-    ):
-        result = await list_jobs(
-            search=None,
-            status_filter=None,
-            limit=50,
-            offset=0,
-            current_user_id=mock_user_id,
-            db=mock_db,
-        )
-
-    assert result.seqeraUnavailable is True
-    assert len(result.jobs) == 1
-    assert result.jobs[0].status == "N/A"
 
 
 @pytest.mark.asyncio
@@ -670,7 +680,7 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
+async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mock_settings):
     """Test that completed jobs trigger score calculation."""
     run_id = "run-score-test"
     run = WorkflowRunFactory.build(
@@ -706,7 +716,10 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
             offset=0,
             current_user_id=mock_user_id,
             db=mock_db,
+            settings=mock_settings,
         )
 
-    mock_ensure_score.assert_called_once_with(mock_db, user_run.run, "Completed")
+    mock_ensure_score.assert_called_once_with(
+        mock_db, user_run.run, "Completed", settings=mock_settings
+    )
     assert response.jobs[0].score == 0.88

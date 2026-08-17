@@ -33,6 +33,7 @@ from starlette_admin.contrib.sqla import Admin, ModelView
 from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
+from ..config import Settings, get_settings
 from ..routes.dependencies import get_db
 from ..services.credits import launch_credit_cost
 from . import engine
@@ -485,12 +486,11 @@ class DataTransferAdmin(ModelView):
         "destination_location",
         "transfer_id",
         "status",
-        JSONField("provider_metadata"),
         "created_at",
         "updated_at",
         "error_message",
     ]
-    exclude_fields_from_list = ["provider_metadata", "error_message"]
+    exclude_fields_from_list = ["error_message"]
     fields_default_sort = [("created_at", True)]
 
     async def repr(self, obj: Any, request: Request) -> str:
@@ -513,62 +513,8 @@ class QueuedJobAdmin(ModelView):
     ]
 
 
-def _is_db_admin_enabled() -> bool:
-    return os.getenv("ENABLE_DB_ADMIN", "false").strip().lower() in {"1", "true", "yes"}
-
-
-def _is_db_admin_cookie_secure() -> bool:
-    return os.getenv("DB_ADMIN_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes"}
-
-
-def _get_db_admin_home_url() -> str:
-    return os.getenv("DB_ADMIN_FORBIDDEN_HOME_URL", "/").strip() or "/"
-
-
-def _get_admin_auth_domain() -> str | None:
-    value = os.getenv("AUTH_DOMAIN", "").strip()
-    return value or None
-
-
-def _get_admin_auth_client_id() -> str | None:
-    value = os.getenv("AUTH_CLIENT_ID", "").strip()
-    return value or None
-
-
-def _get_admin_auth_audience() -> str | None:
-    value = os.getenv("AUTH_AUDIENCE", "").strip()
-    return value or None
-
-
 def _get_admin_session_cookie_name() -> str:
     return DEFAULT_DB_ADMIN_SESSION_COOKIE
-
-
-def _get_admin_session_secret() -> str:
-    value = os.getenv("DB_ADMIN_SESSION_SECRET")
-    if value and value.strip():
-        return value.strip()
-    raise RuntimeError("DB_ADMIN_SESSION_SECRET is required when ENABLE_DB_ADMIN=true")
-
-
-def _validate_db_admin_config() -> None:
-    missing: list[str] = []
-    if not _get_admin_auth_domain():
-        missing.append("AUTH_DOMAIN")
-    if not _get_admin_auth_client_id():
-        missing.append("AUTH_CLIENT_ID")
-    if not _get_admin_auth_audience():
-        missing.append("AUTH_AUDIENCE")
-    if not os.getenv("DB_ADMIN_AUTH_REDIRECT_URI", "").strip():
-        missing.append("DB_ADMIN_AUTH_REDIRECT_URI")
-    if not os.getenv("DB_ADMIN_SESSION_SECRET", "").strip():
-        missing.append("DB_ADMIN_SESSION_SECRET")
-
-    if missing:
-        missing_text = ", ".join(missing)
-        raise RuntimeError(
-            f"ENABLE_DB_ADMIN=true but required DB admin env vars are missing: {missing_text}"
-        )
 
 
 def _b64url_encode(value: bytes) -> str:
@@ -580,7 +526,7 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + padding)
 
 
-def _create_admin_session_value(claims: dict[str, object]) -> str:
+def _create_admin_session_value(claims: dict[str, object], settings: Settings) -> str:
     now = int(time())
     exp_claim = claims.get("exp")
     if isinstance(exp_claim, (int, float)):
@@ -597,20 +543,22 @@ def _create_admin_session_value(claims: dict[str, object]) -> str:
     }
     payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     payload_b64 = _b64url_encode(payload_json)
+    secret = settings.admin.session_secret
     signature = hmac.new(
-        _get_admin_session_secret().encode("utf-8"),
+        secret.encode("utf-8"),
         payload_b64.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
     return f"{payload_b64}.{signature}"
 
 
-def _parse_admin_session_value(value: str) -> dict[str, object] | None:
+def _parse_admin_session_value(value: str, settings: Settings) -> dict[str, object] | None:
     if not value or "." not in value:
         return None
     payload_b64, signature = value.rsplit(".", 1)
+    secret = settings.admin.session_secret
     expected_signature = hmac.new(
-        _get_admin_session_secret().encode("utf-8"),
+        secret.encode("utf-8"),
         payload_b64.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
@@ -667,9 +615,9 @@ def _mask_email(value: str | None) -> str | None:
     return f"{masked_local}@{domain}"
 
 
-def _claims_has_admin_role(claims: dict[str, object]) -> bool:
-    required_role = os.getenv("DB_ADMIN_REQUIRED_ROLE", DEFAULT_DB_ADMIN_REQUIRED_ROLE).strip()
-    roles_claim_name = os.getenv("DB_ADMIN_ROLES_CLAIM", DEFAULT_DB_ADMIN_ROLES_CLAIM).strip()
+def _claims_has_admin_role(claims: dict[str, object], settings: Settings) -> bool:
+    required_role = settings.auth.required_role
+    roles_claim_name = settings.admin.roles_claim
     if not required_role or not roles_claim_name:
         return False
 
@@ -690,11 +638,11 @@ def _extract_admin_token_from_request(request: StarletteRequest) -> str | None:
     return None
 
 
-def _verify_admin_request(request: StarletteRequest) -> dict[str, object]:
+def _verify_admin_request(request: StarletteRequest, settings: Settings) -> dict[str, object]:
     token = _extract_admin_token_from_request(request)
     if token:
-        claims = verify_access_token_claims(token)
-        if not _claims_has_admin_role(claims):
+        claims = verify_access_token_claims(token, settings=settings)
+        if not _claims_has_admin_role(claims, settings):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden",
@@ -703,7 +651,9 @@ def _verify_admin_request(request: StarletteRequest) -> dict[str, object]:
 
     session_cookie = request.cookies.get(_get_admin_session_cookie_name())
     session_claims = (
-        _parse_admin_session_value(session_cookie) if isinstance(session_cookie, str) else None
+        _parse_admin_session_value(session_cookie, settings)
+        if isinstance(session_cookie, str)
+        else None
     )
     if not session_claims:
         raise HTTPException(
@@ -713,16 +663,17 @@ def _verify_admin_request(request: StarletteRequest) -> dict[str, object]:
     return session_claims
 
 
-def require_admin_access(request: StarletteRequest) -> dict[str, object]:
-    return _verify_admin_request(request)
+def require_admin_access(
+    request: StarletteRequest, settings: Settings = Depends(get_settings)
+) -> dict[str, object]:
+    return _verify_admin_request(request, settings=settings)
 
 
-def mount_db_admin(app: FastAPI) -> None:
+def mount_db_admin(app: FastAPI, settings: Settings) -> None:
     """Mount Starlette Admin and read-only debug endpoints when enabled."""
-    if not _is_db_admin_enabled():
+    if not settings.enable_db_admin:
         return
 
-    _validate_db_admin_config()
     # Register the debug JSON API router BEFORE mounting Starlette Admin. The admin
     # is mounted as a greedy Mount("/admin") that would otherwise shadow any
     # /admin/* APIRoute added after it (routes are matched in registration order).
@@ -764,12 +715,13 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             request: StarletteRequest,
             response: Response,
         ) -> Response:
+            settings = get_settings()
             _ = (password, remember_me)
             token = (username or "").strip()
             if not token:
                 raise LoginFailed("Please provide an Auth0 access token.")
             try:
-                claims = verify_access_token_claims(token)
+                claims = verify_access_token_claims(token, settings=settings)
             except HTTPException as exc:
                 raise LoginFailed(str(exc.detail)) from exc
 
@@ -782,8 +734,8 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                         if isinstance(value, str) and value.strip() and key not in claims:
                             claims[key] = value.strip()
 
-            if not _claims_has_admin_role(claims):
-                home_url = _get_db_admin_home_url()
+            if not _claims_has_admin_role(claims, settings):
+                home_url = settings.admin.forbidden_home_url
                 return HTMLResponse(
                     f"""
                     <html>
@@ -800,9 +752,9 @@ def _mount_starlette_admin(app: FastAPI) -> None:
 
             response.set_cookie(
                 key=session_cookie_name,
-                value=_create_admin_session_value(claims),
+                value=_create_admin_session_value(claims, settings),
                 httponly=True,
-                secure=_is_db_admin_cookie_secure(),
+                secure=settings.admin.cookie_secure,
                 samesite="strict",
                 path="/admin",
             )
@@ -815,11 +767,12 @@ def _mount_starlette_admin(app: FastAPI) -> None:
 
         async def render_login(self, request: StarletteRequest, admin: object) -> Response:
             _ = admin
+            settings = get_settings()
             if request.method == "GET":
-                auth_domain = _get_admin_auth_domain()
-                auth_client_id = _get_admin_auth_client_id()
-                auth_audience = _get_admin_auth_audience()
-                redirect_uri = os.getenv("DB_ADMIN_AUTH_REDIRECT_URI") or str(request.url)
+                auth_domain = settings.auth.domain
+                auth_client_id = settings.auth.client_id
+                auth_audience = settings.auth.audience
+                redirect_uri = settings.admin.auth_redirect_uri or str(request.url)
                 auth_base = (
                     auth_domain.rstrip("/")
                     if auth_domain.startswith(("http://", "https://"))
@@ -845,7 +798,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                         "redirect_uri": redirect_uri,
                         "code_verifier": code_verifier,
                     }
-                    client_secret = os.getenv("DB_ADMIN_AUTH_CLIENT_SECRET", "").strip()
+                    client_secret = settings.auth.client_secret
                     if client_secret:
                         token_payload["client_secret"] = client_secret
 
@@ -912,7 +865,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                     key=oauth_state_cookie_name,
                     value=oauth_state,
                     httponly=True,
-                    secure=_is_db_admin_cookie_secure(),
+                    secure=settings.admin.cookie_secure,
                     # OAuth callback is a cross-site top-level navigation; Lax is required.
                     samesite="lax",
                     path="/admin",
@@ -921,7 +874,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                     key=oauth_verifier_cookie_name,
                     value=code_verifier,
                     httponly=True,
-                    secure=_is_db_admin_cookie_secure(),
+                    secure=settings.admin.cookie_secure,
                     # OAuth callback is a cross-site top-level navigation; Lax is required.
                     samesite="lax",
                     path="/admin",
@@ -930,7 +883,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
                     key=oauth_next_cookie_name,
                     value=next_url,
                     httponly=True,
-                    secure=_is_db_admin_cookie_secure(),
+                    secure=settings.admin.cookie_secure,
                     # OAuth callback is a cross-site top-level navigation; Lax is required.
                     samesite="lax",
                     path="/admin",
@@ -939,8 +892,9 @@ def _mount_starlette_admin(app: FastAPI) -> None:
             return await super().render_login(request, admin)
 
         async def is_authenticated(self, request: StarletteRequest) -> bool:
+            settings = get_settings()
             try:
-                claims = _verify_admin_request(request)
+                claims = _verify_admin_request(request, settings)
             except HTTPException as exc:
                 if exc.status_code == status.HTTP_403_FORBIDDEN:
                     raise

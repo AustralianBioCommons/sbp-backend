@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
@@ -15,12 +14,15 @@ from sqlalchemy import select
 from app.db.models import QueuedJob
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.bindflow_executor import (
-    _get_required_env,
     launch_bindflow_workflow,
     prepare_bindflow_workflow,
 )
-from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult, count_active_workflows
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera import (
+    WorkflowExecutorError,
+    WorkflowLaunchResult,
+    count_active_workflows,
+)
+from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
@@ -91,18 +93,6 @@ def mock_bindflow_config_text():
         yield
 
 
-def test_get_existing_env_variable():
-    """Test getting an existing environment variable."""
-    result = _get_required_env("SEQERA_API_URL")
-    assert result == "https://api.seqera.test"
-
-
-def test_get_missing_env_variable():
-    """Test that missing env variable raises error."""
-    with pytest.raises(SeqeraConfigurationError, match="MISSING_VAR"):
-        _get_required_env("MISSING_VAR")
-
-
 @pytest.mark.asyncio
 @respx.mock
 async def test_launch_success_minimal(persistent_models):
@@ -125,21 +115,16 @@ async def test_launch_success_minimal(persistent_models):
     payload = json.loads(request.content)
     assert "module load singularity" in payload["launch"]["preRunScript"]
     assert "module load nextflow" in payload["launch"]["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in payload["launch"]["preRunScript"]
 
 
 @pytest.mark.asyncio
 async def test_prepare_bindflow_workflow_writes_expected_queued_job(
-    test_db, persistent_models, monkeypatch
+    test_db, persistent_models, mock_settings
 ):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    mock_settings.seqera.work_space = "ws_123"
+    mock_settings.seqera.compute_id = "ce_456"
+    mock_settings.seqera.work_dir = "/work/dir"
+    mock_settings.aws.s3_bucket = "my-bucket"
 
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync()
@@ -160,7 +145,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_bindflow_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
+            settings=mock_settings,
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
@@ -168,6 +153,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             revision="main",
             output_id="run-output-id",
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
         )
 
     queued_job = test_db.scalar(
@@ -191,7 +177,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "input: /test/input/de-novo-design/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode:" not in queued_job.launch_payload["paramsText"]
@@ -295,17 +281,6 @@ async def test_launch_missing_workflow_id_in_response(persistent_models):
 
     with pytest.raises(WorkflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
-
-
-def test_launch_missing_env_vars(persistent_models):
-    """Test that missing environment variables raise error."""
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.delenv("SEQERA_API_URL", raising=False)
-        monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
-        monkeypatch.delenv("WORK_SPACE", raising=False)
-
-        with pytest.raises(SeqeraConfigurationError):
-            asyncio.run(launch_bindflow_workflow(queued_job=_queued_bindflow_job()))
 
 
 @pytest.mark.asyncio

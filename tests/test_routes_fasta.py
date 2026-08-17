@@ -15,15 +15,17 @@ from app.services.s3 import S3UploadResult
 
 
 @pytest.fixture
-def client():
+def client(mock_settings):
     from uuid import UUID
 
+    from app.config import get_settings
     from app.routes.dependencies import get_current_user_id
 
     app = create_app()
     app.dependency_overrides[get_current_user_id] = lambda: UUID(
         "11111111-1111-1111-1111-111111111111"
     )
+    app.dependency_overrides[get_settings] = lambda: mock_settings
     return TestClient(app)
 
 
@@ -37,7 +39,7 @@ def mock_s3_upload_result():
     )
 
 
-def test_upload_fasta_file_success(client, mock_s3_upload_result):
+def test_upload_fasta_file_success(client, mock_s3_upload_result, mock_settings):
     with (
         patch("app.routes.fasta_upload.upload_file_to_s3", new_callable=AsyncMock) as mock_upload,
         patch(
@@ -62,6 +64,7 @@ def test_upload_fasta_file_success(client, mock_s3_upload_result):
         "input/20260421_120000_single_prediction.fasta",
         response_content_type="text/plain",
         response_content_disposition="inline",
+        settings=mock_settings,
     )
 
 

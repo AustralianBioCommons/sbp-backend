@@ -1,9 +1,9 @@
 """Database setup for SQLAlchemy and Alembic."""
 
-import os
-
 from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+from ..config import get_settings
 
 # Naming convention for constraints (recommended by Alembic)
 # https://alembic.sqlalchemy.org/en/latest/naming.html
@@ -21,9 +21,8 @@ class Base(DeclarativeBase):
 
 
 def _get_database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/sbp"
-    )
+    settings = get_settings()
+    return settings.database_url
 
 
 engine = create_engine(_get_database_url(), pool_pre_ping=True)

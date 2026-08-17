@@ -16,6 +16,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette_admin._types import RequestAction
 
+from app.config import get_settings
 from app.db.admin import (
     AppUserAdmin,
     DataTransferAdmin,
@@ -26,13 +27,13 @@ from app.db.admin import (
     WorkflowRunAdmin,
     _claims_has_admin_role,
     _decode_admin_pk,
-    _is_db_admin_enabled,
     _mount_db_debug_api,
     mount_db_admin,
     require_admin_access,
 )
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
+from tests.conftest import SettingsNoEnv
 
 DB_ADMIN_REQUIRED_ENV = {
     "AUTH_DOMAIN": "example.auth.test",
@@ -45,40 +46,43 @@ DB_ADMIN_REQUIRED_ENV = {
 
 def test_is_db_admin_enabled_false_by_default(mocker):
     mocker.patch.dict(os.environ, {}, clear=True)
-    assert _is_db_admin_enabled() is False
+    # TODO: override get_setttings so it doesn't read from env file
+    settings = get_settings()
+    assert settings.enable_db_admin is False
 
 
-def test_is_db_admin_enabled_true_variants(mocker):
-    for value in ("1", "true", "yes", "TRUE"):
-        mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": value})
-        assert _is_db_admin_enabled() is True
+@pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE"])
+def test_is_db_admin_enabled_true_variants(value, mocker):
+    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": value})
+    settings = SettingsNoEnv()
+    assert settings.enable_db_admin is True
 
 
-def test_mount_db_admin_does_not_mount_when_disabled(mocker):
+def test_mount_db_admin_does_not_mount_when_disabled(mocker, mock_settings):
     app = FastAPI()
     mount_admin = mocker.patch("app.db.admin._mount_starlette_admin")
     mount_debug = mocker.patch("app.db.admin._mount_db_debug_api")
 
-    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "false"})
-    mount_db_admin(app)
+    mock_settings.enable_db_admin = False
+    mount_db_admin(app, mock_settings)
 
     mount_admin.assert_not_called()
     mount_debug.assert_not_called()
 
 
-def test_mount_db_admin_mounts_both_when_enabled(mocker):
+def test_mount_db_admin_mounts_both_when_enabled(mocker, mock_settings):
     app = FastAPI()
     mount_admin = mocker.patch("app.db.admin._mount_starlette_admin")
     mount_debug = mocker.patch("app.db.admin._mount_db_debug_api")
 
-    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true", **DB_ADMIN_REQUIRED_ENV})
-    mount_db_admin(app)
+    mock_settings.enable_db_admin = True
+    mount_db_admin(app, mock_settings)
 
     mount_admin.assert_called_once_with(app)
     mount_debug.assert_called_once_with(app)
 
 
-def test_mount_db_admin_registers_debug_router_before_admin_mount(mocker):
+def test_mount_db_admin_registers_debug_router_before_admin_mount(mocker, mock_settings):
     # Starlette Admin mounts a greedy Mount("/admin"). The /admin/debug APIRoutes
     # must be registered BEFORE it, otherwise the Mount shadows them (routes match
     # in registration order) and they 404. (The /admin/api/system-status router is
@@ -99,22 +103,14 @@ def test_mount_db_admin_registers_debug_router_before_admin_mount(mocker):
         return next(i for i, route in enumerate(routes) if route_contains_path(route, path))
 
     app = FastAPI()
-    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true", **DB_ADMIN_REQUIRED_ENV})
-    mount_db_admin(app)
+    mock_settings.enable_db_admin = True
+    mount_db_admin(app, mock_settings)
 
     mount_index = next(
         i for i, r in enumerate(app.router.routes) if isinstance(r, Mount) and r.path == "/admin"
     )
 
     assert route_index("/admin/debug/s3-objects", app.router.routes) < mount_index
-
-
-def test_mount_db_admin_raises_when_enabled_with_missing_env(mocker):
-    app = FastAPI()
-    mocker.patch.dict(os.environ, {"ENABLE_DB_ADMIN": "true"}, clear=True)
-
-    with pytest.raises(RuntimeError, match="required DB admin env vars are missing"):
-        mount_db_admin(app)
 
 
 def _admin_field_names(view) -> list[str]:
@@ -446,43 +442,28 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
     assert any(item["run_id"] == str(run_id) for item in outputs_json["items"])
 
 
-def test_claims_has_admin_role_from_direct_claim(mocker) -> None:
+def test_claims_has_admin_role_from_direct_claim(mock_settings) -> None:
     required_role = "biocommons/role/sbp/admin"
     roles_claim_name = "https://biocommons.org.au/roles"
-    mocker.patch.dict(
-        os.environ,
-        {
-            "DB_ADMIN_REQUIRED_ROLE": required_role,
-            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
-        },
-    )
+    mock_settings.auth.required_role = required_role
+    mock_settings.admin.roles_claim = roles_claim_name
     claims = {roles_claim_name: [required_role]}
-    assert _claims_has_admin_role(claims) is True
+    assert _claims_has_admin_role(claims, mock_settings) is True
 
 
-def test_claims_has_admin_role_from_roles_claim_list(mocker) -> None:
+def test_claims_has_admin_role_from_roles_claim_list(mocker, mock_settings) -> None:
     required = "biocommons/role/sbp/admin"
     roles_claim_name = "https://biocommons.org.au/roles"
-    mocker.patch.dict(
-        os.environ,
-        {
-            "DB_ADMIN_REQUIRED_ROLE": required,
-            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
-        },
-    )
+    mock_settings.auth.required_role = required
+    mock_settings.admin.roles_claim = roles_claim_name
     claims = {roles_claim_name: [required, "biocommons/role/sbp/user"]}
-    assert _claims_has_admin_role(claims) is True
+    assert _claims_has_admin_role(claims, mock_settings) is True
 
 
-def test_claims_has_admin_role_missing(mocker) -> None:
+def test_claims_has_admin_role_missing(mocker, mock_settings) -> None:
     required = "biocommons/role/sbp/admin"
     roles_claim_name = "https://biocommons.org.au/roles"
-    mocker.patch.dict(
-        os.environ,
-        {
-            "DB_ADMIN_REQUIRED_ROLE": required,
-            "DB_ADMIN_ROLES_CLAIM": roles_claim_name,
-        },
-    )
+    mock_settings.auth.required_role = required
+    mock_settings.admin.roles_claim = roles_claim_name
     claims = {roles_claim_name: ["something/else"]}
-    assert _claims_has_admin_role(claims) is False
+    assert _claims_has_admin_role(claims, mock_settings) is False

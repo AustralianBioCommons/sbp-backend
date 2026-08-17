@@ -2,9 +2,10 @@
 
 import re
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from ..config import Settings, get_settings
 from ..services.s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -93,6 +94,7 @@ def _validate_path_component(component: str, param_name: str) -> str:
 async def list_files(
     prefix: str = Query("", description="S3 prefix/folder to filter"),
     extension: str | None = Query(None, description="File extension filter (e.g., .csv)"),
+    settings: Settings = Depends(get_settings),
 ) -> S3FileListResponse:
     """
     List files in S3 bucket with optional filtering.
@@ -101,7 +103,7 @@ async def list_files(
         GET /api/s3/files?prefix=results/ziad-test/ranker/&extension=.csv
     """
     try:
-        files = await list_s3_files(prefix=prefix, file_extension=extension)
+        files = await list_s3_files(prefix=prefix, file_extension=extension, settings=settings)
 
         return S3FileListResponse(
             files=[S3FileInfo(**file) for file in files],
@@ -127,6 +129,7 @@ async def read_csv_file(
         None,
         description="Column names to return (omit to return all columns)",
     ),
+    settings: Settings = Depends(get_settings),
 ) -> CSVDataResponse:
     """
     Read a CSV file from S3 and return selected columns.
@@ -136,7 +139,7 @@ async def read_csv_file(
         GET /api/s3/csv/results/ziad-test/ranker/s1_final_design_stats.csv?columns=design_id&columns=score
     """
     try:
-        data = await read_csv_from_s3(file_key=file_key, columns=columns)
+        data = await read_csv_from_s3(file_key=file_key, columns=columns, settings=settings)
 
         # Get column names from first row if data exists
         column_names = list(data[0].keys()) if data else []
@@ -174,6 +177,7 @@ async def get_run_max_score(
         "s1_final_design_stats.csv",
         description="CSV filename (default: 's1_final_design_stats.csv')",
     ),
+    settings: Settings = Depends(get_settings),
 ) -> MaxScoreResponse:
     """
     Get maximum i_pTM score for a specific run.
@@ -198,13 +202,16 @@ async def get_run_max_score(
         file_key = f"{safe_prefix}/{safe_run_id}/{safe_subfolder}/{safe_filename}"
 
         # First check if file exists and get row count
-        data = await read_csv_from_s3(file_key=file_key, columns=["Average_i_pTM"])
+        data = await read_csv_from_s3(
+            file_key=file_key, columns=["Average_i_pTM"], settings=settings
+        )
         total_designs = len(data)
 
         # Calculate max
         max_score = await calculate_csv_column_max(
             file_key=file_key,
             column_name="Average_i_pTM",
+            settings=settings,
         )
 
         return MaxScoreResponse(

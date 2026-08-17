@@ -13,18 +13,20 @@ module as the one place to edit them.
 
 from __future__ import annotations
 
-import os
 from enum import StrEnum
 from typing import cast
 
 from pydantic import BaseModel, Field
 
+from ..config import Settings, get_settings
 from ..schemas.workflows.shared import WorkflowName, WorkflowTool
 
 
-def is_credits_enabled() -> bool:
+def is_credits_enabled(settings: Settings | None = None) -> bool:
     """Whether credit checking/deduction is active (env ``ENABLE_CREDITS``)."""
-    return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
+    if settings is None:
+        settings = get_settings()
+    return settings.enable_credits
 
 
 # Standard SBP user credit allowance: the one-time bundle grant applied when a

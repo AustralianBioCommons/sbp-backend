@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
+from ..config import Settings, get_settings
 from ..schemas.workflows.shared import PdbUploadResponse
 from ..services.s3 import (
     S3ConfigurationError,
@@ -21,6 +22,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 async def upload_pdb_file(
     file: UploadFile = File(..., description="PDB file to upload"),
     folder: str = Form("input"),
+    settings: Settings = Depends(get_settings),
 ) -> PdbUploadResponse:
     """
     Upload a PDB file to S3 private bucket.
@@ -66,6 +68,7 @@ async def upload_pdb_file(
             filename=file.filename,
             content_type=file.content_type or "pdb",
             folder=folder,
+            settings=settings,
         )
 
         return PdbUploadResponse(

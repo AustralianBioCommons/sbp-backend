@@ -36,7 +36,7 @@ def _status(overall: str) -> SystemStatus:
 
 def _build_client(monkeypatch: MonkeyPatch, overall: str) -> TestClient:
     async def fake_get_system_status(
-        db: object | None = None, *, force_refresh: bool = False
+        db: object | None = None, *, force_refresh: bool = False, **_kwargs
     ) -> SystemStatus:
         _ = (db, force_refresh)
         return _status(overall)
@@ -92,7 +92,7 @@ def test_served_from_cache_never_force_refreshes(monkeypatch: MonkeyPatch):
     seen = {}
 
     async def fake_get_system_status(
-        db: object | None = None, *, force_refresh: bool = False
+        db: object | None = None, *, force_refresh: bool = False, **_kwargs
     ) -> SystemStatus:
         _ = db
         seen["force_refresh"] = force_refresh

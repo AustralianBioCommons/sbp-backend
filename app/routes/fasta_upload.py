@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
+from ..config import Settings, get_settings
 from ..schemas.workflows.shared import FastaUploadResponse
 from ..services.s3 import (
     S3ConfigurationError,
@@ -32,6 +33,7 @@ async def upload_fasta_file(
     file: UploadFile = File(..., description="FASTA file to upload"),
     folder: str = Form("input"),
     _current_user_id=Depends(get_current_user_id),
+    settings: Settings = Depends(get_settings),
 ) -> FastaUploadResponse:
     """Upload a FASTA file to S3 and return a pre-signed URL."""
 
@@ -68,11 +70,13 @@ async def upload_fasta_file(
             filename=file.filename,
             content_type=file.content_type or "text/plain",
             folder=folder,
+            settings=settings,
         )
         presigned_url = await generate_presigned_url(
             upload_result.file_key,
             response_content_type="text/plain",
             response_content_disposition="inline",
+            settings=settings,
         )
 
         return FastaUploadResponse(

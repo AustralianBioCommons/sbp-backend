@@ -20,6 +20,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..schemas.health import (
     COMPONENT_TOWER_AGENT,
     AgentHealthResponse,
@@ -42,7 +43,10 @@ agent_router = APIRouter(tags=["health"])
 
 
 @router.get("/components", response_model=ComponentsHealthResponse)
-async def get_components_health(db: Session = Depends(get_db)) -> ComponentsHealthResponse:
+async def get_components_health(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ComponentsHealthResponse:
     """Return a coarse, user-facing health summary for SBP-bundle users.
 
     ``overallStatus`` is the worst status across all monitored components; when it
@@ -51,7 +55,7 @@ async def get_components_health(db: Session = Depends(get_db)) -> ComponentsHeal
 
     Always comes from the shared database cache
     """
-    status_obj = await health.get_system_status(db)
+    status_obj = await health.get_system_status(db, settings=settings)
     return ComponentsHealthResponse.model_validate(health.to_components_health_dict(status_obj))
 
 
@@ -60,13 +64,16 @@ async def get_components_health(db: Session = Depends(get_db)) -> ComponentsHeal
     response_model=AgentHealthResponse,
     dependencies=[Depends(require_agent_health_permission)],
 )
-async def get_agent_health(db: Session = Depends(get_db)) -> AgentHealthResponse:
+async def get_agent_health(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> AgentHealthResponse:
     """Return the cached Tower Agent health state for automated monitoring.
 
     Returns 503, not a fabricated "unhealthy", when the component is absent
     (agent monitoring disabled).
     """
-    status_obj = await health.get_system_status(db)
+    status_obj = await health.get_system_status(db, settings=settings)
 
     agent_result = next(
         (

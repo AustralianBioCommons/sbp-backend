@@ -9,22 +9,56 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 from polyfactory.factories.pydantic_factory import ModelFactory
+from pydantic import Field
+
+from app.config import (
+    AdminSettings,
+    AuthSettings,
+    AwsSettings,
+    GlobusSettings,
+    SeqeraSettings,
+    Settings,
+    get_settings,
+)
 
 # Set test environment variables before importing app
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000,http://localhost:4200"
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["PORT"] = "8000"
 os.environ["SEQERA_API_URL"] = "https://api.seqera.test"
 os.environ["SEQERA_ACCESS_TOKEN"] = "test_token_12345"
-os.environ["WORK_SPACE"] = "test_workspace_id"
-os.environ["COMPUTE_ID"] = "test_compute_env_id"
-os.environ["WORK_DIR"] = "/test/work/dir"
+os.environ["SEQERA_WORK_SPACE"] = "test_workspace_id"
+os.environ["SEQERA_COMPUTE_ID"] = "test_compute_env_id"
+os.environ["SEQERA_WORK_DIR"] = "/test/work/dir"
+os.environ["AWS_ACCESS_KEY_ID"] = "test_access_key_id"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "test_secret_access_key"
+os.environ["AWS_REGION"] = "ap-southeast-2"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
+os.environ["GLOBUS_CLIENT_ID"] = "test-globus-client-id"
+os.environ["GLOBUS_CLIENT_SECRET"] = "test-globus-client-secret"
+os.environ["GLOBUS_GADI_COLLECTION_ID"] = "test-gadi-collection-id"
+os.environ["GLOBUS_GADI_COLLECTION_ROOT"] = "/test"
+os.environ["GLOBUS_S3_COLLECTION_ID"] = "test-s3-collection-id"
+os.environ["GLOBUS_INPUT_DIR"] = "/test/input"
+os.environ["GLOBUS_OUTPUT_DIR"] = "/test/output"
 os.environ["ENABLE_DB_ADMIN"] = "false"
+os.environ["DB_ADMIN_AUTH_REDIRECT_URI"] = "http://localhost:3000/admin/login"
+os.environ["DB_ADMIN_FORBIDDEN_HOME_URL"] = "http://localhost:3000"
+os.environ["DB_ADMIN_COOKIE_SECURE"] = "false"
+os.environ["DB_ADMIN_SESSION_SECRET"] = "test-session-secret"
 os.environ["DB_ADMIN_ROLES_CLAIM"] = "https://biocommons.org.au/roles"
+os.environ["AUTH_DOMAIN"] = "example.auth.test"
+os.environ["AUTH_CLIENT_ID"] = "test-client-id"
+os.environ["AUTH_AUDIENCE"] = "https://example.api.test"
+os.environ["AUTH_REDIRECT_URI"] = "http://localhost:3000/auth/callback"
+os.environ["AUTH_REQUIRED_ROLE"] = "biocommons/group/sbp_admin"
+os.environ["AUTH_WORKFLOW_EXECUTION_ROLE"] = "biocommons/group/sbp_workflow_execution"
 os.environ["WORKFLOW_EXECUTION_ROLE"] = "biocommons/group/sbp_workflow_execution"
 
 from uuid import UUID, uuid4
 
 from app.db.models.core import AppUser, Workflow
+from app.main import app as fastapi_app
 from app.main import create_app
 from app.routes.dependencies import get_current_user_id, get_db, require_workflow_execution_role
 from app.schemas.workflows.shared import (
@@ -265,3 +299,62 @@ def sample_seqera_launch_response():
         "workflowId": "workflow_xyz789",
         "status": "submitted",
     }
+
+
+class SeqeraSettingsNoEnv(SeqeraSettings):
+    model_config = {**SeqeraSettings.model_config, "env_file": None}
+
+
+class AwsSettingsNoEnv(AwsSettings):
+    model_config = {**AwsSettings.model_config, "env_file": None}
+
+
+class AdminSettingsNoEnv(AdminSettings):
+    model_config = {**AdminSettings.model_config, "env_file": None}
+
+
+class AuthSettingsNoEnv(AuthSettings):
+    model_config = {**AuthSettings.model_config, "env_file": None}
+
+
+class GlobusSettingsNoEnv(GlobusSettings):
+    model_config = {**GlobusSettings.model_config, "env_file": None}
+
+
+class SettingsNoEnv(Settings):
+    """
+    Settings class that ignores any .env files for testing
+    """
+
+    model_config = {**Settings.model_config, "env_file": None}
+    seqera: SeqeraSettings = Field(default_factory=SeqeraSettingsNoEnv)
+    aws: AwsSettings = Field(default_factory=AwsSettingsNoEnv)
+    admin: AdminSettings = Field(default_factory=AdminSettingsNoEnv)
+    auth: AuthSettings = Field(default_factory=AuthSettingsNoEnv)
+    globus: GlobusSettings = Field(default_factory=GlobusSettingsNoEnv)
+
+
+@pytest.fixture
+def mock_settings():
+    """Mock settings for testing."""
+    return SettingsNoEnv(database_url="sqlite:///:memory:")
+
+
+@pytest.fixture(autouse=True)
+def override_settings(mock_settings):
+    fastapi_app.dependency_overrides[get_settings] = lambda: mock_settings
+    yield
+    fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def test_get_settings():
+    """
+    Version of get_settings that doesn't use .env file,
+    doesn't cache
+    """
+
+    def get_settings_no_env() -> SettingsNoEnv:
+        return SettingsNoEnv()
+
+    return get_settings_no_env
