@@ -75,7 +75,9 @@ def test_get_transfer_client_uses_get_settings_when_settings_not_provided():
             "app.services.globus_client.get_settings",
             return_value=SimpleNamespace(globus=globus_settings),
         ),
-        patch("app.services.globus_client.globus_sdk.ClientApp", return_value=mock_app) as mock_app_cls,
+        patch(
+            "app.services.globus_client.globus_sdk.ClientApp", return_value=mock_app
+        ) as mock_app_cls,
         patch(
             "app.services.globus_client.globus_sdk.TransferClient",
             return_value=mock_transfer_client,
