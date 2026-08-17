@@ -22,11 +22,13 @@ def split_by_comma(v: str | list[str]) -> list[str]:
         return result
     return v
 
+
 def normalize_path_nonempty(value: str) -> str:
     normalized = value.rstrip("/")
     if not normalized:
         raise ValueError("work_dir must not be empty")
     return normalized
+
 
 PathStr = Annotated[str, BeforeValidator(normalize_path_nonempty)]
 UrlStr = Annotated[str, AfterValidator(validate_url)]
