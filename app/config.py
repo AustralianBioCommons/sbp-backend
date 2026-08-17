@@ -22,7 +22,13 @@ def split_by_comma(v: str | list[str]) -> list[str]:
         return result
     return v
 
+def normalize_path_nonempty(value: str) -> str:
+    normalized = value.rstrip("/")
+    if not normalized:
+        raise ValueError("work_dir must not be empty")
+    return normalized
 
+PathStr = Annotated[str, BeforeValidator(normalize_path_nonempty)]
 UrlStr = Annotated[str, AfterValidator(validate_url)]
 
 
@@ -40,21 +46,13 @@ class SeqeraSettings(NestedSettings):
     access_token: str
     compute_id: str
     work_space: str
-    work_dir: str
+    work_dir: PathStr
     gadi_project: str = "yz52"
     enable_agent_healthcheck: bool = False
     healthcheck_agent_timeout_seconds: int = 20
     health_cache_ttl_seconds: int = 30
     max_concurrent_workflows: int = 25
     workflow_sync_batch_limit: int = 50
-
-    @field_validator("work_dir")
-    @classmethod
-    def normalize_work_dir(cls, value: str) -> str:
-        normalized = value.rstrip("/")
-        if not normalized:
-            raise ValueError("work_dir must not be empty")
-        return normalized
 
     model_config = SettingsConfigDict(env_prefix="SEQERA_")
 
@@ -102,9 +100,9 @@ class GlobusSettings(NestedSettings):
     client_secret: str
     gadi_collection_id: str
     s3_collection_id: str
-    gadi_collection_root: str
-    input_dir: str
-    output_dir: str
+    gadi_collection_root: PathStr
+    input_dir: PathStr
+    output_dir: PathStr
 
     @field_validator(
         "client_id",
@@ -120,14 +118,6 @@ class GlobusSettings(NestedSettings):
         normalized = value.strip()
         if not normalized:
             raise ValueError("value must not be empty")
-        return normalized
-
-    @field_validator("gadi_collection_root", "input_dir", "output_dir")
-    @classmethod
-    def normalize_paths(cls, value: str) -> str:
-        normalized = value.rstrip("/")
-        if not normalized:
-            raise ValueError("path must not be empty")
         return normalized
 
     model_config = SettingsConfigDict(env_prefix="GLOBUS_")
