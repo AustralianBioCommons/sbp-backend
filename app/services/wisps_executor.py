@@ -134,6 +134,7 @@ async def launch_wisps_workflow(
         queued_job.workflow_run.id,
         queued_job.workflow_run.workflow.name.lower(),
         os.path.basename(fasta_key),
+        globus_settings=settings.globus,
     )
 
     prerun_script = get_executor_script(

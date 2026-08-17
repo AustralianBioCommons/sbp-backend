@@ -11,8 +11,9 @@ import globus_sdk
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import GlobusSettings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
-from .globus_client import _get_required_env, get_transfer_client
+from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,16 @@ _GLOBUS_TASK_STATUS_MAP: dict[str, DataTransferStatus] = {
 }
 
 
-def build_gadi_input_path(run_id: object, workflow_name: str, filename: str) -> str:
+def build_gadi_input_path(
+    run_id: object,
+    workflow_name: str,
+    filename: str,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> str:
     """Build the Gadi-local destination path for a staged input file."""
-    input_dir = _get_required_env("INPUT_DIR")
-    return f"{input_dir.rstrip('/')}/{workflow_name}/{run_id}/{filename}"
+    globus_settings = globus_settings or get_settings().globus
+    return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{filename}"
 
 
 def _s3_relative_path(source_location: str) -> str:
@@ -51,15 +58,18 @@ def _s3_relative_path(source_location: str) -> str:
     return f"/{key}"
 
 
-def _gadi_relative_path(destination_location: str) -> str:
+def _gadi_relative_path(
+    destination_location: str, *, globus_settings: GlobusSettings | None = None
+) -> str:
     """Path relative to the Gadi Globus collection root for a real absolute Gadi path.
 
-    The collection's root maps to GADI_COLLECTION_ROOT on the real filesystem, not
+    The collection's root maps to GLOBUS_GADI_COLLECTION_ROOT on the real filesystem, not
     "/" (confirmed in production: sending the full absolute path unchanged
     double-nests it under the collection root and the destination never appears at
     the expected real path).
     """
-    collection_root = _get_required_env("GADI_COLLECTION_ROOT").rstrip("/")
+    globus_settings = globus_settings or get_settings().globus
+    collection_root = globus_settings.gadi_collection_root
     if not destination_location.startswith(collection_root + "/"):
         raise GlobusTransferError(
             f"Destination path {destination_location} is not under the Gadi "
@@ -80,11 +90,15 @@ class DataTransferSyncResult:
     errored: int = 0
 
 
-def submit_pending_transfer(db: Session, data_transfer: DataTransfer) -> None:
+def submit_pending_transfer(
+    db: Session,
+    data_transfer: DataTransfer,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> None:
     """Submit a Globus transfer for a ``pending`` DataTransfer row."""
-    gadi_collection_id = _get_required_env("GADI_COLLECTION_ID")
-    s3_collection_id = _get_required_env("S3_COLLECTION_ID")
-    transfer_client = get_transfer_client()
+    globus_settings = globus_settings or get_settings().globus
+    transfer_client = get_transfer_client(globus_settings)
 
     # Persist the submission_id (temporarily held in transfer_id) before calling
     # submit_transfer, and reuse it on retry: Globus dedupes submissions on this
@@ -101,12 +115,14 @@ def submit_pending_transfer(db: Session, data_transfer: DataTransfer) -> None:
     try:
         source_path = _s3_relative_path(data_transfer.source_location)
         transfer_data = globus_sdk.TransferData(
-            s3_collection_id,
-            gadi_collection_id,
+            globus_settings.s3_collection_id,
+            globus_settings.gadi_collection_id,
             submission_id=submission_id,
             label=f"sbp-run-{data_transfer.workflow_run_id}",
         )
-        destination_path = _gadi_relative_path(data_transfer.destination_location)
+        destination_path = _gadi_relative_path(
+            data_transfer.destination_location, globus_settings=globus_settings
+        )
         transfer_data.add_item(source_path, destination_path)
         result = transfer_client.submit_transfer(transfer_data)
     except globus_sdk.GlobusAPIError as exc:
@@ -132,12 +148,18 @@ def submit_pending_transfer(db: Session, data_transfer: DataTransfer) -> None:
     db.commit()
 
 
-def poll_transfer(db: Session, data_transfer: DataTransfer) -> None:
+def poll_transfer(
+    db: Session,
+    data_transfer: DataTransfer,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> None:
     """Poll Globus for an ``in_progress`` DataTransfer row's task status."""
     if not data_transfer.transfer_id:
         raise GlobusTransferError(f"DataTransfer {data_transfer.id} has no transfer_id to poll")
 
-    transfer_client = get_transfer_client()
+    globus_settings = globus_settings or get_settings().globus
+    transfer_client = get_transfer_client(globus_settings)
     try:
         task = transfer_client.get_task(data_transfer.transfer_id)
     except globus_sdk.GlobusAPIError as exc:
@@ -224,8 +246,14 @@ def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
     db.commit()
 
 
-def sync_data_transfers(db: Session, *, limit: int = 100) -> DataTransferSyncResult:
+def sync_data_transfers(
+    db: Session,
+    *,
+    limit: int = 100,
+    globus_settings: GlobusSettings | None = None,
+) -> DataTransferSyncResult:
     """Submit pending and poll in-progress Globus data transfers for one batch."""
+    globus_settings = globus_settings or get_settings().globus
     stmt = (
         select(DataTransfer)
         .where(
@@ -241,11 +269,11 @@ def sync_data_transfers(db: Session, *, limit: int = 100) -> DataTransferSyncRes
     for data_transfer in transfers:
         try:
             if data_transfer.status == "pending":
-                submit_pending_transfer(db, data_transfer)
+                submit_pending_transfer(db, data_transfer, globus_settings=globus_settings)
                 if data_transfer.status == "in_progress":
                     submitted += 1
             else:
-                poll_transfer(db, data_transfer)
+                poll_transfer(db, data_transfer, globus_settings=globus_settings)
             _notify_launcher(db, data_transfer)
         except (GlobusConfigurationError, GlobusTransferError) as exc:
             db.rollback()

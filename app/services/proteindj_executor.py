@@ -98,7 +98,10 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     if db_session.get(S3Object, pdb_key) is None:
         db_session.add(S3Object(object_key=pdb_key, uri=proteindj_fields.starting_pdb))
     staged_pdb_location = build_gadi_input_path(
-        workflow_run.id, "de-novo-design", os.path.basename(pdb_key)
+        workflow_run.id,
+        "de-novo-design",
+        os.path.basename(pdb_key),
+        globus_settings=settings.globus,
     )
     pdb_transfer = DataTransfer(
         workflow_run_id=workflow_run.id,

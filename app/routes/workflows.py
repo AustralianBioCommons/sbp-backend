@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..config import Settings, get_settings
+from ..config import GlobusSettings, Settings, get_settings
 from ..db.models import QueuedJob
 from ..db.models.core import (
     AppUser,
@@ -201,6 +201,7 @@ async def _stage_referenced_samplesheet_file(
     field_name: str,
     run_id: UUID,
     workflow_name: str,
+    globus_settings: GlobusSettings,
 ) -> str:
     """Stage a file referenced by a samplesheet column to Gadi via Globus, and
     return the s3InputKey of a corrected samplesheet with that column rewritten
@@ -245,7 +246,12 @@ async def _stage_referenced_samplesheet_file(
         )
     if db_session.get(S3Object, source_key) is None:
         db_session.add(S3Object(object_key=source_key, uri=source_uri))
-    staged_location = build_gadi_input_path(run_id, workflow_name, os.path.basename(source_key))
+    staged_location = build_gadi_input_path(
+        run_id,
+        workflow_name,
+        os.path.basename(source_key),
+        globus_settings=globus_settings,
+    )
     db_session.add(
         RunInput(
             run_id=run_id,
@@ -276,7 +282,12 @@ async def _stage_referenced_samplesheet_file(
 
 
 def _stage_wisps_fasta(
-    *, db_session: Session, fasta_uri: str, run_id: UUID, workflow_name: str
+    *,
+    db_session: Session,
+    fasta_uri: str,
+    run_id: UUID,
+    workflow_name: str,
+    globus_settings: GlobusSettings,
 ) -> None:
     """Stage the aggregated multi-sequence FASTA (formData.fastaS3Uri) to Gadi via
     Globus.
@@ -305,7 +316,10 @@ def _stage_wisps_fasta(
                 provider="globus",
                 source_location=fasta_uri,
                 destination_location=build_gadi_input_path(
-                    run_id, workflow_name, os.path.basename(fasta_key)
+                    run_id,
+                    workflow_name,
+                    os.path.basename(fasta_key),
+                    globus_settings=globus_settings,
                 ),
             ),
         )
@@ -502,6 +516,7 @@ async def launch_workflow(
             field_name="starting_pdb",
             run_id=run_id,
             workflow_name=workflow_name,
+            globus_settings=settings.globus,
         )
     elif is_proteinfold_launch:
         s3_input_key = await _stage_referenced_samplesheet_file(
@@ -510,6 +525,7 @@ async def launch_workflow(
             field_name="fasta",
             run_id=run_id,
             workflow_name=workflow_name,
+            globus_settings=settings.globus,
         )
     elif is_wisps_launch:
         assert wisps_form_data is not None
@@ -518,6 +534,7 @@ async def launch_workflow(
             fasta_uri=wisps_form_data.fastaS3Uri,
             run_id=run_id,
             workflow_name=workflow_name,
+            globus_settings=settings.globus,
         )
 
     staged_input_location: str | None = None
@@ -534,7 +551,10 @@ async def launch_workflow(
         if db_session.get(S3Object, s3_input_key) is None:
             db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
         staged_input_location = build_gadi_input_path(
-            run_id, workflow_name, os.path.basename(s3_input_key)
+            run_id,
+            workflow_name,
+            os.path.basename(s3_input_key),
+            globus_settings=settings.globus,
         )
         input_transfer = DataTransfer(
             workflow_run_id=run_id,

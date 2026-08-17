@@ -15,6 +15,7 @@ from app.config import (
     AdminSettings,
     AuthSettings,
     AwsSettings,
+    GlobusSettings,
     SeqeraSettings,
     Settings,
     get_settings,
@@ -35,11 +36,11 @@ os.environ["AWS_REGION"] = "ap-southeast-2"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
 os.environ["GLOBUS_CLIENT_ID"] = "test-globus-client-id"
 os.environ["GLOBUS_CLIENT_SECRET"] = "test-globus-client-secret"
-os.environ["GADI_COLLECTION_ID"] = "test-gadi-collection-id"
-os.environ["GADI_COLLECTION_ROOT"] = "/test"
-os.environ["S3_COLLECTION_ID"] = "test-s3-collection-id"
-os.environ["INPUT_DIR"] = "/test/input"
-os.environ["OUTPUT_DIR"] = "/test/output"
+os.environ["GLOBUS_GADI_COLLECTION_ID"] = "test-gadi-collection-id"
+os.environ["GLOBUS_GADI_COLLECTION_ROOT"] = "/test"
+os.environ["GLOBUS_S3_COLLECTION_ID"] = "test-s3-collection-id"
+os.environ["GLOBUS_INPUT_DIR"] = "/test/input"
+os.environ["GLOBUS_OUTPUT_DIR"] = "/test/output"
 os.environ["ENABLE_DB_ADMIN"] = "false"
 os.environ["DB_ADMIN_AUTH_REDIRECT_URI"] = "http://localhost:3000/admin/login"
 os.environ["DB_ADMIN_FORBIDDEN_HOME_URL"] = "http://localhost:3000"
@@ -316,6 +317,10 @@ class AuthSettingsNoEnv(AuthSettings):
     model_config = {**AuthSettings.model_config, "env_file": None}
 
 
+class GlobusSettingsNoEnv(GlobusSettings):
+    model_config = {**GlobusSettings.model_config, "env_file": None}
+
+
 class SettingsNoEnv(Settings):
     """
     Settings class that ignores any .env files for testing
@@ -326,6 +331,7 @@ class SettingsNoEnv(Settings):
     aws: AwsSettings = Field(default_factory=AwsSettingsNoEnv)
     admin: AdminSettings = Field(default_factory=AdminSettingsNoEnv)
     auth: AuthSettings = Field(default_factory=AuthSettingsNoEnv)
+    globus: GlobusSettings = Field(default_factory=GlobusSettingsNoEnv)
 
 
 @pytest.fixture

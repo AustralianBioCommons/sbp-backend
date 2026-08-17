@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from app.services.globus_errors import GlobusConfigurationError, GlobusTransferError
+from app.config import GlobusSettings
+from app.services.globus_errors import GlobusTransferError
 from app.services.globus_transfer import (
     STALE_TRANSFER_TIMEOUT,
     _gadi_relative_path,
@@ -46,21 +47,41 @@ def mock_transfer_client():
         yield client
 
 
+@pytest.fixture
+def globus_settings():
+    return GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/test",
+        input_dir="/test/input",
+        output_dir="/test/output",
+    )
+
+
 # ============================================================================
 # Path helpers
 # ============================================================================
 
 
-def test_build_gadi_input_path(monkeypatch):
-    monkeypatch.setenv("INPUT_DIR", "/g/data/yz52/sbp_data/dev_input")
-    path = build_gadi_input_path("run-123", "single-prediction", "sample.csv")
+def test_build_gadi_input_path():
+    globus_settings = GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/g/data/yz52/sbp_data",
+        input_dir="/g/data/yz52/sbp_data/dev_input",
+        output_dir="/g/data/yz52/sbp_data/dev_output",
+    )
+    path = build_gadi_input_path(
+        "run-123",
+        "single-prediction",
+        "sample.csv",
+        globus_settings=globus_settings,
+    )
     assert path == "/g/data/yz52/sbp_data/dev_input/single-prediction/run-123/sample.csv"
-
-
-def test_build_gadi_input_path_missing_env_raises(monkeypatch):
-    monkeypatch.delenv("INPUT_DIR", raising=False)
-    with pytest.raises(GlobusConfigurationError, match="INPUT_DIR"):
-        build_gadi_input_path("run-123", "single-prediction", "sample.csv")
 
 
 def test_s3_relative_path_strips_bucket():
@@ -79,16 +100,35 @@ def test_s3_relative_path_rejects_missing_key():
         _s3_relative_path("s3://my-bucket")
 
 
-def test_gadi_relative_path_strips_collection_root(monkeypatch):
-    monkeypatch.setenv("GADI_COLLECTION_ROOT", "/g/data/yz52/sbp_data")
-    result = _gadi_relative_path("/g/data/yz52/sbp_data/dev_input/run-1/a.csv")
+def test_gadi_relative_path_strips_collection_root():
+    globus_settings = GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/g/data/yz52/sbp_data",
+        input_dir="/g/data/yz52/sbp_data/dev_input",
+        output_dir="/g/data/yz52/sbp_data/dev_output",
+    )
+    result = _gadi_relative_path(
+        "/g/data/yz52/sbp_data/dev_input/run-1/a.csv",
+        globus_settings=globus_settings,
+    )
     assert result == "/dev_input/run-1/a.csv"
 
 
-def test_gadi_relative_path_rejects_path_outside_root(monkeypatch):
-    monkeypatch.setenv("GADI_COLLECTION_ROOT", "/g/data/yz52/sbp_data")
+def test_gadi_relative_path_rejects_path_outside_root():
+    globus_settings = GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/g/data/yz52/sbp_data",
+        input_dir="/g/data/yz52/sbp_data/dev_input",
+        output_dir="/g/data/yz52/sbp_data/dev_output",
+    )
     with pytest.raises(GlobusTransferError, match="not under the Gadi collection root"):
-        _gadi_relative_path("/some/other/path/a.csv")
+        _gadi_relative_path("/some/other/path/a.csv", globus_settings=globus_settings)
 
 
 # ============================================================================
@@ -442,24 +482,6 @@ def test_sync_data_transfers_ignores_non_globus_provider(
     assert result.checked == 0
     mock_transfer_client.get_task.assert_not_called()
     mock_transfer_client.submit_transfer.assert_not_called()
-
-
-def test_sync_data_transfers_counts_configuration_errors(test_db, persistent_models, monkeypatch):
-    monkeypatch.delenv("GADI_COLLECTION_ID", raising=False)
-    workflow_run = WorkflowRunFactory.create_sync()
-    DataTransferFactory.create_sync(
-        workflow_run=workflow_run,
-        direction="input",
-        provider="globus",
-        status="pending",
-        source_location="s3://my-bucket/inputs/samplesheets/a.csv",
-    )
-
-    result = sync_data_transfers(test_db)
-
-    assert result.checked == 1
-    assert result.errored == 1
-    assert result.submitted == 0
 
 
 def test_sync_data_transfers_counts_soft_submission_failure(
