@@ -97,6 +97,42 @@ class AuthSettings(NestedSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_")
 
 
+class GlobusSettings(NestedSettings):
+    client_id: str
+    client_secret: str
+    gadi_collection_id: str
+    s3_collection_id: str
+    gadi_collection_root: str
+    input_dir: str
+    output_dir: str
+
+    @field_validator(
+        "client_id",
+        "client_secret",
+        "gadi_collection_id",
+        "s3_collection_id",
+        "gadi_collection_root",
+        "input_dir",
+        "output_dir",
+    )
+    @classmethod
+    def reject_empty_values(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+    @field_validator("gadi_collection_root", "input_dir", "output_dir")
+    @classmethod
+    def normalize_paths(cls, value: str) -> str:
+        normalized = value.rstrip("/")
+        if not normalized:
+            raise ValueError("path must not be empty")
+        return normalized
+
+    model_config = SettingsConfigDict(env_prefix="GLOBUS_")
+
+
 class Settings(BaseSettings):
     """
     Core settings for the app.
@@ -118,6 +154,7 @@ class Settings(BaseSettings):
     aws: AwsSettings = Field(default_factory=AwsSettings)
     admin: AdminSettings = Field(default_factory=AdminSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    globus: GlobusSettings = Field(default_factory=GlobusSettings)
 
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="only_existing")
 
