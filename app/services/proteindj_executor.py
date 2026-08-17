@@ -38,14 +38,6 @@ from .seqera_errors import WorkflowLaunchError
 logger = logging.getLogger(__name__)
 
 
-def _aws_prerun_env(settings: Settings) -> dict[str, str]:
-    return {
-        "AWS_ACCESS_KEY_ID": settings.aws.access_key_id,
-        "AWS_SECRET_ACCESS_KEY": settings.aws.secret_access_key,
-        "AWS_REGION": settings.aws.region,
-    }
-
-
 def _design_length(fields: ProteinDjFormData) -> str:
     # The frontend's Input Configuration step (shared with bindcraft) sends
     # min_length/max_length as separate fields; ProteinDJ expects them as a

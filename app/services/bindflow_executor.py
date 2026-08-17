@@ -32,14 +32,6 @@ from .seqera_errors import WorkflowLaunchError
 logger = logging.getLogger(__name__)
 
 
-def _aws_prerun_env(settings: Settings) -> dict[str, str]:
-    return {
-        "AWS_ACCESS_KEY_ID": settings.aws.access_key_id,
-        "AWS_SECRET_ACCESS_KEY": settings.aws.secret_access_key,
-        "AWS_REGION": settings.aws.region,
-    }
-
-
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
     *,

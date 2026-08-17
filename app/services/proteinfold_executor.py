@@ -43,14 +43,6 @@ _TOOL_PARAM_KEYS = frozenset(
 )
 
 
-def _aws_prerun_env(settings: Settings) -> dict[str, str]:
-    return {
-        "AWS_ACCESS_KEY_ID": settings.aws.access_key_id,
-        "AWS_SECRET_ACCESS_KEY": settings.aws.secret_access_key,
-        "AWS_REGION": settings.aws.region,
-    }
-
-
 def _tool_params(form_data: WorkflowFormData) -> dict[str, Any]:
     extra = form_data.extra_fields
     return {key: extra[key] for key in _TOOL_PARAM_KEYS if key in extra and extra[key] is not None}
