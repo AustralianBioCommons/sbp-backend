@@ -458,22 +458,6 @@ async def launch_workflow(
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
 
-    s3_bucket = settings.aws.s3_bucket
-    s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
-    if db_session.get(S3Object, s3_input_key) is None:
-        db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    input_destination = f"{settings.seqera.work_dir}/input/{workflow_name}/{run_id}/"
-    input_transfer = DataTransfer(
-        workflow_run_id=run_id,
-        direction="input",
-        provider="s3",
-        source_location=s3_input_uri,
-        destination_location=input_destination,
-    )
-    db_session.add(input_transfer)
-    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
-    db_session.flush()
-
     # All workflows require config_path. Validate before the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.
     if not workflow.config_path:

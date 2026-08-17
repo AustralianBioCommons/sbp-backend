@@ -717,7 +717,7 @@ def test_launch_proteinfold_success(
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_configuration_error(
-    mock_upload_csv, mock_read_csv, mock_prepare, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
     _add_proteinfold_workflow(test_engine)
@@ -1296,9 +1296,9 @@ TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_deducts_credits_when_enabled(
-    mock_upload_csv,
-    mock_read_csv,
     mock_prepare,
+    mock_read_csv,
+    mock_upload_csv,
     client,
     test_engine,
     monkeypatch,
