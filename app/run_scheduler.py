@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import typer
 from apscheduler.triggers.cron import CronTrigger
@@ -13,10 +13,17 @@ from loguru import logger
 load_dotenv()
 
 from app.scheduler import SCHEDULER  # noqa: E402
-from app.scheduler.jobs import refresh_user_credits, submit_pending_jobs  # noqa: E402
+from app.scheduler.jobs import (  # noqa: E402
+    refresh_user_credits,
+    submit_pending_jobs,
+    sync_completed_workflow_runs,
+)
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
-MONTHLY_TRIGGER = CronTrigger(day=1, hour=1, minute=0, timezone="UTC")
+SYNC_INTERVAL = IntervalTrigger(minutes=10)
+# Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
+# miscalculates day=1 across Sydney's October DST switch and skips November entirely.
+MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
 
 
 def main(dry_run: bool = False):
@@ -29,6 +36,18 @@ def main(dry_run: bool = False):
             trigger=SUBMIT_INTERVAL,
             next_run_time=datetime.now(tz=UTC),
             id="submit_pending_jobs",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info(f"Adding sync_completed_workflow_runs to scheduler: trigger = {SYNC_INTERVAL}")
+        SCHEDULER.add_job(
+            sync_completed_workflow_runs,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=SYNC_INTERVAL,
+            next_run_time=datetime.now(tz=UTC) + timedelta(minutes=2),
+            id="sync_completed_workflow_runs",
             misfire_grace_time=60,
             max_instances=1,
             replace_existing=True,

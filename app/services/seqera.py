@@ -181,14 +181,7 @@ async def describe_workflow(workflow_id: str, workspace_id: str | None = None) -
 
     if response.is_error:
         body = response.text
-        logger.error(
-            "Seqera API error",
-            extra={
-                "status": response.status_code,
-                "reason": response.reason_phrase,
-                "body": body,
-            },
-        )
+        logger.error(f"Seqera API error: {response.status_code}. {response.reason_phrase}.\n{body}")
         raise SeqeraAPIError(
             f"Failed to describe workflow: {response.status_code} {body}",
             status_code=response.status_code,

@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from app.schemas.workflows import WorkflowUserDetails
+from app.schemas.workflows.shared import WorkflowUserDetails
 from app.services.bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,

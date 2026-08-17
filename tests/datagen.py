@@ -5,7 +5,15 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
-from app.db.models.core import AppUser, RunInput, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunInput,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from app.db.models.job_queue import QueuedJob
 from app.services.job_utils import UserJobListRow
 
@@ -67,6 +75,10 @@ class S3ObjectFactory(SQLAlchemyFactory[S3Object]):
 
 
 class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
+    __set_relationships__ = False
+
+
+class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
     __set_relationships__ = False
 
 

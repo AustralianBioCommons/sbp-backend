@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from ..schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -43,8 +43,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
-    mode: str,
-    form_data: WorkflowFormData,
     user_details: WorkflowUserDetails,
     commit: bool = False,
 ) -> QueuedJob:
@@ -65,13 +63,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 
     dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
     default_params = get_bindflow_default_params(out_dir, dataset_url)
-
-    default_params["mode"] = mode
-
-    # Merge any tool-specific params forwarded from the frontend form
-    for key, value in form_data.extra_fields.items():
-        if key not in default_params and value is not None:
-            default_params[key] = value
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)

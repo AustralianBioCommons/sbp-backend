@@ -16,28 +16,37 @@ from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import QueuedJob
-from ..db.models.core import AppUser, RunInput, RunMetric, S3Object, Workflow, WorkflowRun
-from ..schemas.workflows import (
+from ..db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunInput,
+    RunMetric,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
+from ..schemas.workflows.interaction_screening import WispsDatasetUploadRequest, WispsFormData
+from ..schemas.workflows.shared import (
     DatasetUploadRequest,
     LaunchDetails,
     LaunchLogs,
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
-    SinglePredictionEntity,
-    WispsDatasetUploadRequest,
-    WispsFormData,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
     WorkflowUserDetails,
+)
+from ..schemas.workflows.single_prediction import (
+    SinglePredictionEntity,
     validate_single_prediction_entities,
 )
 from ..services.bindflow_executor import _get_required_env, prepare_bindflow_workflow
 from ..services.credits import (
     WorkflowCreditsResponse,
-    compute_cost,
     is_credits_enabled,
+    launch_credit_cost,
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
@@ -195,23 +204,6 @@ async def get_workflow_credits() -> WorkflowCreditsResponse:
     return WorkflowCreditsResponse(workflows=list(list_workflow_credit_configs()))
 
 
-def _launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
-    """Authoritative per-run cost for workflows charged server-side at launch.
-
-    Only de-novo (final designs) and single (constant) are charged today — their
-    quantity is fully determined by the launch payload. interaction/bulk are not
-    charged here (display-only); they return None.
-    """
-    cat = category.strip().lower()
-    if cat == "single-prediction":
-        return compute_cost(cat, tool, 1)
-    if cat == "de-novo-design":
-        if final_design_count is None or final_design_count < 1:
-            return None
-        return compute_cost(cat, tool, final_design_count)
-    return None
-
-
 @router.post(
     "/launch",
     response_model=WorkflowLaunchResponse,
@@ -301,7 +293,7 @@ async def launch_workflow(
     # (de-novo, single); interaction/bulk are display-only for now. Gated by the
     # ENABLE_CREDITS flag so the feature can be rolled out independently.
     run_credit_cost = (
-        _launch_credit_cost(requested_workflow, selected_tool, final_design_count)
+        launch_credit_cost(requested_workflow, selected_tool, final_design_count)
         if is_credits_enabled()
         else None
     )
@@ -314,6 +306,7 @@ async def launch_workflow(
             )
 
     run_id = uuid4()
+    workflow_name = workflow.name.lower()
     run_work_dir = f"{_get_required_env('WORK_DIR').rstrip('/')}/{run_id}"
     submission_timestamp = datetime.now(UTC)
 
@@ -341,10 +334,19 @@ async def launch_workflow(
     s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
     if db_session.get(S3Object, s3_input_key) is None:
         db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key))
+    input_destination = (
+        f"{_get_required_env('WORK_DIR').rstrip('/')}/input/{workflow_name}/{run_id}/"
+    )
+    input_transfer = DataTransfer(
+        workflow_run_id=run_id,
+        direction="input",
+        provider="s3",
+        source_location=s3_input_uri,
+        destination_location=input_destination,
+    )
+    db_session.add(input_transfer)
+    db_session.add(RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer))
     db_session.flush()
-
-    workflow_name = workflow.name.lower()
 
     # All workflows require config_path. Validate before the try block
     # so that HTTPException is not swallowed by the generic except Exception handler.
@@ -419,8 +421,6 @@ async def launch_workflow(
                     config_path=workflow.config_path,
                     revision=workflow.default_revision,
                     output_id=str(run_id),
-                    mode=tool_mode,
-                    form_data=payload.formData,
                     user_details=user_details,
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):

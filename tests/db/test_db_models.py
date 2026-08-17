@@ -166,9 +166,11 @@ def test_run_input_model():
     column_names = {col.key for col in mapper.columns}
     assert "run_id" in column_names
     assert "s3_object_id" in column_names
+    assert "data_transfer_id" in column_names
 
     assert hasattr(RunInput, "run")
     assert hasattr(RunInput, "s3_object")
+    assert hasattr(RunInput, "data_transfer")
 
     # Check composite primary key
     primary_keys = [col.name for col in RunInput.__table__.primary_key.columns]
@@ -184,9 +186,11 @@ def test_run_output_model():
     column_names = {col.key for col in mapper.columns}
     assert "run_id" in column_names
     assert "s3_object_id" in column_names
+    assert "data_transfer_id" in column_names
 
     assert hasattr(RunOutput, "run")
     assert hasattr(RunOutput, "s3_object")
+    assert hasattr(RunOutput, "data_transfer")
 
     # Check composite primary key
     primary_keys = [col.name for col in RunOutput.__table__.primary_key.columns]

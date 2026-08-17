@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import QueuedJob
-from app.db.models.core import AppUser, RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
 from app.services.seqera_errors import SeqeraConfigurationError
 
@@ -161,6 +161,22 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
         queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
         assert queued_job.status == "pending"
+
+        run_input = db.scalar(select(RunInput).where(RunInput.run_id == created_run.id))
+        assert run_input is not None
+        assert run_input.data_transfer_id is not None
+        input_transfer = db.scalar(
+            select(DataTransfer).where(DataTransfer.id == run_input.data_transfer_id)
+        )
+        assert input_transfer is not None
+        assert input_transfer.workflow_run_id == created_run.id
+        assert input_transfer.direction == "input"
+        assert input_transfer.provider == "s3"
+        assert input_transfer.source_location.endswith(payload["s3InputKey"])
+        assert input_transfer.status == "pending"
+        assert input_transfer.destination_location.endswith(
+            f"input/de-novo-design/{created_run.id}/"
+        )
 
 
 @patch("app.routes.workflows.prepare_bindflow_workflow")
@@ -404,7 +420,7 @@ def test_list_runs_placeholder(client: TestClient):
 
 
 def _form_data(**extra):
-    from app.schemas.workflows import WorkflowFormData
+    from app.schemas.workflows.shared import WorkflowFormData
 
     return WorkflowFormData(workflow="de-novo-design", tool="bindcraft", **extra)
 

@@ -9,11 +9,8 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import (
-    WispsFormData,
-    WorkflowLaunchForm,
-    WorkflowUserDetails,
-)
+from app.schemas.workflows.interaction_screening import WispsFormData
+from app.schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.seqera import (
     WorkflowExecutorError,

@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import hmac
+import io
 import json
 import os
 import secrets
@@ -17,9 +19,9 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy import inspect as sqla_inspect
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
@@ -28,13 +30,15 @@ from starlette_admin._types import RequestAction
 from starlette_admin.actions import link_row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
-from starlette_admin.fields import HasOne, StringField
+from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..routes.dependencies import get_db
+from ..services.credits import launch_credit_cost
 from . import engine
 from .models.core import (
     AppUser,
+    DataTransfer,
     RunInput,
     RunMetric,
     RunOutput,
@@ -72,6 +76,10 @@ def _decode_admin_pk(value: object) -> str:
     raw = str(value)
     padding = "=" * (-len(raw) % 4)
     return base64.urlsafe_b64decode(raw + padding).decode("utf-8")
+
+
+def _has_column(model: type, column_name: str) -> bool:
+    return column_name in model.__table__.columns.keys()
 
 
 class AppUserAdmin(ModelView):
@@ -158,6 +166,36 @@ class WorkflowAdmin(ModelView):
         return f"{obj.name}"
 
 
+class NciServiceUnitsField(FloatField):
+    """Displays ``service_usage`` rounded to 2 decimal places.
+
+    Only the display value is rounded; create/edit forms still show and accept
+    the raw, full-precision value stored in the DB.
+    """
+
+    async def serialize_value(self, request: Request, value: Any, action: RequestAction) -> float:
+        value = float(value)
+        if action in (RequestAction.LIST, RequestAction.DETAIL):
+            return round(value, 2)
+        return value
+
+
+class SbpCreditField(IntegerField):
+    """SBP credit cost for a run, recomputed on the fly (not stored) using the
+    same formula charged at launch time, so it can be shown next to
+    ``service_usage`` for SU-to-credit calibration without a schema change.
+    None for categories not costed by that formula (e.g. bulk/interaction
+    screening). Excluded from create/edit forms via ``exclude_fields_from_*``
+    below, since it has nothing to write back.
+    """
+
+    async def parse_obj(self, request: Request, obj: Any) -> int | None:
+        if obj.workflow is None or not obj.tool:
+            return None
+        final_design_count = obj.metrics.final_design_count if obj.metrics else None
+        return launch_credit_cost(obj.workflow.name, obj.tool, final_design_count)
+
+
 class WorkflowRunAdmin(ModelView):
     fields = [
         "submission_timestamp",
@@ -168,17 +206,185 @@ class WorkflowRunAdmin(ModelView):
         "owner_user_id",
         "seqera_run_id",
         "run_name",
-        "service_usage",
+        NciServiceUnitsField("service_usage", label="NCI Service Units"),
+        SbpCreditField("sbp_credit", label="SBP Credit"),
         JSONField("submitted_form_data"),
         "binder_name",
         "work_dir",
+        "seqera_final_status",
+        "sync_completed_at",
         "id",
     ]
     exclude_fields_from_list = ["submitted_form_data"]
+    exclude_fields_from_create = ["sbp_credit"]
+    exclude_fields_from_edit = ["sbp_credit"]
+    # sbp_credit has no backing column, so it can't be an ORDER BY target.
+    sortable_fields = [
+        "submission_timestamp",
+        "workflow_id",
+        "tool",
+        "owner_user_id",
+        "seqera_run_id",
+        "run_name",
+        "service_usage",
+        "submitted_form_data",
+        "binder_name",
+        "work_dir",
+        "seqera_final_status",
+        "sync_completed_at",
+        "id",
+    ]
     fields_default_sort = [("submission_timestamp", True)]
+    # Adds a "CSV (all)" item to the built-in Export dropdown; see
+    # _WORKFLOW_RUN_EXPORT_ALL_JS below.
+    additional_js_links = ["/admin/assets/workflow-run-export.js"]
+
+    def get_list_query(self, request: Request) -> Any:
+        # SbpCreditField reads obj.metrics; eager-load it here to avoid an N+1
+        # lazy load per row (metrics isn't itself a listed field/RelationField,
+        # so starlette-admin's automatic joinedload doesn't cover it).
+        return super().get_list_query(request).options(joinedload(WorkflowRun.metrics))
+
+    def get_details_query(self, request: Request) -> Any:
+        return super().get_details_query(request).options(joinedload(WorkflowRun.metrics))
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.run_name}"
+
+    def get_search_query(self, request: Request, term: str) -> Any:
+        # `owner` is a HasOne relationship, not a plain column, so the
+        # default column-based search (ModelView.get_search_query) can only
+        # match the raw owner_user_id UUID, not the owner's name/email. Add a
+        # correlated EXISTS clause against AppUser so the dashboard's search
+        # box also matches by owner. A subquery is used instead of joining
+        # AppUser into the base list/count query, to avoid duplicating rows.
+        base_clause = super().get_search_query(request, term)
+        owner_clause = exists().where(
+            AppUser.id == WorkflowRun.owner_user_id,
+            or_(
+                AppUser.name.ilike(f"%{term}%"),
+                AppUser.email.ilike(f"%{term}%"),
+            ),
+        )
+        return or_(base_clause, owner_clause)
+
+
+def _build_workflow_runs_csv(session: Session) -> str:
+    """Build a CSV dump of every workflow run row.
+
+    Unlike the dashboard's own Export button (which only exports whatever
+    page of rows is currently loaded in the DataTable, capped at 100 by the
+    page-size selector), this runs a single unpaginated query.
+    """
+    include_sample_id = _has_column(WorkflowRun, "sample_id")
+
+    stmt = (
+        select(WorkflowRun)
+        .options(joinedload(WorkflowRun.owner), joinedload(WorkflowRun.workflow))
+        .order_by(WorkflowRun.submission_timestamp.desc())
+    )
+    runs = session.execute(stmt).scalars().unique().all()
+
+    header = [
+        "id",
+        "submission_timestamp",
+        "workflow_id",
+        "workflow_name",
+        "tool",
+        "owner_user_id",
+        "owner_name",
+        "owner_email",
+        "seqera_run_id",
+        "run_name",
+    ]
+    if include_sample_id:
+        header.append("sample_id")
+    header += ["service_usage", "binder_name", "work_dir"]
+
+    with io.StringIO() as buffer:
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+        for run in runs:
+            row = [
+                run.id,
+                run.submission_timestamp.isoformat() if run.submission_timestamp else None,
+                run.workflow_id,
+                run.workflow.name if run.workflow else None,
+                run.tool,
+                run.owner_user_id,
+                run.owner.name if run.owner else None,
+                run.owner.email if run.owner else None,
+                run.seqera_run_id,
+                run.run_name,
+            ]
+            if include_sample_id:
+                row.append(getattr(run, "sample_id", None))
+            row += [run.service_usage, run.binder_name, run.work_dir]
+            writer.writerow(row)
+        return buffer.getvalue()
+
+
+class WorkflowRunExportView(CustomView):
+    """Streams a CSV dump of every workflow run, bypassing list pagination.
+
+    Not shown in the sidebar (add_to_menu=False): it's invoked from the extra
+    item _WORKFLOW_RUN_EXPORT_ALL_JS adds to the list page's own Export
+    dropdown, so it only needs to exist as a route.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            label="Export Workflow Runs (CSV)",
+            path="/export/workflow-runs",
+            name="export-workflow-runs",
+            add_to_menu=False,
+        )
+
+    async def render(self, request: Request, templates: Any) -> Response:
+        session: Session = request.state.session
+        csv_content = _build_workflow_runs_csv(session)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="workflow_runs.csv"'},
+        )
+
+
+# Appends a "CSV (all)" item to the list page's existing Export dropdown (the
+# one with CSV/Excel/Print) the first time it's opened.
+# That built-in dropdown is rendered client-side by DataTables Buttons and,
+# under server-side pagination, can only ever export the currently loaded
+# page of rows -- there's no starlette-admin config for adding a server-side
+# item to it, so this hooks the DOM instead of forking the vendored list.js.
+_WORKFLOW_RUN_EXPORT_ALL_JS = """
+$(function () {
+  $(document).on("click", ".buttons-collection", function () {
+    setTimeout(function () {
+      var $collection = $(".dt-button-collection").last();
+      var $menu = $collection.find(".dropdown-menu");
+      if (!$menu.length) {
+        $menu = $collection;
+      }
+      if ($menu.find(".export-all-workflow-runs").length) {
+        return;
+      }
+      $menu.append('<div class="dropdown-divider"></div>');
+      var $btn = $(
+        '<a class="dt-button dropdown-item export-all-workflow-runs" href="/admin/export/workflow-runs">' +
+          '<i class="fa-solid fa-file-csv"></i> CSV (all)' +
+        "</a>"
+      );
+      $btn.on("click", function () {
+        var background = document.querySelector(".dt-button-background");
+        if (background) {
+          background.click();
+        }
+      });
+      $menu.append($btn);
+    }, 0);
+  });
+});
+"""
 
 
 class RunMetricAdmin(ModelView):
@@ -267,6 +473,28 @@ class RunOutputAdmin(UrlSafePrimaryKeyModelView):
         HasOne("run", identity="workflow-run"),
         HasOne("s3_object", identity="s3-object"),
     ]
+
+
+class DataTransferAdmin(ModelView):
+    fields = [
+        "id",
+        HasOne("workflow_run", identity="workflow-run"),
+        "direction",
+        "provider",
+        "source_location",
+        "destination_location",
+        "transfer_id",
+        "status",
+        JSONField("provider_metadata"),
+        "created_at",
+        "updated_at",
+        "error_message",
+    ]
+    exclude_fields_from_list = ["provider_metadata", "error_message"]
+    fields_default_sort = [("created_at", True)]
+
+    async def repr(self, obj: Any, request: Request) -> str:
+        return f"{obj.direction} transfer via {obj.provider}"
 
 
 class QueuedJobAdmin(ModelView):
@@ -501,7 +729,24 @@ def mount_db_admin(app: FastAPI) -> None:
     # Note: the /admin/api/system-status router is registered in main.py (also
     # before this mount) so it stays available independently of the dashboard.
     _mount_db_debug_api(app)
+    _mount_admin_ui_assets(app)
     _mount_starlette_admin(app)
+
+
+def _mount_admin_ui_assets(app: FastAPI) -> None:
+    """Serve small custom JS files used by the admin dashboard's list pages.
+
+    Registered before the greedy Starlette Admin mount for the same reason as
+    _mount_db_debug_api above. Gated behind admin auth for consistency with
+    the rest of the dashboard, though the JS itself has nothing sensitive in it.
+    """
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
+
+    @router.get("/admin/assets/workflow-run-export.js")
+    def workflow_run_export_js() -> Response:
+        return Response(content=_WORKFLOW_RUN_EXPORT_ALL_JS, media_type="application/javascript")
+
+    app.include_router(router)
 
 
 def _mount_starlette_admin(app: FastAPI) -> None:
@@ -730,9 +975,6 @@ def _mount_starlette_admin(app: FastAPI) -> None:
         ) -> str | None:
             return _mask_email(str(value) if value is not None else None)
 
-    def _has_column(model: type, column_name: str) -> bool:
-        return column_name in model.__table__.columns.keys()
-
     if _has_column(WorkflowRun, "sample_id"):
         WorkflowRunAdmin.fields.insert(-1, "sample_id")
 
@@ -760,9 +1002,11 @@ def _mount_starlette_admin(app: FastAPI) -> None:
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))
     admin.add_view(WorkflowRunAdmin(WorkflowRun))
+    admin.add_view(WorkflowRunExportView())
     admin.add_view(RunMetricAdmin(RunMetric))
     admin.add_view(RunInputAdmin(RunInput))
     admin.add_view(RunOutputAdmin(RunOutput))
+    admin.add_view(DataTransferAdmin(DataTransfer))
     admin.add_view(S3ObjectAdmin(S3Object))
     admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
     admin.add_view(

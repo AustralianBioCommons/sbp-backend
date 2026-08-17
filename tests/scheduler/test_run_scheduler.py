@@ -44,22 +44,31 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
 
     assert [job_config["id"] for _, job_config in scheduler.added_jobs] == [
         "submit_pending_jobs",
+        "sync_completed_workflow_runs",
         "refresh_user_credits",
     ]
 
-    submit_func, submit_config = scheduler.added_jobs[0]
+    submit_job, sync_job, refresh_job = scheduler.added_jobs
+    submit_func, submit_config = submit_job
     assert submit_func is run_scheduler.submit_pending_jobs
     assert submit_config["kwargs"] == {"dry_run": True}
     assert submit_config["jobstore"] == "memory"
     assert submit_config["trigger"] is run_scheduler.SUBMIT_INTERVAL
 
-    refresh_func, refresh_config = scheduler.added_jobs[1]
+    sync_func, sync_config = sync_job
+    assert sync_func is run_scheduler.sync_completed_workflow_runs
+    assert sync_config["kwargs"] == {"dry_run": True}
+    assert sync_config["jobstore"] == "memory"
+    assert sync_config["trigger"] is run_scheduler.SYNC_INTERVAL
+
+    refresh_func, refresh_config = scheduler.added_jobs[2]
     assert refresh_func is run_scheduler.refresh_user_credits
     assert refresh_config["jobstore"] == "db"
     assert refresh_config["trigger"] == run_scheduler.MONTHLY_TRIGGER
 
     assert scheduler.events == [
         ("add_job", "submit_pending_jobs"),
+        ("add_job", "sync_completed_workflow_runs"),
         ("add_job", "refresh_user_credits"),
         ("start", None),
         ("shutdown", None),

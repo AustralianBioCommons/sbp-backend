@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.schemas.workflows import WispsSequenceItem
+from app.schemas.workflows.interaction_screening import WispsSequenceItem
 from app.services.datasets import (
     BULK_PREDICTION_BASE_PATH,
     INTERACTION_SCREENING_BASE_PATH,

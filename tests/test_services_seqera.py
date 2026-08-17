@@ -13,7 +13,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.bindflow_executor import (
     _get_required_env,
     launch_bindflow_workflow,
@@ -151,11 +151,6 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
         runName="queued-bindflow-run",
         paramsText="custom_param: value",
     )
-    form_data = WorkflowFormData(
-        workflow="de-novo-design",
-        tool="bindcraft",
-        number_of_final_designs=3,
-    )
 
     with (
         patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
@@ -172,8 +167,6 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             config_path=_CONFIG_PATH,
             revision="main",
             output_id="run-output-id",
-            mode="bindcraft",
-            form_data=form_data,
             user_details=_USER_DETAILS,
         )
 
@@ -201,8 +194,7 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
         "input: s3://my-bucket/inputs/samplesheets/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
-    assert "mode: bindcraft" in queued_job.launch_payload["paramsText"]
-    assert "number_of_final_designs: 3" in queued_job.launch_payload["paramsText"]
+    assert "mode:" not in queued_job.launch_payload["paramsText"]
     assert "custom_param: value" in queued_job.launch_payload["paramsText"]
 
 

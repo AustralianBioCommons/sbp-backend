@@ -6,14 +6,17 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
+from ..db.models.core import AppUser
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
-from ..schemas.workflows import WorkflowName
+from ..schemas.workflows.shared import WorkflowName
 from ..services import health, seqera
 from ..services.bindflow_executor import launch_bindflow_workflow
+from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
+from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
@@ -28,6 +31,7 @@ RETRY_DELAY_BASE = 5 * 60
 # them (Nextflow's queueSize), so 25 workflows can run concurrently. Hardcoded as a
 # temporary MVP value, configurable via env var.
 MAX_CONCURRENT_WORKFLOWS = int(os.getenv("MAX_CONCURRENT_WORKFLOWS", "25"))
+WORKFLOW_SYNC_BATCH_LIMIT = int(os.getenv("WORKFLOW_SYNC_BATCH_LIMIT", "50"))
 
 
 class LaunchFunction(Protocol):
@@ -186,4 +190,70 @@ def submit_pending_jobs(dry_run: bool = False):
 
 
 def refresh_user_credits(dry_run: bool = False):
-    logger.info("TODO: refresh user credits - not implemented yet")
+    """Reset every SBP-approved user's credit to the standard monthly allowance.
+
+    Scoped to users who have already been through the one-time bundle grant
+    (``sbp_bundle_credit_granted_at IS NOT NULL``) so accounts that merely
+    logged in without ever having their workflow-execution role approved
+    don't get free credit, and so a role approval landing between refreshes
+    can never race the grant's own IS NULL guard (app/routes/dependencies.py).
+    """
+    db_session = next(get_db())
+    approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
+    if dry_run:
+        user_count = db_session.scalar(
+            select(func.count()).select_from(AppUser).where(approved_filter)
+        )
+        logger.info(
+            f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
+            f"{user_count} approved user(s)."
+        )
+        return
+
+    result = cast(
+        CursorResult,
+        db_session.execute(
+            update(AppUser)
+            .where(approved_filter)
+            .values(
+                credit=SBP_USER_CREDIT_ALLOWANCE,
+                credit_updated_at=datetime.now(UTC),
+                credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+            )
+        ),
+    )
+    db_session.commit()
+    logger.info(
+        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} approved "
+        "user(s)."
+    )
+
+
+def sync_completed_workflow_runs(dry_run: bool = False):
+    logger.info("Checking for completed workflow runs to sync...")
+    db_session = next(get_db())
+    if dry_run:
+        runs = get_runs_requiring_sync(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT)
+        logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
+        return
+
+    ok_to_sync = is_seqera_available(db_session)
+    if not ok_to_sync:
+        logger.warning("Skipping workflow run result sync while system status is unhealthy.")
+        return
+
+    result = asyncio.run(sync_workflow_runs(db_session, limit=WORKFLOW_SYNC_BATCH_LIMIT))
+    logger.info(
+        "Finished syncing workflow runs: "
+        f"checked={result.checked}, completed={result.completed}, "
+        f"skipped={result.skipped}, errored={result.errored}."
+    )
+    for run_result in result.results:
+        if run_result.error is None:
+            continue
+        logger.warning(
+            "Workflow run sync failed: "
+            f"run_id={run_result.run_id}, "
+            f"seqera_run_id={run_result.seqera_run_id}, "
+            f"error={run_result.error}"
+        )

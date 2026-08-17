@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import mimetypes
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ...schemas.workflows import (
+from ...schemas.workflows.shared import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
     ResultLogsResponse,
@@ -25,6 +27,7 @@ from ...services.results_utils import (
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
+    read_result_output_file,
     resolve_run_form_data,
 )
 from ...services.s3 import S3ConfigurationError, S3ServiceError
@@ -33,6 +36,16 @@ from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
 from ..dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["results"], dependencies=[Depends(get_current_user_id)])
+
+# Result artifacts the portal reads as text; anything else is left as a download.
+_TEXT_RESULT_SUFFIXES = {".pdb", ".cif", ".mmcif", ".ent", ".tsv", ".csv", ".a3m", ".txt"}
+
+
+def _guess_result_media_type(label: str) -> str:
+    suffix = Path(label).suffix.lower()
+    if suffix in _TEXT_RESULT_SUFFIXES:
+        return "text/plain; charset=utf-8"
+    return mimetypes.guess_type(label)[0] or "application/octet-stream"
 
 
 @router.get("/{run_id}/settingParams", response_model=JobSettingParamsResponse)
@@ -157,6 +170,43 @@ async def get_result_downloads(
     return ResultDownloadsResponse(
         runId=run_id,
         downloads=downloads,
+    )
+
+
+@router.get("/{run_id}/file")
+async def get_result_file(
+    run_id: str,
+    key: str = Query(..., description="S3 object key of one of this run's outputs"),
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Serve one result artifact through the API.
+
+    The portal renders some artifacts in the browser (structure files, PAE
+    matrices), which needs a same-origin read. Pre-signed S3 URLs only work for
+    plain downloads because the results bucket serves no CORS headers.
+    """
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    try:
+        content, label = await read_result_output_file(db, owned_run, key)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found for this run"
+        ) from exc
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return Response(
+        content=content,
+        media_type=_guess_result_media_type(label),
+        headers={"Content-Disposition": f'inline; filename="{Path(label).name}"'},
     )
 
 

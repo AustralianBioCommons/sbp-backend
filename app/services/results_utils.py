@@ -16,8 +16,13 @@ from zipfile import ZipFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models.core import RunOutput, S3Object, WorkflowRun
-from ..schemas.workflows import ResultDownloadItem, ResultLogEntry, WorkflowName, WorkflowTool
+from ..db.models.core import DataTransfer, RunOutput, S3Object, WorkflowRun
+from ..schemas.workflows.shared import (
+    ResultDownloadItem,
+    ResultLogEntry,
+    WorkflowName,
+    WorkflowTool,
+)
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -385,10 +390,9 @@ def get_workflow_name(run: WorkflowRun) -> WorkflowName | None:
         return None
 
     workflow_name: str = run.workflow.name
-    assert workflow_name in get_args(WorkflowName), (
-        f"Workflow name {workflow_name!r} not recognized: "
-        f"expected one of {get_args(WorkflowName)}"
-    )
+    assert workflow_name in get_args(
+        WorkflowName
+    ), f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
     return cast(WorkflowName, workflow_name)
 
 
@@ -879,6 +883,11 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
     existing_keys = set(_get_run_output_keys(db, run))
     changed = False
 
+    # Every workflow config publishes its results under this same run-scoped
+    # prefix, whether the pipeline calls the param "outdir" (bindflow,
+    # proteinfold, wisps) or "out_dir" (proteindj) - the value is identical.
+    run_outdir = _build_s3_uri(str(run.id))
+
     for key in keys:
         normalized = key.strip()
         if not normalized or normalized in existing_keys:
@@ -892,7 +901,15 @@ def _sync_run_output_records(db: Session, run: WorkflowRun, keys: list[str]) -> 
             )
             db.add(s3_object)
 
-        db.add(RunOutput(run_id=run.id, s3_object_id=normalized))
+        output_transfer = DataTransfer(
+            workflow_run_id=run.id,
+            direction="output",
+            provider="s3",
+            source_location=run_outdir,
+            destination_location=s3_object.uri,
+        )
+        db.add(output_transfer)
+        db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))
         existing_keys.add(normalized)
         changed = True
 
@@ -1031,6 +1048,31 @@ async def get_result_output_downloads(db: Session, run: WorkflowRun) -> list[Res
         )
 
     return downloads
+
+
+async def read_result_output_file(db: Session, run: WorkflowRun, key: str) -> tuple[bytes, str]:
+    """
+    Read one result file and return (content, label).
+
+    Only reads keys this run produced, so callers cannot reach other objects in
+    the bucket.
+
+    Raises:
+        KeyError: If the key is not one of this run's outputs.
+    """
+    results_spec = get_output_spec(run)
+    outputs = collect_classified_outputs(db, run, results_spec)
+
+    if key not in outputs:
+        outputs.update(
+            await list_workflow_outputs_from_s3(run, results_spec, suppress_s3_errors=False)
+        )
+
+    output = outputs.get(key)
+    if output is None or output.category in ("snapshot", "usage"):
+        raise KeyError(key)
+
+    return await read_s3_bytes(key), output.label
 
 
 async def get_all_downloads_zipped(db: Session, run: WorkflowRun) -> BytesIO:

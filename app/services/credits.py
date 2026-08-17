@@ -19,12 +19,22 @@ from typing import cast
 
 from pydantic import BaseModel, Field
 
-from ..schemas.workflows import WorkflowName, WorkflowTool
+from ..schemas.workflows.shared import WorkflowName, WorkflowTool
 
 
 def is_credits_enabled() -> bool:
     """Whether credit checking/deduction is active (env ``ENABLE_CREDITS``)."""
     return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
+
+
+# Standard SBP user credit allowance: the one-time bundle grant applied when a
+# user's workflow-execution role is first approved, and the amount every
+# user's balance is reset to on the monthly refresh.
+SBP_USER_CREDIT_ALLOWANCE = 1000
+
+# credit_updated_by labels for the two paths that apply SBP_USER_CREDIT_ALLOWANCE.
+SBP_BUNDLE_CREDIT_ACTOR = "sbp bundle approval"
+MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
 
 
 class CreditBasis(StrEnum):
@@ -128,3 +138,20 @@ def compute_cost(category: str, tool: str, quantity: int) -> int | None:
     if multiplier is None:
         return None
     return multiplier * max(0, quantity)
+
+
+def launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
+    """Authoritative per-run cost for workflows charged server-side at launch.
+
+    Only de-novo (final designs) and single (constant) are charged today — their
+    quantity is fully determined by the launch payload. interaction/bulk are not
+    charged here (display-only); they return None.
+    """
+    cat = category.strip().lower()
+    if cat == "single-prediction":
+        return compute_cost(cat, tool, 1)
+    if cat == "de-novo-design":
+        if final_design_count is None or final_design_count < 1:
+            return None
+        return compute_cost(cat, tool, final_design_count)
+    return None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -12,8 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from ...db.models.core import RunInput, RunMetric, RunOutput, WorkflowRun
-from ...schemas.workflows import (
+from ...db.models.core import DataTransfer, RunInput, RunMetric, RunOutput, WorkflowRun
+from ...schemas.workflows.shared import (
+    TERMINAL_SEQERA_STATUSES,
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,
     CancelWorkflowResponse,
@@ -62,6 +64,26 @@ def _resolve_final_design_count(owned_run: WorkflowRun | None) -> int | None:
         return None
     value = owned_run.metrics.final_design_count
     return value if isinstance(value, int) else None
+
+
+def _resolve_stored_score(owned_run: WorkflowRun | None) -> float | None:
+    if not owned_run or not owned_run.metrics:
+        return None
+    value = owned_run.metrics.max_score
+    if value is None:
+        return None
+    if isinstance(value, (float, int, Decimal)):
+        return round(float(value), 3)
+    return None
+
+
+def _get_stored_terminal_ui_status(run: WorkflowRun) -> str | None:
+    if run.seqera_final_status is None:
+        return None
+    status = run.seqera_final_status.strip().upper()
+    if status not in TERMINAL_SEQERA_STATUSES:
+        return None
+    return map_pipeline_status_to_ui(status)
 
 
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
@@ -134,10 +156,14 @@ async def list_jobs(
             )
             return user_run.run_id, {}
 
+    # Only need to get status from seqera for runs
+    #   that are currently running
     seqera_fetch_rows = [
         user_run
         for user_run in user_runs
-        if user_run.seqera_run_id and user_run.queued_status not in {"pending", "failed"}
+        if user_run.seqera_run_id
+        and user_run.queued_status not in {"pending", "failed"}
+        and not user_run.run.is_seqera_finalized()
     ]
     seqera_results = dict(
         await asyncio.gather(*(_fetch_seqera(user_run) for user_run in seqera_fetch_rows))
@@ -151,12 +177,14 @@ async def list_jobs(
         owned_run = user_run.run
         seqera_run_id = user_run.seqera_run_id
 
-        seqera_payload: dict[str, object] = {}
+        seqera_payload: dict[str, object] | None = None
         ui_status = "N/A"
         if user_run.queued_status == "pending":
             ui_status = "Pending"
         elif user_run.queued_status == "failed":
             ui_status = "Failed"
+        elif stored_ui_status := _get_stored_terminal_ui_status(owned_run):
+            ui_status = stored_ui_status
         elif seqera_run_id:
             fetched_payload = seqera_results.get(run_id)
             if fetched_payload is None:
@@ -164,7 +192,7 @@ async def list_jobs(
                 continue
             if fetched_payload:
                 seqera_payload = fetched_payload
-                pipeline_status = extract_pipeline_status(seqera_payload)
+                pipeline_status = extract_pipeline_status(fetched_payload)
                 ui_status = map_pipeline_status_to_ui(pipeline_status)
             else:
                 seqera_unavailable = True
@@ -172,12 +200,12 @@ async def list_jobs(
         if allowed_statuses and ui_status not in allowed_statuses:
             continue
 
-        wf = coerce_workflow_payload(seqera_payload)
-        submitted_at = parse_submit_datetime(seqera_payload)
-        if submitted_at is None and owned_run.submission_timestamp:
-            submitted_at = owned_run.submission_timestamp
-        if submitted_at is None:
-            submitted_at = datetime.now(UTC)
+        wf = coerce_workflow_payload(seqera_payload or {})
+        submitted_at = (
+            parse_submit_datetime(seqera_payload or {})
+            or owned_run.submission_timestamp
+            or datetime.now(UTC)
+        )
 
         workflow_type = user_run.workflow_type
         tool = user_run.tool
@@ -198,11 +226,13 @@ async def list_jobs(
             ui_status = "Completed"
 
         score = db_score
-        if score is None:
+        sync_incomplete = owned_run.sync_completed_at is None
+        if score is None and sync_incomplete:
             score = await ensure_completed_run_score(db, owned_run, ui_status)
 
-        # Also sync service usage for runs, if needed
-        if owned_run.service_usage is None:
+        # Keep request-time sync as a fallback only until the scheduler has
+        # completed result syncing for this run.
+        if sync_incomplete and owned_run.service_usage is None:
             await sync_service_usage(db, run=owned_run, ui_status=ui_status)
 
         jobs.append(
@@ -242,31 +272,49 @@ async def get_job_details(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if not owned_run.seqera_run_id:
+    stored_ui_status = _get_stored_terminal_ui_status(owned_run)
+    if not owned_run.seqera_run_id and stored_ui_status is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
         )
 
-    try:
-        payload = await describe_workflow(owned_run.seqera_run_id)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-    except SeqeraAPIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    seqera_payload: dict[str, object] | None = None
+    if stored_ui_status is None:
+        seqera_run_id = owned_run.seqera_run_id
+        if seqera_run_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
+            )
+        try:
+            seqera_payload = await describe_workflow(seqera_run_id)
+        except SeqeraConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
+        except SeqeraAPIError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    wf = coerce_workflow_payload(payload)
-    pipeline_status = extract_pipeline_status(payload)
-    ui_status = map_pipeline_status_to_ui(pipeline_status)
-    submitted_at = parse_submit_datetime(payload) or datetime.now(UTC)
+    wf = coerce_workflow_payload(seqera_payload or {})
+    ui_status = stored_ui_status
+    if ui_status is None and seqera_payload is not None:
+        pipeline_status = extract_pipeline_status(seqera_payload)
+        ui_status = map_pipeline_status_to_ui(pipeline_status)
+    if ui_status is None:
+        ui_status = "N/A"
+    submitted_at = (
+        parse_submit_datetime(seqera_payload or {})
+        or owned_run.submission_timestamp
+        or datetime.now(UTC)
+    )
 
-    score = await ensure_completed_run_score(db, owned_run, ui_status)
-    if ui_status != "Completed":
-        score = None
-    # Sync service usage - not returned to user but currently this is where
-    #   we trigger syncs
-    await sync_service_usage(db, run=owned_run, ui_status=ui_status)
+    score = None
+    if ui_status == "Completed":
+        score = _resolve_stored_score(owned_run)
+        sync_incomplete = owned_run.sync_completed_at is None
+        if score is None and sync_incomplete:
+            score = await ensure_completed_run_score(db, owned_run, ui_status)
+        if sync_incomplete and owned_run.service_usage is None:
+            await sync_service_usage(db, run=owned_run, ui_status=ui_status)
 
     raw_tool: str | None = getattr(owned_run, "tool", None) or None
     if not raw_tool:
@@ -328,6 +376,7 @@ async def delete_job(
     db.execute(delete(RunMetric).where(RunMetric.run_id == owned_run.id))
     db.execute(delete(RunInput).where(RunInput.run_id == owned_run.id))
     db.execute(delete(RunOutput).where(RunOutput.run_id == owned_run.id))
+    db.execute(delete(DataTransfer).where(DataTransfer.workflow_run_id == owned_run.id))
     if queued_job:
         db.delete(queued_job)
     db.delete(owned_run)
@@ -405,6 +454,7 @@ async def bulk_delete_jobs(
             db.execute(delete(RunMetric).where(RunMetric.run_id == run.id))
             db.execute(delete(RunInput).where(RunInput.run_id == run.id))
             db.execute(delete(RunOutput).where(RunOutput.run_id == run.id))
+            db.execute(delete(DataTransfer).where(DataTransfer.workflow_run_id == run.id))
             if queued_job := run.get_queued_job(session=db):
                 db.delete(queued_job)
             db.delete(run)

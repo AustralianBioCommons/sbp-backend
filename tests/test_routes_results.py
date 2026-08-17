@@ -9,10 +9,19 @@ from zipfile import ZipFile
 import pytest
 from fastapi import HTTPException
 
-from app.db.models.core import AppUser, RunMetric, RunOutput, S3Object, Workflow, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunMetric,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
 from app.routes.workflow.results import (
     get_result_download_all,
     get_result_downloads,
+    get_result_file,
     get_result_logs,
     get_result_report,
     get_result_setting_params,
@@ -31,6 +40,18 @@ def _configure_bindcraft_run(run: WorkflowRun) -> None:
         config_path="/config/de-novo-design.config",
     )
     run.submitted_form_data = {"mode": "bindcraft"}
+
+
+def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
+    """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
+    transfer = DataTransfer(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        source_location=f"/work/{object_key}",
+        destination_location=f"s3://bucket/{object_key}",
+    )
+    return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
 
 @pytest.mark.asyncio
@@ -371,7 +392,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
     ]
     test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -425,7 +446,7 @@ async def test_get_result_download_all_returns_valid_zip_file(test_db, persisten
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all(outputs)
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     async def read_bytes(key: str) -> bytes:
@@ -529,7 +550,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
     ]
     test_db.add_all(outputs)
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -663,7 +684,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
     ]
     test_db.add_all([user, run, workflow, *outputs])
     test_db.commit()
-    test_db.add_all([RunOutput(run_id=run.id, s3_object_id=item.object_key) for item in outputs])
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
     with (
@@ -775,7 +796,7 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
     )
     test_db.add_all([user, run, report])
     test_db.commit()
-    test_db.add(RunOutput(run_id=run.id, s3_object_id=report.object_key))
+    test_db.add(_make_run_output(run, report.object_key))
     test_db.commit()
 
     with (
@@ -1131,3 +1152,124 @@ async def test_get_result_download_all_maps_s3_service_error_to_502(test_db):
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
+
+
+# --- GET /{run_id}/file -------------------------------------------------------
+
+
+def _make_boltz_prediction_run(test_db, suffix: str) -> tuple[AppUser, WorkflowRun, str, str]:
+    """Create a single-prediction run with a structure and a PAE output tracked."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="boltz",
+        seqera_run_id=f"wf-file-{suffix}",
+        sample_id="T1024",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    structure_key = f"{run.id}/boltz/top_ranked_structures/T1024.cif"
+    pae_key = f"{run.id}/boltz/T1024/paes/T1024_0_pae.tsv"
+    outputs = [
+        S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in (structure_key, pae_key)
+    ]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    return user, run, structure_key, pae_key
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_returns_structure_as_text(test_db, persistent_models):
+    user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "structure")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=b"data_T1024\n"),
+    ):
+        response = await get_result_file(str(run.id), structure_key, user.id, test_db)
+
+    assert response.body == b"data_T1024\n"
+    assert response.media_type == "text/plain; charset=utf-8"
+    assert response.headers["content-disposition"] == 'inline; filename="T1024.cif"'
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_returns_pae_matrix_as_text(test_db, persistent_models):
+    user, run, _, pae_key = _make_boltz_prediction_run(test_db, "pae")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=b"0\t1\n1\t0\n"),
+    ):
+        response = await get_result_file(str(run.id), pae_key, user.id, test_db)
+
+    assert response.body == b"0\t1\n1\t0\n"
+    assert response.media_type == "text/plain; charset=utf-8"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_rejects_a_key_the_run_does_not_own(test_db, persistent_models):
+    user, run, _, _ = _make_boltz_prediction_run(test_db, "foreign-key")
+
+    with patch(
+        "app.services.results_utils.list_workflow_outputs_from_s3",
+        new=AsyncMock(return_value={}),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(str(run.id), "other-run/secrets.env", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "File not found for this run"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_requires_an_owned_run(test_db):
+    user = AppUser(
+        auth0_user_id="auth0|file-not-owner",
+        name="File Not Owner",
+        email="file-not-owner@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_file("00000000-0000-0000-0000-000000000000", "any/key", user.id, test_db)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_maps_s3_service_error_to_502(test_db, persistent_models):
+    user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "s3-error")
+
+    with patch(
+        "app.routes.workflow.results.read_result_output_file",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(str(run.id), structure_key, user.id, test_db)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream error"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_maps_s3_configuration_error_to_500(test_db, persistent_models):
+    user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "s3-config")
+
+    with patch(
+        "app.routes.workflow.results.read_result_output_file",
+        new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(str(run.id), structure_key, user.id, test_db)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "s3 config missing"

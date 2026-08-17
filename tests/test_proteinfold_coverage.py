@@ -11,7 +11,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,
@@ -485,7 +485,7 @@ def test_get_proteinfold_default_params_required_keys():
     assert params["outdir"] == "s3://bucket/out"
     assert params["input"] == "https://sheet.url"
     assert "mode" in params
-    assert "project" in params
+    assert "project" not in params
 
 
 def test_get_proteinfold_default_params_mode_substitution():

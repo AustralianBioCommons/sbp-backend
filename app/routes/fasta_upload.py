@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from ..schemas.workflows import FastaUploadResponse
+from ..schemas.workflows.shared import FastaUploadResponse
 from ..services.s3 import (
     S3ConfigurationError,
     S3ServiceError,
