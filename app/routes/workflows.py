@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import string
@@ -56,9 +57,16 @@ from ..services.datasets import (
     upload_csv_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
+from ..services.globus_transfer import build_gadi_input_path
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
-from ..services.s3 import S3ConfigurationError, S3ServiceError, generate_presigned_url
+from ..services.results_utils import s3_uri_to_key
+from ..services.s3 import (
+    S3ConfigurationError,
+    S3ServiceError,
+    generate_presigned_url,
+    read_csv_from_s3,
+)
 from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
 from .dependencies import (
@@ -184,6 +192,124 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+
+async def _stage_referenced_samplesheet_file(
+    *,
+    db_session: Session,
+    s3_input_key: str,
+    field_name: str,
+    run_id: UUID,
+    workflow_name: str,
+) -> str:
+    """Stage a file referenced by a samplesheet column to Gadi via Globus, and
+    return the s3InputKey of a corrected samplesheet with that column rewritten
+    to the local path.
+
+    Some samplesheets (bindcraft's starting_pdb, proteinfold's fasta) carry a raw
+    S3 URI to a separately-uploaded file. Globus stages the samplesheet CSV to
+    Gadi as-is, but the pipeline reads that column as a local file path, not an
+    S3 URI (unlike ProteinDJ, which takes its pdb path as a direct pipeline
+    param, never via a samplesheet) - so the referenced file must be staged
+    separately and the samplesheet corrected to point at where it lands.
+    """
+    try:
+        samplesheet_rows = await read_csv_from_s3(s3_input_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+        ) from exc
+    if not samplesheet_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Samplesheet at s3InputKey is empty.",
+        )
+    samplesheet_row = samplesheet_rows[0]
+    source_uri = (samplesheet_row.get(field_name) or "").strip()
+    if not source_uri:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"'{field_name}' is required in the samplesheet for {workflow_name}.",
+        )
+    source_key = s3_uri_to_key(source_uri)
+    if not source_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid S3 URI for {field_name}.",
+        )
+    if db_session.get(S3Object, source_key) is None:
+        db_session.add(S3Object(object_key=source_key, uri=source_uri))
+    staged_location = build_gadi_input_path(run_id, workflow_name, os.path.basename(source_key))
+    db_session.add(
+        RunInput(
+            run_id=run_id,
+            s3_object_id=source_key,
+            data_transfer=DataTransfer(
+                workflow_run_id=run_id,
+                direction="input",
+                provider="globus",
+                source_location=source_uri,
+                destination_location=staged_location,
+            ),
+        )
+    )
+    samplesheet_row[field_name] = staged_location
+    try:
+        csv_upload = await upload_csv_to_s3(samplesheet_row)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to re-upload corrected samplesheet: {exc}",
+        ) from exc
+    return csv_upload.file_key
+
+
+def _stage_wisps_fasta(
+    *, db_session: Session, fasta_uri: str, run_id: UUID, workflow_name: str
+) -> None:
+    """Stage the aggregated multi-sequence FASTA (formData.fastaS3Uri) to Gadi via
+    Globus.
+
+    Unlike bindcraft/proteinfold, WISPS's samplesheet never references this file
+    directly - each row instead references a future per-sequence split file
+    under formData.splitOutputDir, produced by the prerun script. So there's no
+    samplesheet column to rewrite here, just the raw file to stage so that
+    split step has something local to read.
+    """
+    fasta_key = s3_uri_to_key(fasta_uri)
+    if not fasta_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid S3 URI for fastaS3Uri.",
+        )
+    if db_session.get(S3Object, fasta_key) is None:
+        db_session.add(S3Object(object_key=fasta_key, uri=fasta_uri))
+    db_session.add(
+        RunInput(
+            run_id=run_id,
+            s3_object_id=fasta_key,
+            data_transfer=DataTransfer(
+                workflow_run_id=run_id,
+                direction="input",
+                provider="globus",
+                source_location=fasta_uri,
+                destination_location=build_gadi_input_path(
+                    run_id, workflow_name, os.path.basename(fasta_key)
+                ),
+            ),
+        )
+    )
 
 
 @router.post("/me/sync")
@@ -373,6 +499,72 @@ async def launch_workflow(
     if workflow_name in ("single-prediction", "proteinfold"):
         _validate_single_prediction_form(payload.formData, selected_tool)
 
+    # Validation above must run before any of this, since it involves real S3/Globus
+    # I/O that a malformed request shouldn't pay the cost of (and shouldn't be able
+    # to trigger before its own formData is validated).
+    is_rfdiffusion_launch = (
+        workflow_name in ("de-novo-design", "bindflow", "bindcraft")
+        and selected_tool.lower() == "rfdiffusion"
+    )
+    is_bindcraft_launch = (
+        workflow_name in ("de-novo-design", "bindflow", "bindcraft") and not is_rfdiffusion_launch
+    )
+    is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
+    is_wisps_launch = workflow_name in ("interaction-screening", "bulk-prediction")
+    if is_bindcraft_launch:
+        s3_input_key = await _stage_referenced_samplesheet_file(
+            db_session=db_session,
+            s3_input_key=s3_input_key,
+            field_name="starting_pdb",
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+    elif is_proteinfold_launch:
+        s3_input_key = await _stage_referenced_samplesheet_file(
+            db_session=db_session,
+            s3_input_key=s3_input_key,
+            field_name="fasta",
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+    elif is_wisps_launch:
+        assert wisps_form_data is not None
+        _stage_wisps_fasta(
+            db_session=db_session,
+            fasta_uri=wisps_form_data.fastaS3Uri,
+            run_id=run_id,
+            workflow_name=workflow_name,
+        )
+
+    staged_input_location: str | None = None
+    if not is_rfdiffusion_launch:
+        # rfdiffusion (ProteinDJ) has no samplesheet: s3InputKey for it is the
+        # starting PDB's own S3 URI, not a bare key (see de-novo-design.ts, which
+        # skips the samplesheet upload for this tool and reuses starting_pdb's URI
+        # directly). prepare_proteindj_workflow stages that PDB itself via its own
+        # DataTransfer, so staging "s3InputKey" here too would both double-prefix
+        # the URI (it's already a full s3:// URI, not a bare key) and create a
+        # second, unused DataTransfer for the same file.
+        s3_bucket = settings.aws.s3_bucket
+        s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
+        if db_session.get(S3Object, s3_input_key) is None:
+            db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
+        staged_input_location = build_gadi_input_path(
+            run_id, workflow_name, os.path.basename(s3_input_key)
+        )
+        input_transfer = DataTransfer(
+            workflow_run_id=run_id,
+            direction="input",
+            provider="globus",
+            source_location=s3_input_uri,
+            destination_location=staged_input_location,
+        )
+        db_session.add(input_transfer)
+        db_session.add(
+            RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer)
+        )
+        db_session.flush()
+
     try:
         queued_job: QueuedJob
         seqera_run_name = build_unique_run_name(payload.launch.runName or "")
@@ -380,10 +572,10 @@ async def launch_workflow(
             # single-prediction → proteinfold executor.
             # selected_tool carries the chosen algorithm ("colabfold", "alphafold2", "boltz").
             tool_algo = selected_tool
+            assert staged_input_location is not None
             proteinfold_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_proteinfold_workflow(
                 proteinfold_launch_form,
-                s3_input_key,
                 settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
@@ -394,6 +586,7 @@ async def launch_workflow(
                 mode=tool_algo,
                 form_data=payload.formData,
                 user_details=user_details,
+                staged_input_location=staged_input_location,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
             # de-novo-design → bindflow executor (bindcraft) or proteindj executor
@@ -414,9 +607,9 @@ async def launch_workflow(
                     user_details=user_details,
                 )
             else:
+                assert staged_input_location is not None
                 queued_job = await prepare_bindflow_workflow(
                     de_novo_launch_form,
-                    s3_input_key,
                     settings=settings,
                     db_session=db_session,
                     workflow_run=workflow_run,
@@ -425,13 +618,14 @@ async def launch_workflow(
                     revision=workflow.default_revision,
                     output_id=str(run_id),
                     user_details=user_details,
+                    staged_input_location=staged_input_location,
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
+            assert staged_input_location is not None
             wisps_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
             queued_job = await prepare_wisps_workflow(
                 wisps_launch_form,
-                s3_input_key,
                 settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
@@ -441,6 +635,7 @@ async def launch_workflow(
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_details=user_details,
+                staged_input_location=staged_input_location,
             )
         else:
             db_session.rollback()
@@ -448,6 +643,11 @@ async def launch_workflow(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
+
+        # Hold the job out of submit_pending_jobs until Globus data staging
+        # completes (app/services/globus_transfer.py flips this to "pending").
+        queued_job.status = "staging"
+        db_session.add(queued_job)
 
         # Deduct the run's credit cost now that the job is accepted into the queue. Atomic and
         # guarded (credit >= cost) so the balance can't go negative; committed

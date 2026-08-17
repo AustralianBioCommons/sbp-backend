@@ -88,6 +88,34 @@ async def test_cancel_workflow_cancels_pending_queued_job(test_db, persistent_mo
 
 
 @pytest.mark.asyncio
+async def test_cancel_workflow_cancels_staging_queued_job(test_db, persistent_models):
+    """A job still waiting on Globus input staging must also be cancellable -
+    not just "pending" ones."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-cancel-staging-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="staging",
+    )
+
+    resp = await cancel_workflow(str(run.id), user.id, test_db)
+
+    test_db.refresh(queued_job)
+    assert resp.runId == str(run.id)
+    assert resp.status == "cancelled"
+    assert queued_job.status == "cancelled"
+    assert queued_job.next_attempt_at is None
+
+
+@pytest.mark.asyncio
 async def test_get_job_details_success(test_db):
     user = AppUser(
         id=uuid4(),
@@ -245,7 +273,30 @@ async def test_delete_job_cancels_pending_queued_job(test_db, persistent_models)
     assert test_db.get(WorkflowRun, run.id) is None
 
 
-@pytest.mark.asyncio
+async def test_delete_job_cancels_staging_queued_job(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-staging-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="staging",
+    )
+
+    resp = await delete_job(str(run.id), user.id, test_db)
+
+    assert resp.deleted is True
+    assert resp.cancelledBeforeDelete is False
+    assert test_db.get(QueuedJob, queued_job.id) is None
+    assert test_db.get(WorkflowRun, run.id) is None
+
+
 async def test_bulk_delete_jobs_mixed_results(mock_settings):
     db = Mock()
 
@@ -338,6 +389,35 @@ async def test_bulk_delete_jobs_deletes_failed_local_queued_job(test_db, persist
         workflow_run=run,
         launch_payload={},
         status="failed",
+    )
+
+    out = await bulk_delete_jobs(
+        BulkDeleteJobsRequest(runIds=[str(run.id)]),
+        user.id,
+        test_db,
+    )
+
+    assert out.deleted == [str(run.id)]
+    assert out.failed == {}
+    assert test_db.get(QueuedJob, queued_job.id) is None
+    assert test_db.get(WorkflowRun, run.id) is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_jobs_cancels_staging_local_queued_job(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-bulk-staging-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="staging",
     )
 
     out = await bulk_delete_jobs(

@@ -99,7 +99,7 @@ async def cancel_workflow(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     queued_job = owned_run.get_queued_job(session=db)
-    if queued_job and queued_job.status == "pending":
+    if queued_job and queued_job.status in {"pending", "staging"}:
         queued_job.cancel_pending_job(session=db)
 
     if owned_run.seqera_run_id is not None:
@@ -165,7 +165,7 @@ async def list_jobs(
         user_run
         for user_run in user_runs
         if user_run.seqera_run_id
-        and user_run.queued_status not in {"pending", "failed"}
+        and user_run.queued_status not in {"pending", "staging", "failed"}
         and not user_run.run.is_seqera_finalized()
     ]
     seqera_results = dict(
@@ -182,7 +182,9 @@ async def list_jobs(
 
         seqera_payload: dict[str, object] | None = None
         ui_status = "N/A"
-        if user_run.queued_status == "pending":
+        if user_run.queued_status == "staging":
+            ui_status = "Staging"
+        elif user_run.queued_status == "pending":
             ui_status = "Pending"
         elif user_run.queued_status == "failed":
             ui_status = "Failed"
@@ -356,7 +358,7 @@ async def delete_job(
     seqera_run_id = owned_run.seqera_run_id
     # Cancel the queued job if it's still pending.
     queued_job = owned_run.get_queued_job(session=db)
-    if queued_job and queued_job.status == "pending":
+    if queued_job and queued_job.status in {"pending", "staging"}:
         queued_job.cancel_pending_job(session=db)
     if seqera_run_id:
         try:
@@ -409,7 +411,7 @@ async def bulk_delete_jobs(
         queued_job = owned_run.get_queued_job(session=db)
         if queued_job:
             run_status["queued_job"] = queued_job
-            if queued_job.status == "pending":
+            if queued_job.status in {"pending", "staging"}:
                 queued_job.cancel_pending_job(session=db)
                 run_status["queue_cancelled"] = True
 

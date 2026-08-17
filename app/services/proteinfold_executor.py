@@ -75,7 +75,6 @@ def _build_params_text(
 
 async def prepare_proteinfold_workflow(
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
     settings: Settings,
     db_session: Session,
@@ -87,6 +86,7 @@ async def prepare_proteinfold_workflow(
     mode: str = "alphafold2",
     form_data: WorkflowFormData | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteinfold launch payload."""
@@ -102,7 +102,7 @@ async def prepare_proteinfold_workflow(
     if not form.runName or not form.runName.strip():
         raise WorkflowLaunchError("Missing run name for workflow launch")
 
-    sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
+    sheet_url = staged_input_location
     params_text = _build_params_text(
         out_dir,
         sheet_url,
@@ -166,7 +166,6 @@ async def launch_proteinfold_workflow(
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env=_aws_prerun_env(settings),
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload,

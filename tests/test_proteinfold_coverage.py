@@ -305,7 +305,6 @@ async def test_launch_proteinfold_workflow_success(seqera_env, persistent_models
     posted_payload = mock_post.call_args.args[0]["launch"]
     assert "module load singularity" in posted_payload["preRunScript"]
     assert "module load nextflow" in posted_payload["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio
@@ -359,7 +358,6 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
             settings=seqera_env,
             db_session=test_db,
             workflow_run=workflow_run,
@@ -375,6 +373,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
                     "ip_address": "127.0.0.1",
                 }
             ),
+            staged_input_location="/test/input/single-prediction/run-id/test.csv",
         )
 
     queued_job = test_db.scalar(
@@ -398,7 +397,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["resume"] is False
     assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "input: /test/input/single-prediction/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode: colabfold" in queued_job.launch_payload["paramsText"]
@@ -415,7 +414,6 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
     ):
         await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="dataset_abc",
             settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
@@ -423,6 +421,7 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
             config_path="/fake/proteinfold.config",
             output_id=None,
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
         )
 
 
@@ -435,7 +434,6 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
     ):
         await prepare_proteinfold_workflow(
             form=form,
-            s3_input_key="dataset_abc",
             settings=seqera_env,
             db_session=db_session,
             workflow_run=workflow_run,
@@ -443,6 +441,7 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
             config_path="/fake/proteinfold.config",
             output_id="   ",
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
         )
 
 
@@ -497,32 +496,13 @@ def test_get_proteinfold_default_params_is_dict():
     assert len(result) > 0
 
 
-def test_get_executor_script_env_var_substitution():
+def test_get_executor_script_loads_modules():
     script = get_executor_script(
         prerun_script_path=None,
         module_loads=["singularity", "nextflow"],
-        env={
-            "AWS_ACCESS_KEY_ID": "KEY123",
-            "AWS_SECRET_ACCESS_KEY": "SECRET456",
-            "AWS_REGION": "us-east-1",
-        },
     )
-    assert "KEY123" in script
-    assert "SECRET456" in script
-    assert "us-east-1" in script
     assert "module load singularity" in script
     assert "module load nextflow" in script
-    assert "export AWS_ACCESS_KEY_ID" in script
-    assert "export AWS_SECRET_ACCESS_KEY" in script
-    assert "export AWS_REGION" in script
-
-
-def test_get_executor_script_defaults():
-    script = get_executor_script(
-        prerun_script_path=None,
-        env={"AWS_REGION": "ap-southeast-2"},
-    )
-    assert "ap-southeast-2" in script
 
 
 def test_get_proteinfold_config_profiles_returns_list():

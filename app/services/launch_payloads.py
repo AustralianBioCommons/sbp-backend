@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 from .workflow_config_fetcher import fetch_workflow_config
@@ -30,17 +29,10 @@ def inject_prerun_script(
 def get_executor_script(
     *,
     prerun_script_path: str | None,
-    env: dict[str, str],
     module_loads: list[str] | None = None,
 ) -> str:
-    """Build a pre-run script from module loads, environment exports, and a script body."""
-    lines = []
-
-    for module in module_loads or []:
-        lines.append(f"module load {module}")
-
-    for key, value in env.items():
-        lines.append(f"export {key}={shlex.quote(value)}")
+    """Build a pre-run script from module loads and a script body."""
+    lines = [f"module load {module}" for module in module_loads or []]
 
     header = "\n".join(lines) + "\n"
     body = fetch_workflow_config(prerun_script_path) if prerun_script_path else ""

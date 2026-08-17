@@ -59,45 +59,17 @@ def test_get_bindflow_default_params_project_value():
 # =============================================================================
 
 
-def _bindflow_executor_script(
-    aws_access_key: str = "",
-    aws_secret_key: str = "",
-    aws_region: str = "ap-southeast-2",
-) -> str:
+def _bindflow_executor_script() -> str:
     return get_executor_script(
         prerun_script_path=None,
         module_loads=["singularity", "nextflow"],
-        env={
-            "AWS_ACCESS_KEY_ID": aws_access_key,
-            "AWS_SECRET_ACCESS_KEY": aws_secret_key,
-            "AWS_REGION": aws_region,
-        },
     )
-
-
-def test_get_executor_script_injects_credentials():
-    script = _bindflow_executor_script("MYKEY", "MYSECRET", "us-west-2")
-    assert "MYKEY" in script
-    assert "MYSECRET" in script
-    assert "us-west-2" in script
 
 
 def test_get_executor_script_loads_modules():
     script = _bindflow_executor_script()
     assert "module load singularity" in script
     assert "module load nextflow" in script
-
-
-def test_get_executor_script_exports_aws_vars():
-    script = _bindflow_executor_script()
-    assert "export AWS_ACCESS_KEY_ID" in script
-    assert "export AWS_SECRET_ACCESS_KEY" in script
-    assert "export AWS_REGION" in script
-
-
-def test_get_executor_script_default_region():
-    script = _bindflow_executor_script()
-    assert "ap-southeast-2" in script
 
 
 # =============================================================================

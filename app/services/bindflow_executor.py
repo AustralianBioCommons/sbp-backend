@@ -42,7 +42,6 @@ def _aws_prerun_env(settings: Settings) -> dict[str, str]:
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
     settings: Settings,
     db_session: Session,
@@ -52,6 +51,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     revision: str | None = None,
     output_id: str | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
@@ -69,10 +69,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
-    dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
-    default_params = get_bindflow_default_params(
-        out_dir, dataset_url, gadi_project=settings.seqera.gadi_project
-    )
+    default_params = get_bindflow_default_params(out_dir, staged_input_location)
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)
@@ -138,7 +135,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env=_aws_prerun_env(settings),
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload, prerun_script=prerun_script

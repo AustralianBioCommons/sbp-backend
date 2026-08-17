@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
+from app.db.models.core import DataTransfer, RunInput, S3Object
 from app.schemas.workflows.de_novo_design import ProteinDjFormData
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.proteindj_config import (
@@ -326,11 +327,35 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     params_text = queued_job.launch_payload["paramsText"]
+    staged_pdb_location = f"/test/input/de-novo-design/{workflow_run.id}/test.pdb"
     assert "out_dir: s3://my-bucket/run-output-id" in params_text
-    assert "input_pdb: s3://my-bucket/inputs/test.pdb" in params_text
+    assert f"input_pdb: {staged_pdb_location}" in params_text
     assert "hotspot_residues: A20,A21" in params_text
     assert "num_designs: 5" in params_text
     assert "design_length: 100-150" in params_text
+
+    # The uploaded starting-pdb file gets its own Globus staging record, separate
+    # from the main samplesheet input handled in the workflows route.
+    pdb_transfer = test_db.scalar(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == workflow_run.id,
+            DataTransfer.source_location == "s3://my-bucket/inputs/test.pdb",
+        )
+    )
+    assert pdb_transfer is not None
+    assert pdb_transfer.direction == "input"
+    assert pdb_transfer.provider == "globus"
+    assert pdb_transfer.destination_location == staged_pdb_location
+    assert pdb_transfer.status == "pending"
+
+    run_input = test_db.scalar(select(RunInput).where(RunInput.data_transfer_id == pdb_transfer.id))
+    assert run_input is not None
+    assert run_input.run_id == workflow_run.id
+    assert run_input.s3_object_id == "inputs/test.pdb"
+
+    s3_object = test_db.get(S3Object, "inputs/test.pdb")
+    assert s3_object is not None
+    assert s3_object.uri == "s3://my-bucket/inputs/test.pdb"
 
 
 @pytest.mark.anyio
@@ -562,7 +587,6 @@ async def test_launch_proteindj_workflow_success(seqera_env, persistent_models):
     posted_payload = mock_post.call_args.args[0]["launch"]
     assert "module load singularity" in posted_payload["preRunScript"]
     assert "module load nextflow" in posted_payload["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio

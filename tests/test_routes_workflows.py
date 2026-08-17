@@ -15,13 +15,24 @@ from app.config import get_settings
 from app.db.models import QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
+from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
 
 
-async def _queue_job_for_route_prepare(form, _s3_input_key, **kwargs):
+def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s3_uri: str):
+    """Configure read_csv_from_s3/upload_csv_to_s3 mocks for the samplesheet-file
+    staging step (_stage_referenced_samplesheet_file), so a launch reaches its
+    executor instead of hitting real S3 for the referenced starting_pdb/fasta file."""
+    mock_read_csv.return_value = [{field_name: s3_uri}]
+    mock_upload_csv.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-bucket"
+    )
+
+
+async def _queue_job_for_route_prepare(form, **kwargs):
     db_session = kwargs["db_session"]
     workflow_run = kwargs["workflow_run"]
     queued_job = QueuedJob(
@@ -102,9 +113,16 @@ def role_check_client(test_engine):
         yield c
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_engine):
+def test_launch_success_without_dataset(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+):
     """Test successful workflow launch without dataset."""
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
     payload = {
         "launch": {
             "workflow": "de-novo-design",
@@ -126,7 +144,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
     assert response.status_code == 201
     data = response.json()
     assert data["message"] == "Workflow queued successfully"
-    assert data["status"] == "pending"
+    assert data["status"] == "staging"
     assert "submitTime" in data
     launch_form_arg = mock_prepare.call_args.args[0]
     assert launch_form_arg.tool == "bindcraft"
@@ -162,7 +180,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
         assert metric.final_design_count == 20
         queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
-        assert queued_job.status == "pending"
+        assert queued_job.status == "staging"
 
         run_input = db.scalar(select(RunInput).where(RunInput.run_id == created_run.id))
         assert run_input is not None
@@ -173,20 +191,42 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
         assert input_transfer is not None
         assert input_transfer.workflow_run_id == created_run.id
         assert input_transfer.direction == "input"
-        assert input_transfer.provider == "s3"
-        assert input_transfer.source_location.endswith(payload["s3InputKey"])
+        assert input_transfer.provider == "globus"
+        # The samplesheet is re-uploaded with the starting_pdb column corrected to a
+        # staged Gadi path (_stage_referenced_samplesheet_file), so the main input
+        # transfer's source is the corrected samplesheet key, not the original upload.
+        assert input_transfer.source_location.endswith("inputs/samplesheets/corrected.csv")
         assert input_transfer.status == "pending"
-        assert input_transfer.destination_location.endswith(
-            f"input/de-novo-design/{created_run.id}/"
+        assert input_transfer.destination_location == (
+            f"/test/input/de-novo-design/{created_run.id}/corrected.csv"
+        )
+
+        # The starting_pdb file referenced by the samplesheet gets its own transfer.
+        pdb_transfer = db.scalar(
+            select(DataTransfer).where(
+                DataTransfer.workflow_run_id == created_run.id,
+                DataTransfer.source_location == "s3://test-bucket/pdb/target.pdb",
+            )
+        )
+        assert pdb_transfer is not None
+        assert pdb_transfer.direction == "input"
+        assert pdb_transfer.provider == "globus"
+        assert pdb_transfer.destination_location == (
+            f"/test/input/de-novo-design/{created_run.id}/target.pdb"
         )
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow")
 def test_launch_queue_preparation_configuration_error(
-    mock_prepare, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
     mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
 
     payload = {
         "launch": {
@@ -209,9 +249,16 @@ def test_launch_queue_preparation_configuration_error(
         assert count == 0
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow")
-def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
+def test_launch_queue_preparation_error(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+):
     """Unexpected queue preparation errors are returned as local queue failures."""
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
     mock_prepare.side_effect = RuntimeError("could not build queue payload")
 
     payload = {
@@ -301,13 +348,23 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
 
     assert response.status_code == 201
     data = response.json()
-    assert data["status"] == "pending"
+    assert data["status"] == "staging"
     mock_prepare_proteindj.assert_called_once()
     mock_prepare_bindflow.assert_not_called()
     assert (
         mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
     )
     assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
+    # rfdiffusion's s3InputKey is the starting PDB's own URI (no samplesheet exists
+    # for it), and prepare_proteindj_workflow stages that file itself - so the
+    # generic launch flow must not also create a DataTransfer for it here.
+    with Session(test_engine) as db:
+        transfer_count = db.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(DataTransfer.workflow_run_id == UUID(data["runId"]))
+        )
+        assert transfer_count == 0
 
 
 def test_launch_invalid_payload(client: TestClient):
@@ -609,12 +666,19 @@ def _add_proteinfold_workflow(test_engine):
             db.commit()
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
 )
-def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engine):
+def test_launch_proteinfold_success(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+):
     """Test successful proteinfold workflow launch."""
     _add_proteinfold_workflow(test_engine)
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "fasta", "s3://test-bucket/fasta/seq.fasta"
+    )
 
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "pf-run-1"},
@@ -637,7 +701,7 @@ def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engin
 
     assert response.status_code == 201
     data = response.json()
-    assert data["status"] == "pending"
+    assert data["status"] == "staging"
     run_id = UUID(data["runId"])
     mock_prepare.assert_called_once()
     assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/nf-core/proteinfold"
@@ -646,16 +710,21 @@ def test_launch_proteinfold_success(mock_prepare, client: TestClient, test_engin
     with Session(test_engine) as db:
         queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == run_id))
         assert queued_job is not None
-        assert queued_job.status == "pending"
+        assert queued_job.status == "staging"
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_configuration_error(
-    mock_prepare, client: TestClient, test_engine
+    mock_upload_csv, mock_read_csv, mock_prepare, client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
     _add_proteinfold_workflow(test_engine)
     mock_prepare.side_effect = WorkflowLaunchError("Missing run name for workflow launch")
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "fasta", "s3://test-bucket/fasta/seq.fasta"
+    )
 
     payload = {
         "launch": {
@@ -683,10 +752,17 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
     assert "run name" in response.json()["detail"]
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
-def test_launch_proteinfold_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
+def test_launch_proteinfold_queue_preparation_error(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+):
     """Unexpected queue preparation errors should return 500."""
     _add_proteinfold_workflow(test_engine)
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "fasta", "s3://test-bucket/fasta/seq.fasta"
+    )
     mock_prepare.side_effect = RuntimeError("queue build failed")
 
     payload = {
@@ -778,13 +854,18 @@ def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClien
     assert "less than 2000" in response.json()["detail"]
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
 )
 def test_launch_single_prediction_boltz_potentials_reduces_limit(
-    mock_prepare, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
 ):
     _add_proteinfold_workflow(test_engine)
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "fasta", "s3://test-bucket/fasta/seq.fasta"
+    )
 
     ok_payload = _single_prediction_payload(
         [_protein_entity(sequence="A" * 1999)], tool="boltz", boltz_use_potentials=True
@@ -812,11 +893,18 @@ _LAUNCH_PAYLOAD = {
 }
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_allowed_with_workflow_role(mock_prepare, role_check_client, monkeypatch):
+def test_launch_allowed_with_workflow_role(
+    mock_prepare, mock_read_csv, mock_upload_csv, role_check_client, monkeypatch
+):
     """Users holding the workflow execution role can launch."""
     monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
 
     with patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -829,7 +917,7 @@ def test_launch_allowed_with_workflow_role(mock_prepare, role_check_client, monk
         )
 
     assert response.status_code == 201
-    assert response.json()["status"] == "pending"
+    assert response.json()["status"] == "staging"
     mock_prepare.assert_called_once()
 
 
@@ -965,7 +1053,7 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
 
     assert response.status_code == 201
     data = response.json()
-    assert data["status"] == "pending"
+    assert data["status"] == "staging"
     run_id = UUID(data["runId"])
     mock_prepare.assert_called_once()
     call_kwargs = mock_prepare.call_args.kwargs
@@ -993,7 +1081,20 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
         assert created_run.submission_timestamp is not None
         queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
-        assert queued_job.status == "pending"
+        assert queued_job.status == "staging"
+
+        # Both the samplesheet and the aggregated FASTA it references must be
+        # staged - _notify_launcher only flips "staging" -> "pending" once every
+        # input DataTransfer for this run is completed.
+        transfers = db.scalars(
+            select(DataTransfer).where(DataTransfer.workflow_run_id == created_run.id)
+        ).all()
+        assert len(transfers) == 2
+        sources = {t.source_location for t in transfers}
+        assert sources == {
+            "s3://test-s3-bucket/inputs/samplesheets/test.csv",
+            "s3://bucket/test.fasta",
+        }
 
 
 def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
@@ -1130,7 +1231,7 @@ def test_launch_with_workflow_field_in_launch(mock_prepare, wisps_client: TestCl
 
     assert response.status_code == 201
     run_id = UUID(response.json()["runId"])
-    assert response.json()["status"] == "pending"
+    assert response.json()["status"] == "staging"
     mock_prepare.assert_called_once()
 
     with Session(test_engine) as db:
@@ -1191,14 +1292,24 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_deducts_credits_when_enabled(
-    mock_prepare, client, test_engine, monkeypatch, mock_settings
+    mock_upload_csv,
+    mock_read_csv,
+    mock_prepare,
+    client,
+    test_engine,
+    monkeypatch,
+    mock_settings,
 ):
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
-    monkeypatch.setenv("ENABLE_CREDITS", "true")
     mock_settings.enable_credits = True
     client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1216,7 +1327,7 @@ def test_launch_deducts_credits_when_enabled(
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["status"] == "pending"
+    assert response.json()["status"] == "staging"
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
@@ -1254,12 +1365,17 @@ def test_launch_rejected_when_insufficient_credits(
     assert credit == 10  # unchanged
 
 
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_does_not_deduct_when_credits_disabled(
-    mock_prepare, client, test_engine, monkeypatch
+    mock_prepare, mock_read_csv, mock_upload_csv, client, test_engine, monkeypatch
 ):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
+    _mock_samplesheet_staging(
+        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
+    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
         db.commit()
@@ -1277,7 +1393,7 @@ def test_launch_does_not_deduct_when_credits_disabled(
     response = client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["status"] == "pending"
+    assert response.json()["status"] == "staging"
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))

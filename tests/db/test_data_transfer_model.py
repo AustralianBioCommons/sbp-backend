@@ -24,7 +24,6 @@ def test_data_transfer_model_structure():
     assert "destination_location" in column_names
     assert "transfer_id" in column_names
     assert "status" in column_names
-    assert "provider_metadata" in column_names
     assert "created_at" in column_names
     assert "updated_at" in column_names
     assert "error_message" in column_names
