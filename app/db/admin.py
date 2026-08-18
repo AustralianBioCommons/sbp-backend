@@ -141,12 +141,27 @@ class WorkflowAdmin(ModelView):
         "default_revision",
         "config_path",
         "prerun_script_path",
+        # Cache of the repo checkout currently staged on Gadi via Globus for
+        # this workflow (see app/services/workflow_repo_staging.py) - a single
+        # slot shared by every run, not per-run history.
+        "repo_staged_commit_sha",
+        "repo_staging_status",
+        "repo_gadi_path",
+        "repo_staging_transfer_id",
+        "repo_staging_updated_at",
+        "repo_staging_error_message",
     ]
+    exclude_fields_from_list = ["repo_staging_transfer_id", "repo_staging_error_message"]
 
     _NULLABLE_FIELDS = (
         "description",
         "tool",
         "prerun_script_path",
+        "repo_staged_commit_sha",
+        "repo_staging_status",
+        "repo_gadi_path",
+        "repo_staging_transfer_id",
+        "repo_staging_error_message",
     )
 
     def _nullify_empty_fields(self, obj: Any) -> None:

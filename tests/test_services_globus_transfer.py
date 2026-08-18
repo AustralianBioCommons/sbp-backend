@@ -21,7 +21,23 @@ from app.services.globus_transfer import (
     submit_pending_transfer,
     sync_data_transfers,
 )
-from tests.datagen import DataTransferFactory, QueuedJobFactory, WorkflowRunFactory
+from tests.datagen import (
+    DataTransferFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+)
+
+
+def _workflow_run_without_repo_staging():
+    """A WorkflowRun whose Workflow has no repo-staging requirement (None) -
+    QueuedJobFactory/WorkflowRunFactory don't create a real related Workflow
+    row by default (__set_relationships__ = False), and _try_promote_staging_job
+    now dereferences queued_job.workflow, so tests exercising only the
+    input-transfer gate need an explicit, real Workflow with
+    repo_staging_status=None (not a random value) so it acts as a no-op gate."""
+    workflow = WorkflowFactory.create_sync(repo_staging_status=None)
+    return WorkflowRunFactory.create_sync(workflow=workflow)
 
 
 def _globus_api_error(status_code: int, json_body: dict) -> Exception:
@@ -140,7 +156,7 @@ def test_submit_pending_transfer_success(test_db, persistent_models, mock_transf
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
 
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -173,7 +189,7 @@ def test_submit_pending_transfer_reuses_existing_submission_id(
     not mint a fresh submission_id on retry - Globus dedupes on this id."""
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
 
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -201,7 +217,7 @@ def test_submit_pending_transfer_api_error_marks_failed(
         400, {"code": "UNKNOWN_SCOPE_ERROR", "message": "requested unknown scopes"}
     )
 
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -225,7 +241,7 @@ def test_submit_pending_transfer_api_error_marks_failed(
 
 
 def test_poll_transfer_no_transfer_id_raises(test_db, persistent_models):
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, status="in_progress", transfer_id=None
     )
@@ -239,7 +255,7 @@ def test_poll_transfer_api_error_records_message_without_changing_status(
     mock_transfer_client.get_task.side_effect = _globus_api_error(
         401, {"code": "AuthenticationFailed", "message": "token expired"}
     )
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, status="in_progress", transfer_id="task-abc"
     )
@@ -255,7 +271,7 @@ def test_poll_transfer_api_error_records_message_without_changing_status(
 
 def test_poll_transfer_succeeded_marks_completed(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, status="in_progress", transfer_id="task-abc"
     )
@@ -270,7 +286,7 @@ def test_poll_transfer_failed_records_fatal_error(test_db, persistent_models, mo
         "status": "FAILED",
         "fatal_error": {"description": "no such file"},
     }
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, status="in_progress", transfer_id="task-abc"
     )
@@ -283,7 +299,7 @@ def test_poll_transfer_failed_records_fatal_error(test_db, persistent_models, mo
 
 def test_poll_transfer_active_stays_in_progress(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "ACTIVE"}
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, status="in_progress", transfer_id="task-abc"
     )
@@ -297,7 +313,7 @@ def test_poll_transfer_inactive_recent_stays_in_progress(
     test_db, persistent_models, mock_transfer_client
 ):
     mock_transfer_client.get_task.return_value = {"status": "INACTIVE"}
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         status="in_progress",
@@ -316,7 +332,7 @@ def test_poll_transfer_inactive_stale_marks_failed(
     test_db, persistent_models, mock_transfer_client
 ):
     mock_transfer_client.get_task.return_value = {"status": "INACTIVE"}
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     stale_created_at = datetime.now(UTC) - STALE_TRANSFER_TIMEOUT - timedelta(minutes=1)
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
@@ -337,8 +353,10 @@ def test_poll_transfer_inactive_stale_marks_failed(
 
 
 def test_notify_launcher_ignores_output_direction(test_db, persistent_models):
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, direction="output", status="completed"
     )
@@ -350,8 +368,10 @@ def test_notify_launcher_ignores_output_direction(test_db, persistent_models):
 
 
 def test_notify_launcher_ignores_non_staging_queued_job(test_db, persistent_models):
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="pending")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="pending"
+    )
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, direction="input", status="completed"
     )
@@ -363,8 +383,10 @@ def test_notify_launcher_ignores_non_staging_queued_job(test_db, persistent_mode
 
 
 def test_notify_launcher_failed_transfer_fails_queued_job(test_db, persistent_models):
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -382,8 +404,10 @@ def test_notify_launcher_failed_transfer_fails_queued_job(test_db, persistent_mo
 def test_notify_launcher_waits_for_all_input_transfers(test_db, persistent_models):
     """A run with two input transfers (samplesheet + pdb) must not launch until
     both have completed."""
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     completed_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, direction="input", status="completed"
     )
@@ -400,8 +424,10 @@ def test_notify_launcher_waits_for_all_input_transfers(test_db, persistent_model
 def test_notify_launcher_flips_to_pending_once_all_input_transfers_complete(
     test_db, persistent_models
 ):
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     first_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run, direction="input", status="completed"
     )
@@ -425,8 +451,10 @@ def test_sync_data_transfers_submits_and_notifies(test_db, persistent_models, mo
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
 
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -449,8 +477,10 @@ def test_sync_data_transfers_submits_and_notifies(test_db, persistent_models, mo
 def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
 
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -470,7 +500,7 @@ def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, moc
 def test_sync_data_transfers_ignores_non_globus_provider(
     test_db, persistent_models, mock_transfer_client
 ):
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         provider="s3",
@@ -495,8 +525,10 @@ def test_sync_data_transfers_counts_soft_submission_failure(
         400, {"code": "UNKNOWN_SCOPE_ERROR", "message": "requested unknown scopes"}
     )
 
-    workflow_run = WorkflowRunFactory.create_sync()
-    QueuedJobFactory.create_sync(workflow_run=workflow_run, status="staging")
+    workflow_run = _workflow_run_without_repo_staging()
+    QueuedJobFactory.create_sync(
+        workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
+    )
     DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -522,7 +554,7 @@ def test_sync_data_transfers_continues_after_unexpected_error(
 ):
     mock_transfer_client.get_task.side_effect = RuntimeError("boom")
 
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",
@@ -550,7 +582,7 @@ def test_sync_data_transfers_isolates_failures_between_rows(
 
     mock_transfer_client.get_task.side_effect = get_task
 
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = _workflow_run_without_repo_staging()
     broken = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="input",

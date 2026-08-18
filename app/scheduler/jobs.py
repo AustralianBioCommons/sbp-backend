@@ -11,11 +11,11 @@ from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models.core import AppUser, DataTransfer
+from ..db.models.core import AppUser, DataTransfer, Workflow
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
-from ..services import globus_transfer, health, seqera
+from ..services import globus_transfer, health, seqera, workflow_repo_staging
 from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
@@ -325,6 +325,29 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
     result = globus_transfer.sync_data_transfers(db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT)
     logger.info(
         "Finished syncing Globus data transfers: "
+        f"checked={result.checked}, submitted={result.submitted}, "
+        f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+    )
+
+
+def sync_workflow_repo_staging(dry_run: bool = False):
+    """Submit pending and poll in-progress workflow repo stagings (GitHub repo
+    checkouts cached on Gadi via S3 + Globus, see workflow_repo_staging.py),
+    promoting any run still "staging" on a workflow whose repo just finished."""
+    logger.info("Checking for workflow repo stagings to sync...")
+    db_session = next(get_db())
+    if dry_run:
+        pending_count = db_session.scalar(
+            select(func.count())
+            .select_from(Workflow)
+            .where(Workflow.repo_staging_status.in_(["pending", "in_progress"]))
+        )
+        logger.info(f"Dry run - found {pending_count} workflow repo staging(s) requiring sync.")
+        return
+
+    result = workflow_repo_staging.sync_workflow_repo_staging(db_session)
+    logger.info(
+        "Finished syncing workflow repo stagings: "
         f"checked={result.checked}, submitted={result.submitted}, "
         f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
     )

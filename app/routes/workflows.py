@@ -69,6 +69,7 @@ from ..services.s3 import (
 )
 from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
+from ..services.workflow_repo_staging import RepoStagingError, ensure_repo_staging_requested
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -417,6 +418,32 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
+    # Gadi compute nodes have no network access, so Nextflow can't fetch the
+    # pipeline from GitHub itself - it must already be staged there (like input
+    # files, via Globus). This resolves the current commit and kicks off
+    # staging in the background if it isn't already cached; repo_gadi_path is
+    # deterministic from the commit sha, so it's safe to use immediately below
+    # even before the transfer actually completes (submit_pending_jobs won't
+    # launch this run until it does - see the "staging" gate further down).
+    try:
+        repo_gadi_path = ensure_repo_staging_requested(
+            db_session, workflow, settings=settings
+        )
+    except RepoStagingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to resolve workflow repo: {exc}",
+        ) from exc
+    # Seqera's launch API validates `pipeline` as a URL, not a bare path
+    # (confirmed in production: a plain "/g/data/..." path is rejected with
+    # "Invalid pipeline URL"). Nextflow's local-path scheme is "file:" with a
+    # single slash before the (already-absolute) path, confirmed against a
+    # known-working manually staged pipeline on Gadi - not "file://", which
+    # would add an extra slash. repo_gadi_path itself stays a plain filesystem
+    # path, since that's what the Globus transfer/admin display/
+    # _gadi_relative_path conversion all need.
+    pipeline_url = f"file:{repo_gadi_path}"
+
     user = db_session.execute(
         select(AppUser.email).where(AppUser.id == current_user_id)
     ).one_or_none()
@@ -583,7 +610,7 @@ async def launch_workflow(
                 settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
-                pipeline=workflow.repo_url,
+                pipeline=pipeline_url,
                 config_path=workflow.config_path,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
@@ -603,7 +630,7 @@ async def launch_workflow(
                     settings=settings,
                     db_session=db_session,
                     workflow_run=workflow_run,
-                    pipeline=workflow.repo_url,
+                    pipeline=pipeline_url,
                     config_path=workflow.config_path,
                     revision=workflow.default_revision,
                     output_id=str(run_id),
@@ -617,7 +644,7 @@ async def launch_workflow(
                     settings=settings,
                     db_session=db_session,
                     workflow_run=workflow_run,
-                    pipeline=workflow.repo_url,
+                    pipeline=pipeline_url,
                     config_path=workflow.config_path,
                     revision=workflow.default_revision,
                     output_id=str(run_id),
@@ -633,7 +660,7 @@ async def launch_workflow(
                 settings=settings,
                 db_session=db_session,
                 workflow_run=workflow_run,
-                pipeline=workflow.repo_url,
+                pipeline=pipeline_url,
                 revision=workflow.default_revision,
                 config_path=workflow.config_path,
                 form_data=wisps_form_data,

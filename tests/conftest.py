@@ -347,6 +347,19 @@ def override_settings(mock_settings):
     fastapi_app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def mock_repo_staging(mocker):
+    """launch_workflow resolves+stages the workflow's GitHub repo on every call
+    (workflow_repo_staging.ensure_repo_staging_requested), which makes a real
+    GitHub API request - stub it out by default so tests don't hit the network.
+    Tests that specifically exercise repo staging behavior can override this
+    with their own patch of the same target."""
+    return mocker.patch(
+        "app.routes.workflows.ensure_repo_staging_requested",
+        return_value="/staged/workflow-repo/path",
+    )
+
+
 @pytest.fixture
 def test_get_settings():
     """
