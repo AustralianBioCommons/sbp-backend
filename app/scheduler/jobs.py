@@ -296,9 +296,7 @@ def sync_data_transfers(dry_run: bool = False):
                     DataTransfer.status.in_(["pending", "in_progress"]),
                 )
             )
-            logger.info(
-                f"Dry run - found {pending_count} Globus data transfer(s) requiring sync."
-            )
+            logger.info(f"Dry run - found {pending_count} Globus data transfer(s) requiring sync.")
             return
 
         result = globus_transfer.sync_data_transfers(
