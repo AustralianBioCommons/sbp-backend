@@ -1,7 +1,8 @@
 import asyncio
 import os
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -29,6 +30,36 @@ LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
+
+
+def with_scheduler_db_session[SchedulerJob: Callable[..., object]](
+    func: SchedulerJob,
+) -> SchedulerJob:
+    """
+    Decorator to run jobs with a database session. Automatically
+    closes the DB session.
+    """
+
+    @wraps(func)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        provided_db_session = kwargs.pop("db_session", None)
+        if provided_db_session is not None:
+            return func(*args, db_session=provided_db_session, **kwargs)
+
+        db_context = get_db()
+        db_session = next(db_context)
+        try:
+            return func(*args, db_session=db_session, **kwargs)
+        finally:
+            db_context.close()
+
+    return cast(SchedulerJob, wrapper)
+
+
+def require_scheduler_db_session(db_session: Session | None) -> Session:
+    if db_session is None:
+        raise RuntimeError("Scheduler job called without a database session")
+    return db_session
 
 
 class LaunchFunction(Protocol):
@@ -59,9 +90,10 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
     return system_status.overall_status == "healthy"
 
 
-def launch_job(job_id: UUID, dry_run: bool = False) -> None:
+@with_scheduler_db_session
+def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | None = None) -> None:
+    db_session = require_scheduler_db_session(db_session)
     logger.info(f"Launching job {job_id}...")
-    db_session = next(get_db())
     settings = get_settings()
 
     ok_to_launch = is_seqera_available(db_session, settings=settings)
@@ -137,11 +169,12 @@ def get_available_workflow_capacity(settings: Settings | None = None) -> int:
     return capacity
 
 
-def submit_pending_jobs(dry_run: bool = False):
+@with_scheduler_db_session
+def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = None):
+    db_session = require_scheduler_db_session(db_session)
     # Time between jobs
     job_offset = 10
     logger.info("Checking for pending jobs...")
-    db_session = next(get_db())
     settings = get_settings()
     ok_to_launch = is_seqera_available(db_session, settings=settings)
     if not ok_to_launch:
@@ -191,7 +224,8 @@ def submit_pending_jobs(dry_run: bool = False):
     logger.info("Finished submitting pending jobs.")
 
 
-def refresh_user_credits(dry_run: bool = False):
+@with_scheduler_db_session
+def refresh_user_credits(dry_run: bool = False, *, db_session: Session | None = None):
     """Reset every SBP-approved user's credit to the standard monthly allowance.
 
     Scoped to users who have already been through the one-time bundle grant
@@ -200,7 +234,7 @@ def refresh_user_credits(dry_run: bool = False):
     don't get free credit, and so a role approval landing between refreshes
     can never race the grant's own IS NULL guard (app/routes/dependencies.py).
     """
-    db_session = next(get_db())
+    db_session = require_scheduler_db_session(db_session)
     approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
     if dry_run:
         user_count = db_session.scalar(
@@ -231,9 +265,10 @@ def refresh_user_credits(dry_run: bool = False):
     )
 
 
-def sync_completed_workflow_runs(dry_run: bool = False):
+@with_scheduler_db_session
+def sync_completed_workflow_runs(dry_run: bool = False, *, db_session: Session | None = None):
+    db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for completed workflow runs to sync...")
-    db_session = next(get_db())
     settings = get_settings()
     if dry_run:
         runs = get_runs_requiring_sync(db_session, limit=settings.seqera.workflow_sync_batch_limit)
@@ -268,12 +303,13 @@ def sync_completed_workflow_runs(dry_run: bool = False):
         )
 
 
-def sync_data_transfers(dry_run: bool = False):
+@with_scheduler_db_session
+def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = None):
     """Submit pending and poll in-progress Globus data transfers, notifying the
     workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
     run's input staging settles."""
+    db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for Globus data transfers to sync...")
-    db_session = next(get_db())
     if dry_run:
         pending_count = db_session.scalar(
             select(func.count())

@@ -1,5 +1,7 @@
 """Database setup for SQLAlchemy and Alembic."""
 
+from typing import Any
+
 from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -25,5 +27,20 @@ def _get_database_url() -> str:
     return settings.database_url
 
 
-engine = create_engine(_get_database_url(), pool_pre_ping=True)
+def _get_engine_options(database_url: str) -> dict[str, Any]:
+    settings = get_settings()
+    options: dict[str, Any] = {"pool_pre_ping": True}
+    if database_url.startswith("sqlite:"):
+        return options
+
+    options.update(
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+    )
+    return options
+
+
+database_url = _get_database_url()
+engine = create_engine(database_url, **_get_engine_options(database_url))
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

@@ -55,6 +55,52 @@ def _create_queued_job(
     )
 
 
+def test_with_scheduler_db_session_closes_db_dependency(monkeypatch):
+    session = object()
+    closed = []
+    seen_sessions = []
+
+    def _get_db():
+        try:
+            yield session
+        finally:
+            closed.append(True)
+
+    @scheduler_jobs.with_scheduler_db_session
+    def _job(*, db_session):
+        seen_sessions.append(db_session)
+        return "done"
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db)
+
+    assert _job() == "done"
+    assert seen_sessions == [session]
+    assert closed == [True]
+
+
+def test_with_scheduler_db_session_closes_db_dependency_on_error(monkeypatch):
+    session = object()
+    closed = []
+
+    def _get_db():
+        try:
+            yield session
+        finally:
+            closed.append(True)
+
+    @scheduler_jobs.with_scheduler_db_session
+    def _job(*, db_session):
+        assert db_session is session
+        raise RuntimeError("job failed")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db)
+
+    with pytest.raises(RuntimeError, match="job failed"):
+        _job()
+
+    assert closed == [True]
+
+
 def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
     async def _healthy_status(_db, **_kwargs):
         return SimpleNamespace(overall_status="healthy")
