@@ -85,25 +85,25 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="de-novo-design",
         displayName="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        toolMultipliers={"bindcraft": 20, "rfdiffusion": 10},
+        toolMultipliers={"bindcraft": 10, "rfdiffusion": 4},
     ),
     WorkflowCreditConfig(
         category="single-prediction",
         displayName="Single Prediction",
         basis=CreditBasis.CONSTANT,
-        toolMultipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
+        toolMultipliers={"boltz": 50, "colabfold": 50, "alphafold2": 200},
     ),
     WorkflowCreditConfig(
         category="bulk-prediction",
         displayName="Bulk Prediction",
         basis=CreditBasis.FASTA_ENTRY_COUNT,
-        toolMultipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 3},
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
         displayName="Interaction Screening",
         basis=CreditBasis.FASTA_PAIR_PRODUCT,
-        toolMultipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 5},
     ),
 )
 
