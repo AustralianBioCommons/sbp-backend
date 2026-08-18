@@ -1,6 +1,7 @@
 import asyncio
 import os
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
 from uuid import UUID
@@ -29,6 +30,16 @@ LAUNCH_MAX_ATTEMPTS = 3
 RETRY_DELAY_BASE = 5 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
+
+
+@contextmanager
+def scheduler_db_session() -> Iterator[Session]:
+    db_context = get_db()
+    db_session = next(db_context)
+    try:
+        yield db_session
+    finally:
+        db_context.close()
 
 
 class LaunchFunction(Protocol):
@@ -61,64 +72,64 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
 
 def launch_job(job_id: UUID, dry_run: bool = False) -> None:
     logger.info(f"Launching job {job_id}...")
-    db_session = next(get_db())
-    settings = get_settings()
+    with scheduler_db_session() as db_session:
+        settings = get_settings()
 
-    ok_to_launch = is_seqera_available(db_session, settings=settings)
-    if not ok_to_launch:
-        logger.warning("Skipping job launching while system status is unhealthy.")
-        return
-    job = db_session.get(QueuedJob, job_id)
-    if job is None:
-        return
+        ok_to_launch = is_seqera_available(db_session, settings=settings)
+        if not ok_to_launch:
+            logger.warning("Skipping job launching while system status is unhealthy.")
+            return
+        job = db_session.get(QueuedJob, job_id)
+        if job is None:
+            return
 
-    now = datetime.now(tz=UTC)
-    launch_func: LaunchFunction
-    workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
-    if workflow_name in ("interaction-screening", "bulk-prediction"):
-        launch_func = launch_wisps_workflow
-    elif workflow_name in ("single-prediction", "proteinfold"):
-        launch_func = launch_proteinfold_workflow
-    elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-        # de-novo-design covers two algorithms (bindcraft vs rfdiffusion), each
-        # with its own executor; workflow_run.tool holds the one selected at launch.
-        tool = (job.workflow_run.tool or "").lower()
-        launch_func = (
-            launch_proteindj_workflow if tool == "rfdiffusion" else launch_bindflow_workflow
-        )
-    else:
-        raise ValueError(f"Unsupported workflow: {job.workflow.name}")
-    try:
-        result = asyncio.run(launch_func(queued_job=job, settings=settings, dry_run=dry_run))
-        if dry_run:
-            logger.info("Dry run - not updating job status")
+        now = datetime.now(tz=UTC)
+        launch_func: LaunchFunction
+        workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
+        if workflow_name in ("interaction-screening", "bulk-prediction"):
+            launch_func = launch_wisps_workflow
+        elif workflow_name in ("single-prediction", "proteinfold"):
+            launch_func = launch_proteinfold_workflow
+        elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
+            # de-novo-design covers two algorithms (bindcraft vs rfdiffusion), each
+            # with its own executor; workflow_run.tool holds the one selected at launch.
+            tool = (job.workflow_run.tool or "").lower()
+            launch_func = (
+                launch_proteindj_workflow if tool == "rfdiffusion" else launch_bindflow_workflow
+            )
         else:
-            if result is not None:
-                job.workflow_run.seqera_run_id = result.workflow_id
-            job.attempts += 1
-            job.status = "submitted"
-            job.submitted_at = now
-            job.next_attempt_at = None
-            job.last_attempt_at = now
-            job.error = None
-            db_session.add(job)
-            db_session.commit()
-        return
-    except Exception as e:
-        logger.error(f"Error launching workflow: {e}")
-        if not dry_run:
-            job.attempts += 1
-            job.error = str(e)
-            job.last_attempt_at = now
-            if job.attempts >= LAUNCH_MAX_ATTEMPTS:
-                job.status = "failed"
-                job.next_attempt_at = None
+            raise ValueError(f"Unsupported workflow: {job.workflow.name}")
+        try:
+            result = asyncio.run(launch_func(queued_job=job, settings=settings, dry_run=dry_run))
+            if dry_run:
+                logger.info("Dry run - not updating job status")
             else:
-                job.status = "pending"
-                delay = get_retry_delay(job)
-                job.next_attempt_at = now + delay
-            db_session.add(job)
-            db_session.commit()
+                if result is not None:
+                    job.workflow_run.seqera_run_id = result.workflow_id
+                job.attempts += 1
+                job.status = "submitted"
+                job.submitted_at = now
+                job.next_attempt_at = None
+                job.last_attempt_at = now
+                job.error = None
+                db_session.add(job)
+                db_session.commit()
+            return
+        except Exception as e:
+            logger.error(f"Error launching workflow: {e}")
+            if not dry_run:
+                job.attempts += 1
+                job.error = str(e)
+                job.last_attempt_at = now
+                if job.attempts >= LAUNCH_MAX_ATTEMPTS:
+                    job.status = "failed"
+                    job.next_attempt_at = None
+                else:
+                    job.status = "pending"
+                    delay = get_retry_delay(job)
+                    job.next_attempt_at = now + delay
+                db_session.add(job)
+                db_session.commit()
         return
 
 
@@ -141,54 +152,54 @@ def submit_pending_jobs(dry_run: bool = False):
     # Time between jobs
     job_offset = 10
     logger.info("Checking for pending jobs...")
-    db_session = next(get_db())
-    settings = get_settings()
-    ok_to_launch = is_seqera_available(db_session, settings=settings)
-    if not ok_to_launch:
-        logger.warning("Skipping pending job submission while system status is unhealthy.")
-        return
+    with scheduler_db_session() as db_session:
+        settings = get_settings()
+        ok_to_launch = is_seqera_available(db_session, settings=settings)
+        if not ok_to_launch:
+            logger.warning("Skipping pending job submission while system status is unhealthy.")
+            return
 
-    try:
-        available_capacity = get_available_workflow_capacity(settings=settings)
-    except SeqeraAPIError as e:
-        logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
-        return
-    if available_capacity <= 0:
-        logger.info("Gadi is at its concurrent workflow limit; skipping submission this tick.")
-        return
+        try:
+            available_capacity = get_available_workflow_capacity(settings=settings)
+        except SeqeraAPIError as e:
+            logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
+            return
+        if available_capacity <= 0:
+            logger.info("Gadi is at its concurrent workflow limit; skipping submission this tick.")
+            return
 
-    now = datetime.now(tz=UTC)
+        now = datetime.now(tz=UTC)
 
-    pending_query = select(QueuedJob).where(
-        QueuedJob.status == "pending", QueuedJob.next_attempt_at <= now
-    )
-
-    pending_jobs = db_session.scalars(pending_query).all()
-    logger.info(f"Found {len(pending_jobs)} pending jobs.")
-    jobs_to_submit = pending_jobs[:available_capacity]
-    if len(jobs_to_submit) < len(pending_jobs):
-        logger.info(
-            f"Only submitting {len(jobs_to_submit)} of {len(pending_jobs)} pending jobs "
-            "due to available Gadi capacity."
-        )
-    for index, job in enumerate(jobs_to_submit):
-        launch_id = f"launch_job_{job.id}"
-        # Ignore if already scheduled
-        if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:
-            continue
-
-        SCHEDULER.add_job(
-            launch_job,
-            id=launch_id,
-            jobstore="memory",
-            kwargs={"job_id": job.id, "dry_run": dry_run},
-            name=launch_id,
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=now + timedelta(seconds=index * job_offset),
+        pending_query = select(QueuedJob).where(
+            QueuedJob.status == "pending", QueuedJob.next_attempt_at <= now
         )
 
-    logger.info("Finished submitting pending jobs.")
+        pending_jobs = db_session.scalars(pending_query).all()
+        logger.info(f"Found {len(pending_jobs)} pending jobs.")
+        jobs_to_submit = pending_jobs[:available_capacity]
+        if len(jobs_to_submit) < len(pending_jobs):
+            logger.info(
+                f"Only submitting {len(jobs_to_submit)} of {len(pending_jobs)} pending jobs "
+                "due to available Gadi capacity."
+            )
+        for index, job in enumerate(jobs_to_submit):
+            launch_id = f"launch_job_{job.id}"
+            # Ignore if already scheduled
+            if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:
+                continue
+
+            SCHEDULER.add_job(
+                launch_job,
+                id=launch_id,
+                jobstore="memory",
+                kwargs={"job_id": job.id, "dry_run": dry_run},
+                name=launch_id,
+                max_instances=1,
+                replace_existing=True,
+                next_run_time=now + timedelta(seconds=index * job_offset),
+            )
+
+        logger.info("Finished submitting pending jobs.")
 
 
 def refresh_user_credits(dry_run: bool = False):
@@ -200,72 +211,74 @@ def refresh_user_credits(dry_run: bool = False):
     don't get free credit, and so a role approval landing between refreshes
     can never race the grant's own IS NULL guard (app/routes/dependencies.py).
     """
-    db_session = next(get_db())
-    approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
-    if dry_run:
-        user_count = db_session.scalar(
-            select(func.count()).select_from(AppUser).where(approved_filter)
-        )
-        logger.info(
-            f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
-            f"{user_count} approved user(s)."
-        )
-        return
-
-    result = cast(
-        CursorResult,
-        db_session.execute(
-            update(AppUser)
-            .where(approved_filter)
-            .values(
-                credit=SBP_USER_CREDIT_ALLOWANCE,
-                credit_updated_at=datetime.now(UTC),
-                credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+    with scheduler_db_session() as db_session:
+        approved_filter = AppUser.sbp_bundle_credit_granted_at.is_not(None)
+        if dry_run:
+            user_count = db_session.scalar(
+                select(func.count()).select_from(AppUser).where(approved_filter)
             )
-        ),
-    )
-    db_session.commit()
-    logger.info(
-        f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} approved "
-        "user(s)."
-    )
+            logger.info(
+                f"Dry run - would refresh credit to {SBP_USER_CREDIT_ALLOWANCE} for "
+                f"{user_count} approved user(s)."
+            )
+            return
+
+        result = cast(
+            CursorResult,
+            db_session.execute(
+                update(AppUser)
+                .where(approved_filter)
+                .values(
+                    credit=SBP_USER_CREDIT_ALLOWANCE,
+                    credit_updated_at=datetime.now(UTC),
+                    credit_updated_by=MONTHLY_CREDIT_REFRESH_ACTOR,
+                )
+            ),
+        )
+        db_session.commit()
+        logger.info(
+            f"Refreshed credit to {SBP_USER_CREDIT_ALLOWANCE} for {result.rowcount} approved "
+            "user(s)."
+        )
 
 
 def sync_completed_workflow_runs(dry_run: bool = False):
     logger.info("Checking for completed workflow runs to sync...")
-    db_session = next(get_db())
-    settings = get_settings()
-    if dry_run:
-        runs = get_runs_requiring_sync(db_session, limit=settings.seqera.workflow_sync_batch_limit)
-        logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
-        return
+    with scheduler_db_session() as db_session:
+        settings = get_settings()
+        if dry_run:
+            runs = get_runs_requiring_sync(
+                db_session, limit=settings.seqera.workflow_sync_batch_limit
+            )
+            logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
+            return
 
-    ok_to_sync = is_seqera_available(db_session, settings=settings)
-    if not ok_to_sync:
-        logger.warning("Skipping workflow run result sync while system status is unhealthy.")
-        return
+        ok_to_sync = is_seqera_available(db_session, settings=settings)
+        if not ok_to_sync:
+            logger.warning("Skipping workflow run result sync while system status is unhealthy.")
+            return
 
-    result = asyncio.run(
-        sync_workflow_runs(
-            db_session,
-            limit=settings.seqera.workflow_sync_batch_limit,
-            settings=settings,
+        result = asyncio.run(
+            sync_workflow_runs(
+                db_session,
+                limit=settings.seqera.workflow_sync_batch_limit,
+                settings=settings,
+            )
         )
-    )
-    logger.info(
-        "Finished syncing workflow runs: "
-        f"checked={result.checked}, completed={result.completed}, "
-        f"skipped={result.skipped}, errored={result.errored}."
-    )
-    for run_result in result.results:
-        if run_result.error is None:
-            continue
-        logger.warning(
-            "Workflow run sync failed: "
-            f"run_id={run_result.run_id}, "
-            f"seqera_run_id={run_result.seqera_run_id}, "
-            f"error={run_result.error}"
+        logger.info(
+            "Finished syncing workflow runs: "
+            f"checked={result.checked}, completed={result.completed}, "
+            f"skipped={result.skipped}, errored={result.errored}."
         )
+        for run_result in result.results:
+            if run_result.error is None:
+                continue
+            logger.warning(
+                "Workflow run sync failed: "
+                f"run_id={run_result.run_id}, "
+                f"seqera_run_id={run_result.seqera_run_id}, "
+                f"error={run_result.error}"
+            )
 
 
 def sync_data_transfers(dry_run: bool = False):
@@ -273,22 +286,26 @@ def sync_data_transfers(dry_run: bool = False):
     workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
     run's input staging settles."""
     logger.info("Checking for Globus data transfers to sync...")
-    db_session = next(get_db())
-    if dry_run:
-        pending_count = db_session.scalar(
-            select(func.count())
-            .select_from(DataTransfer)
-            .where(
-                DataTransfer.provider == "globus",
-                DataTransfer.status.in_(["pending", "in_progress"]),
+    with scheduler_db_session() as db_session:
+        if dry_run:
+            pending_count = db_session.scalar(
+                select(func.count())
+                .select_from(DataTransfer)
+                .where(
+                    DataTransfer.provider == "globus",
+                    DataTransfer.status.in_(["pending", "in_progress"]),
+                )
             )
-        )
-        logger.info(f"Dry run - found {pending_count} Globus data transfer(s) requiring sync.")
-        return
+            logger.info(
+                f"Dry run - found {pending_count} Globus data transfer(s) requiring sync."
+            )
+            return
 
-    result = globus_transfer.sync_data_transfers(db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT)
-    logger.info(
-        "Finished syncing Globus data transfers: "
-        f"checked={result.checked}, submitted={result.submitted}, "
-        f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
-    )
+        result = globus_transfer.sync_data_transfers(
+            db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT
+        )
+        logger.info(
+            "Finished syncing Globus data transfers: "
+            f"checked={result.checked}, submitted={result.submitted}, "
+            f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+        )
