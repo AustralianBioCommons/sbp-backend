@@ -137,6 +137,9 @@ class Settings(BaseSettings):
     allowed_origins: Annotated[list[str], NoDecode, BeforeValidator(split_by_comma)]
     # Single URL including username and password
     database_url: str
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
     port: int = 3000
     uvicorn_reload: bool = False
     enable_db_admin: bool = False
