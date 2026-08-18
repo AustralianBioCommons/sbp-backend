@@ -1272,19 +1272,19 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 
     de_novo = by_category["de-novo-design"]
     assert de_novo["basis"] == CreditBasis.FINAL_DESIGN_COUNT.value
-    assert de_novo["toolMultipliers"] == {"bindcraft": 20, "rfdiffusion": 10}
+    assert de_novo["toolMultipliers"] == {"bindcraft": 10, "rfdiffusion": 4}
 
     single = by_category["single-prediction"]
     assert single["basis"] == CreditBasis.CONSTANT.value
-    assert single["toolMultipliers"] == {"boltz": 1, "colabfold": 5, "alphafold2": 5}
+    assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 200}
 
     bulk = by_category["bulk-prediction"]
     assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
-    assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
+    assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 3}
 
     screening = by_category["interaction-screening"]
     assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
-    assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 1}
+    assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 5}
 
 
 # ── Server-side credit deduction at launch ───────────────────────────────────
@@ -1331,7 +1331,7 @@ def test_launch_deducts_credits_when_enabled(
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
-    assert credit == 40  # 100 − (20 × 3)
+    assert credit == 70  # 100 − (10 × 3)
 
 
 @patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)

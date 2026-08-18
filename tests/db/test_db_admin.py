@@ -191,7 +191,7 @@ async def test_sbp_credit_field_computes_de_novo_design_cost_from_metrics() -> N
         tool="rfdiffusion",
         metrics=SimpleNamespace(final_design_count=3),
     )
-    assert await field.parse_obj(None, run) == 30  # 10 credits/design * 3 designs
+    assert await field.parse_obj(None, run) == 12  # 4 credits/design * 3 designs
 
 
 async def test_sbp_credit_field_computes_single_prediction_constant_cost() -> None:
@@ -201,7 +201,7 @@ async def test_sbp_credit_field_computes_single_prediction_constant_cost() -> No
         tool="colabfold",
         metrics=None,
     )
-    assert await field.parse_obj(None, run) == 5
+    assert await field.parse_obj(None, run) == 50
 
 
 async def test_sbp_credit_field_is_none_for_uncosted_categories_and_missing_data() -> None:
