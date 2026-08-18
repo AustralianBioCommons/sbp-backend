@@ -31,6 +31,7 @@ RETRY_DELAY_BASE = 5 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
+
 def with_scheduler_db_session[SchedulerJob: Callable[..., object]](
     func: SchedulerJob,
 ) -> SchedulerJob:
@@ -38,6 +39,7 @@ def with_scheduler_db_session[SchedulerJob: Callable[..., object]](
     Decorator to run jobs with a database session. Automatically
     closes the DB session.
     """
+
     @wraps(func)
     def wrapper(*args: object, **kwargs: object) -> object:
         provided_db_session = kwargs.pop("db_session", None)
@@ -89,9 +91,7 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
 
 
 @with_scheduler_db_session
-def launch_job(
-    job_id: UUID, dry_run: bool = False, *, db_session: Session | None = None
-) -> None:
+def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | None = None) -> None:
     db_session = require_scheduler_db_session(db_session)
     logger.info(f"Launching job {job_id}...")
     settings = get_settings()
@@ -266,9 +266,7 @@ def refresh_user_credits(dry_run: bool = False, *, db_session: Session | None = 
 
 
 @with_scheduler_db_session
-def sync_completed_workflow_runs(
-    dry_run: bool = False, *, db_session: Session | None = None
-):
+def sync_completed_workflow_runs(dry_run: bool = False, *, db_session: Session | None = None):
     db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for completed workflow runs to sync...")
     settings = get_settings()
