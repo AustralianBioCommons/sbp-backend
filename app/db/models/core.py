@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import UUID as PyUUID
 from uuid import uuid4
 
+from schemas.workflows.shared import PipelineStatus
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -139,6 +140,24 @@ class WorkflowRun(Base):
         if self.seqera_final_status is None:
             return False
         return self.seqera_final_status.upper() in TERMINAL_SEQERA_STATUSES
+
+    def is_syncing_results(self) -> bool:
+        if self.seqera_final_status is None:
+            return False
+        return (
+            self.seqera_final_status == PipelineStatus.SUCCEEDED.value
+            and self.sync_completed_at is None
+        )
+
+    @property
+    def results_sync_status(self):
+        """
+        Simple sync status to report to frontend
+        """
+        if self.sync_completed_at is None:
+            return "syncing"
+        else:
+            return "ready"
 
 
 class S3Object(Base):
