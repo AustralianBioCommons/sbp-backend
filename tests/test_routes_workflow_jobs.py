@@ -343,14 +343,6 @@ async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db
     with (
         patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
         patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-        ) as ensure_score,
-        patch(
-            "app.routes.workflow.jobs.sync_service_usage",
-            new_callable=AsyncMock,
-        ) as sync_usage,
     ):
         response = await list_jobs(
             search=None,
@@ -362,8 +354,6 @@ async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db
         )
 
     describe.assert_not_awaited()
-    ensure_score.assert_not_awaited()
-    sync_usage.assert_not_awaited()
     assert len(response.jobs) == 1
     assert response.jobs[0].status == "Completed"
     assert response.jobs[0].score is None
@@ -528,12 +518,6 @@ async def test_get_job_details_success(mock_db, mock_user_id):
                 }
             },
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.95,
-        ),
-        patch("app.routes.workflow.jobs.sync_service_usage", new_callable=AsyncMock),
     ):
         response = await get_job_details(
             run_id=run_id,
@@ -545,7 +529,7 @@ async def test_get_job_details_success(mock_db, mock_user_id):
     assert response.jobName == "Test Job Details"
     assert response.status == "Completed"
     assert response.workflow == "Bindcraft"
-    assert response.score == 0.95
+    assert response.score is None
 
 
 @pytest.mark.asyncio
@@ -570,14 +554,6 @@ async def test_get_job_details_uses_stored_terminal_status_without_seqera(mock_d
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-        ) as ensure_score,
-        patch(
-            "app.routes.workflow.jobs.sync_service_usage",
-            new_callable=AsyncMock,
-        ) as sync_usage,
     ):
         response = await get_job_details(
             run_id=run_id,
@@ -586,8 +562,6 @@ async def test_get_job_details_uses_stored_terminal_status_without_seqera(mock_d
         )
 
     describe.assert_not_awaited()
-    ensure_score.assert_not_awaited()
-    sync_usage.assert_not_awaited()
     assert response.id == run_id
     assert response.jobName == "Cached Job Details"
     assert response.status == "Completed"
@@ -634,11 +608,6 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "RUNNING"}},
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.95,
-        ) as ensure_score,
     ):
         response = await get_job_details(
             run_id="wf-456",
@@ -648,7 +617,6 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
 
     assert response.status == "In progress"
     assert response.score is None
-    ensure_score.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -680,8 +648,10 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mock_settings):
-    """Test that completed jobs trigger score calculation."""
+async def test_list_jobs_does_not_calculate_score_before_result_sync(
+    mock_db, mock_user_id, mock_settings
+):
+    """Completed compute does not trigger request-time S3 result discovery."""
     run_id = "run-score-test"
     run = WorkflowRunFactory.build(
         seqera_run_id="wf-score-test",
@@ -703,11 +673,6 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mock_sett
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "SUCCEEDED"}},
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.88,
-        ) as mock_ensure_score,
     ):
         response = await list_jobs(
             search=None,
@@ -719,7 +684,4 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id, mock_sett
             settings=mock_settings,
         )
 
-    mock_ensure_score.assert_called_once_with(
-        mock_db, user_run.run, "Completed", settings=mock_settings
-    )
-    assert response.jobs[0].score == 0.88
+    assert response.jobs[0].score is None
