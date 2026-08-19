@@ -374,7 +374,10 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["configText"] == "config_text"
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
-    assert "outdir: s3://my-bucket/output-queued" in queued_job.launch_payload["paramsText"]
+    assert (
+        "outdir: /test/output/interaction-screening/output-queued"
+        in queued_job.launch_payload["paramsText"]
+    )
     assert (
         "input: /test/input/interaction-screening/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]

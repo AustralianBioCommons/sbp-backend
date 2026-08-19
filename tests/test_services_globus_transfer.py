@@ -17,6 +17,7 @@ from app.services.globus_transfer import (
     _notify_launcher,
     _s3_relative_path,
     build_gadi_input_path,
+    build_gadi_output_path,
     poll_transfer,
     submit_pending_transfer,
     sync_data_transfers,
@@ -82,6 +83,36 @@ def test_build_gadi_input_path():
         globus_settings=globus_settings,
     )
     assert path == "/g/data/yz52/sbp_data/dev_input/single-prediction/run-123/sample.csv"
+
+
+def test_build_gadi_output_path():
+    globus_settings = GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/g/data/yz52/sbp_data",
+        input_dir="/g/data/yz52/sbp_data/dev_input",
+        output_dir="/g/data/yz52/sbp_data/dev_output",
+    )
+
+    assert (
+        build_gadi_output_path(
+            "run-123",
+            "single-prediction",
+            globus_settings=globus_settings,
+        )
+        == "/g/data/yz52/sbp_data/dev_output/single-prediction/run-123"
+    )
+    assert (
+        build_gadi_output_path(
+            "run-123",
+            "single-prediction",
+            "reports/",
+            globus_settings=globus_settings,
+        )
+        == "/g/data/yz52/sbp_data/dev_output/single-prediction/run-123/reports/"
+    )
 
 
 def test_s3_relative_path_strips_bucket():
