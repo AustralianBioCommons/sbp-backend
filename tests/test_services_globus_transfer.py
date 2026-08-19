@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import requests
@@ -15,6 +15,7 @@ from app.services.globus_transfer import (
     STALE_TRANSFER_TIMEOUT,
     _gadi_relative_path,
     _notify_launcher,
+    _notify_output_sync,
     _s3_relative_path,
     build_gadi_input_path,
     build_gadi_output_path,
@@ -195,6 +196,37 @@ def test_submit_pending_transfer_success(test_db, persistent_models, mock_transf
     assert submitted["submission_id"] == "sub-123"
     assert submitted["DATA"][0]["source_path"] == "/inputs/samplesheets/a.csv"
     assert submitted["DATA"][0]["destination_path"] == "/input/single-prediction/run-1/a.csv"
+
+
+def test_submit_pending_transfer_output_success(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="pending",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        destination_location="s3://my-bucket/results/run-1/reports/",
+        transfer_id=None,
+    )
+
+    submit_pending_transfer(test_db, data_transfer, globus_settings=globus_settings)
+
+    assert data_transfer.status == "in_progress"
+    assert data_transfer.transfer_id == "task-abc"
+
+    submitted = mock_transfer_client.submit_transfer.call_args[0][0]
+    assert submitted["source_endpoint"] == "test-gadi-collection-id"
+    assert submitted["destination_endpoint"] == "test-s3-collection-id"
+    assert submitted["submission_id"] == "sub-123"
+    assert submitted["DATA"][0]["source_path"] == "/output/single-prediction/run-1/reports/"
+    assert submitted["DATA"][0]["destination_path"] == "/results/run-1/reports/"
+    assert submitted["DATA"][0]["recursive"] is True
 
 
 def test_submit_pending_transfer_reuses_existing_submission_id(
@@ -448,6 +480,80 @@ def test_notify_launcher_flips_to_pending_once_all_input_transfers_complete(
 
 
 # ============================================================================
+# _notify_output_sync
+# ============================================================================
+
+
+def test_notify_output_sync_waits_for_all_output_transfers(test_db, persistent_models):
+    workflow_run = WorkflowRunFactory.create_sync(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+    )
+    completed_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="in_progress",
+    )
+
+    with patch(
+        "app.services.globus_transfer.finalize_completed_workflow_run",
+        new_callable=AsyncMock,
+    ) as finalize:
+        notified = _notify_output_sync(test_db, completed_transfer)
+
+    test_db.refresh(workflow_run)
+    assert notified is False
+    finalize.assert_not_awaited()
+    assert workflow_run.sync_completed_at is None
+
+
+def test_notify_output_sync_finalizes_when_all_output_transfers_complete(
+    test_db, persistent_models
+):
+    workflow_run = WorkflowRunFactory.create_sync(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+    )
+    completed_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+    )
+
+    async def finalize(db, run):
+        run.sync_completed_at = datetime.now(UTC)
+        db.add(run)
+        db.commit()
+        return 2
+
+    with patch(
+        "app.services.globus_transfer.finalize_completed_workflow_run",
+        new_callable=AsyncMock,
+        side_effect=finalize,
+    ) as finalize_mock:
+        notified = _notify_output_sync(test_db, completed_transfer)
+
+    test_db.refresh(workflow_run)
+    assert notified is True
+    finalize_mock.assert_awaited_once_with(test_db, workflow_run)
+    assert workflow_run.sync_completed_at is not None
+
+
+# ============================================================================
 # sync_data_transfers
 # ============================================================================
 
@@ -496,6 +602,36 @@ def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, moc
     assert result.completed == 1
     queued_job = workflow_run.get_queued_job(test_db)
     assert queued_job.status == "pending"
+
+
+def test_sync_data_transfers_polls_output_and_finalizes(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+
+    workflow_run = WorkflowRunFactory.create_sync(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="in_progress",
+        transfer_id="task-1",
+    )
+
+    with patch(
+        "app.services.globus_transfer.finalize_completed_workflow_run",
+        new_callable=AsyncMock,
+        return_value=2,
+    ) as finalize:
+        result = sync_data_transfers(test_db)
+
+    assert result.checked == 1
+    assert result.completed == 1
+    assert result.finalized_runs == 1
+    finalize.assert_awaited_once_with(test_db, workflow_run)
 
 
 def test_sync_data_transfers_ignores_non_globus_provider(
