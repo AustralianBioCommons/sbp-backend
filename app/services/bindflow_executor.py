@@ -16,6 +16,7 @@ from .bindflow_config import (
     get_bindflow_config_text,
     get_bindflow_default_params,
 )
+from .globus_transfer import build_gadi_output_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -50,7 +51,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     workspace_id = settings.seqera.work_space
     compute_env_id = settings.seqera.compute_id
     work_dir = settings.seqera.work_dir
-    s3_bucket = settings.aws.s3_bucket
 
     run_name = (form.runName or "").strip()
     if not run_name:
@@ -59,7 +59,11 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     output_key = (output_id or "").strip()
     if not output_key:
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{s3_bucket}/{output_key}"
+    out_dir = build_gadi_output_path(
+        output_key,
+        "de-novo-design",
+        globus_settings=settings.globus,
+    )
 
     default_params = get_bindflow_default_params(out_dir, staged_input_location)
 
