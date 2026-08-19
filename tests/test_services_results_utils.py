@@ -9,11 +9,13 @@ from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
+from sqlalchemy import select
 
 from app.db.models.core import AppUser, DataTransfer, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services.results_utils import (
     WORKFLOW_OUTPUT_SPECS,
     ClassifiedOutput,
+    OutputTransferItem,
     WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,
@@ -255,6 +257,144 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(mock_settings):
     )
     mock_settings.aws.s3_bucket = ""
     assert _build_s3_uri("path/to/file.txt", settings=mock_settings) == "path/to/file.txt"
+
+
+def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_settings):
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+
+    spec = WorkflowResultsSpec(
+        kind="de-novo-design",
+        tool="bindcraft",
+        required_categories=set(),
+        get_prefixes=lambda _run: [
+            f"{run.id}/",
+            f"{run.id}/ranker/",
+            f"{run.id}/ranker/",
+            f"{run.id}/generate/report.html",
+            "other-run/ranker/",
+        ],
+        classifier=lambda _key, _sample_id: None,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=AsyncMock(return_value=None),
+    )
+
+    assert spec.get_transfer_items(run, settings=mock_settings) == [
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/ranker/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/ranker/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/generate/report.html",
+            destination_location=f"s3://test-s3-bucket/{run.id}/generate/report.html",
+            recursive=False,
+        ),
+    ]
+
+
+def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
+    boltz_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
+    alphafold2_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["alphafold2"]
+    colabfold_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["colabfold"]
+    wisps_spec = WORKFLOW_OUTPUT_SPECS["interaction-screening"]["boltz"]
+    rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
+
+    assert bindcraft_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/ranker/",
+        f"{run.id}/generate/",
+        f"{run.id}/bindcraft/T1024_0_output/",
+    ]
+    assert boltz_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/boltz/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/boltz/T1024/",
+    ]
+    assert alphafold2_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+    ]
+    assert colabfold_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/colabfold/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/colabfold/T1024/",
+    ]
+    assert wisps_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/multiqc/",
+        f"{run.id}/collect/",
+        f"{run.id}/ipsae/",
+    ]
+    assert rfdiffusion_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/results/",
+    ]
+
+    assert boltz_spec.get_transfer_items(run, settings=mock_settings) == [
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/reports/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=(
+                f"/test/output/single-prediction/{run.id}/boltz/top_ranked_structures/"
+            ),
+            destination_location=f"s3://test-s3-bucket/{run.id}/boltz/top_ranked_structures/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/mmseqs/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/mmseqs/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/boltz/T1024/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/boltz/T1024/",
+            recursive=True,
+        ),
+    ]
+
+
+def test_workflow_results_spec_create_output_transfers_is_idempotent(
+    test_db, persistent_models, mock_settings
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(owner=user, sample_id="T1024")
+    spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
+    existing_transfer = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location=f"/test/output/single-prediction/{run.id}/reports/",
+        destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+        status="in_progress",
+        transfer_id="task-existing",
+    )
+    test_db.add(existing_transfer)
+    test_db.commit()
+
+    first_result = spec.create_output_transfers(test_db, run, settings=mock_settings)
+    second_result = spec.create_output_transfers(test_db, run, settings=mock_settings)
+
+    output_transfers = test_db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+        )
+    ).all()
+    assert len(first_result) == 4
+    assert len(second_result) == 4
+    assert len(output_transfers) == 4
+    assert first_result[0].id == existing_transfer.id
+    assert first_result[0].status == "in_progress"
+    assert first_result[0].transfer_id == "task-existing"
+    assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
+    assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
