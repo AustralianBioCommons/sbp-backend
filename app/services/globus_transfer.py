@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, get_settings
-from ..db.models.core import DataTransfer, DataTransferDirection, DataTransferStatus
+from ..db.models.core import DataTransfer, DataTransferStatus
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 
@@ -45,13 +45,16 @@ def build_gadi_input_path(
 def build_gadi_output_path(
     run_id: object,
     workflow_name: str,
-    filename: str,
+    filename: str | None = None,
     *,
     globus_settings: GlobusSettings | None = None,
 ) -> str:
-    """Build the Gadi-local destination path for an output file."""
+    """Build the Gadi-local output directory or child path for a workflow run."""
     globus_settings = globus_settings or get_settings().globus
-    return f"{globus_settings.output_dir}/{workflow_name}/{run_id}/{filename}"
+    run_output_dir = f"{globus_settings.output_dir}/{workflow_name}/{run_id}"
+    if filename is None:
+        return run_output_dir
+    return f"{run_output_dir}/{filename}"
 
 
 def _s3_relative_path(source_location: str) -> str:
