@@ -405,6 +405,37 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
+async def test_get_result_downloads_returns_syncing_status_without_s3_lookup(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|results-downloads-syncing",
+        name="Downloads Syncing",
+        email="results-downloads-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-downloads-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-downloads-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(),
+    ) as get_downloads:
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
+
+    get_downloads.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.downloads == []
+
+
+@pytest.mark.asyncio
 async def test_get_result_download_all_returns_valid_zip_file(
     test_db, persistent_models, mock_settings
 ):
@@ -691,6 +722,37 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
+async def test_get_result_snapshots_returns_syncing_status_without_s3_lookup(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|results-snapshots-syncing",
+        name="Snapshots Syncing",
+        email="results-snapshots-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-snapshots-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-snapshots-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_snapshot_downloads",
+        new=AsyncMock(),
+    ) as get_snapshots:
+        result = await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
+
+    get_snapshots.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.snapshots == []
+
+
+@pytest.mark.asyncio
 async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-missing",
@@ -810,6 +872,35 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         response_content_disposition="inline",
         settings=mock_settings,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_returns_syncing_status_without_s3_lookup(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|results-report-syncing",
+        name="Report Syncing",
+        email="results-report-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-report-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-report-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(),
+    ) as get_report:
+        result = await get_result_report(str(run.id), user.id, test_db, mock_settings)
+
+    get_report.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.report is None
 
 
 @pytest.mark.asyncio
@@ -1092,6 +1183,35 @@ async def test_get_result_download_all_returns_404_for_missing_owned_run(test_db
 
 
 @pytest.mark.asyncio
+async def test_get_result_download_all_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-all-syncing",
+        name="Download All Syncing",
+        email="download-all-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-all-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-download-all-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_all_downloads_zipped",
+        new=AsyncMock(),
+    ) as get_zip:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_all(str(run.id), user.id, test_db, mock_settings)
+
+    get_zip.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
+
+
+@pytest.mark.asyncio
 async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|download-all-config-err",
@@ -1204,6 +1324,35 @@ async def test_get_result_file_returns_pae_matrix_as_text(
 
     assert response.body == b"0\t1\n1\t0\n"
     assert response.media_type == "text/plain; charset=utf-8"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|file-syncing",
+        name="File Syncing",
+        email="file-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-file-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-file-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.read_result_output_file",
+        new=AsyncMock(),
+    ) as read_file:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(str(run.id), "run/output.cif", user.id, test_db, mock_settings)
+
+    read_file.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
 
 
 @pytest.mark.asyncio
