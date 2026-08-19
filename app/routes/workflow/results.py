@@ -40,6 +40,7 @@ router = APIRouter(tags=["results"], dependencies=[Depends(get_current_user_id)]
 
 # Result artifacts the portal reads as text; anything else is left as a download.
 _TEXT_RESULT_SUFFIXES = {".pdb", ".cif", ".mmcif", ".ent", ".tsv", ".csv", ".a3m", ".txt"}
+_RESULTS_SYNCING_DETAIL = "Results are still syncing"
 
 
 def _guess_result_media_type(label: str) -> str:
@@ -47,6 +48,14 @@ def _guess_result_media_type(label: str) -> str:
     if suffix in _TEXT_RESULT_SUFFIXES:
         return "text/plain; charset=utf-8"
     return mimetypes.guess_type(label)[0] or "application/octet-stream"
+
+
+def raise_if_results_syncing_for_download(run) -> None:
+    if run.is_syncing_results():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_RESULTS_SYNCING_DETAIL,
+        )
 
 
 @router.get("/{run_id}/settingParams", response_model=JobSettingParamsResponse)
@@ -157,6 +166,12 @@ async def get_result_downloads(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultDownloadsResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            downloads=[],
+        )
 
     try:
         downloads = await get_result_output_downloads(db, owned_run, settings=settings)
@@ -169,6 +184,7 @@ async def get_result_downloads(
 
     return ResultDownloadsResponse(
         runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
         downloads=downloads,
     )
 
@@ -190,6 +206,7 @@ async def get_result_file(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
 
     try:
         content, label = await read_result_output_file(db, owned_run, key, settings=settings)
@@ -221,6 +238,7 @@ async def get_result_download_all(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
 
     filename = f"results-{owned_run.run_name or run_id}.zip"
     content_disposition = _format_attachment_content_disposition(filename)
@@ -250,6 +268,12 @@ async def get_result_snapshots(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultSnapshotsResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            snapshots=[],
+        )
 
     try:
         snapshots = await get_result_snapshot_downloads(db, owned_run, settings=settings)
@@ -262,6 +286,7 @@ async def get_result_snapshots(
 
     return ResultSnapshotsResponse(
         runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
         snapshots=snapshots,
     )
 
@@ -277,6 +302,12 @@ async def get_result_report(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultReportResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            report=None,
+        )
 
     try:
         report = await get_result_report_download(db, owned_run, settings=settings)
@@ -289,4 +320,8 @@ async def get_result_report(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultReportResponse(runId=run_id, report=report)
+    return ResultReportResponse(
+        runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
+        report=report,
+    )
