@@ -306,8 +306,8 @@ def sync_completed_workflow_runs(dry_run: bool = False, *, db_session: Session |
 @with_scheduler_db_session
 def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = None):
     """Submit pending and poll in-progress Globus data transfers, notifying the
-    workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
-    run's input staging settles."""
+    workflow launcher once a run's input staging settles, and finalizing
+    completed workflow runs once output transfers settle."""
     db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for Globus data transfers to sync...")
     if dry_run:
@@ -326,5 +326,6 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
     logger.info(
         "Finished syncing Globus data transfers: "
         f"checked={result.checked}, submitted={result.submitted}, "
-        f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+        f"completed={result.completed}, failed={result.failed}, "
+        f"errored={result.errored}, finalized_runs={result.finalized_runs}."
     )

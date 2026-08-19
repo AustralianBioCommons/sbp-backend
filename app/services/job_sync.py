@@ -9,11 +9,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..config import Settings
-from ..db.models.core import WorkflowRun
+from ..db.models.core import DataTransfer, WorkflowRun
 from ..schemas.workflows.shared import (
     TERMINAL_SEQERA_STATUSES,
     PipelineStatus,
@@ -78,7 +78,11 @@ def get_runs_requiring_sync(db: Session, *, limit: int = 100) -> list[WorkflowRu
             WorkflowRun.seqera_run_id.is_not(None),
             or_(
                 WorkflowRun.seqera_final_status.is_(None),
-                WorkflowRun.sync_completed_at.is_(None),
+                and_(
+                    func.upper(WorkflowRun.seqera_final_status)
+                    == PipelineStatus.SUCCEEDED.value,
+                    WorkflowRun.sync_completed_at.is_(None),
+                ),
             ),
         )
         .order_by(WorkflowRun.submission_timestamp.asc(), WorkflowRun.id)
@@ -177,19 +181,52 @@ async def sync_workflow_run(
 
     outputs_synced = 0
     seqera_completed = status == PipelineStatus.SUCCEEDED.value
-    sync_incomplete = run.sync_completed_at is None
-    if seqera_completed and (sync_incomplete or force):
-        outputs_synced = await _sync_completed_run_results(
+    if not seqera_completed:
+        return WorkflowRunSyncResult(
+            run_id=run.id,
+            seqera_run_id=run.seqera_run_id,
+            seqera_status=status,
+            ui_status=_map_status_to_ui(status),
+            terminal=True,
+            sync_completed=False,
+            outputs_synced=outputs_synced,
+        )
+
+    needs_completion_sync = run.sync_completed_at is None or force
+    if needs_completion_sync:
+        output_transfer_state = _ensure_completed_run_output_transfers(
             db,
             run,
+            settings=settings,
+        )
+        if output_transfer_state.error is not None:
+            return WorkflowRunSyncResult(
+                run_id=run.id,
+                seqera_run_id=run.seqera_run_id,
+                seqera_status=status,
+                ui_status=_map_status_to_ui(status),
+                terminal=True,
+                sync_completed=False,
+                error=output_transfer_state.error,
+            )
+        if not output_transfer_state.ready:
+            return WorkflowRunSyncResult(
+                run_id=run.id,
+                seqera_run_id=run.seqera_run_id,
+                seqera_status=status,
+                ui_status=_map_status_to_ui(status),
+                terminal=True,
+                sync_completed=False,
+            )
+
+        outputs_synced = await finalize_completed_workflow_run(
+            db,
+            run,
+            force=force,
             suppress_s3_errors=suppress_s3_errors,
             settings=settings,
         )
-
-    if sync_incomplete or force:
-        run.sync_completed_at = datetime.now(tz=UTC)
-        db.add(run)
-        db.commit()
+        db.refresh(run)
 
     return WorkflowRunSyncResult(
         run_id=run.id,
@@ -197,9 +234,96 @@ async def sync_workflow_run(
         seqera_status=status,
         ui_status=_map_status_to_ui(status),
         terminal=True,
-        sync_completed=True,
+        sync_completed=run.sync_completed_at is not None,
         outputs_synced=outputs_synced,
     )
+
+
+@dataclass(frozen=True)
+class OutputTransferState:
+    ready: bool
+    error: str | None = None
+
+
+def _ensure_completed_run_output_transfers(
+    db: Session,
+    run: WorkflowRun,
+    *,
+    settings: Settings | None = None,
+) -> OutputTransferState:
+    try:
+        spec = get_output_spec(run)
+    except ValueError as exc:
+        logger.warning("Skipping result transfer creation for run %s: %s", run.id, exc)
+        return OutputTransferState(ready=True)
+
+    output_transfers = spec.create_output_transfers(db, run, settings=settings)
+    failed_transfers = [transfer for transfer in output_transfers if transfer.status == "failed"]
+    if failed_transfers:
+        return OutputTransferState(
+            ready=False,
+            error=_format_output_transfer_failure(failed_transfers),
+        )
+
+    if any(transfer.status in {"pending", "in_progress"} for transfer in output_transfers):
+        return OutputTransferState(ready=False)
+
+    return OutputTransferState(ready=True)
+
+
+def _format_output_transfer_failure(transfers: list[DataTransfer]) -> str:
+    details = []
+    for transfer in transfers:
+        message = transfer.error_message or "unknown Globus transfer failure"
+        details.append(f"{transfer.id}: {message}")
+    return "Output transfer failed: " + "; ".join(details)
+
+
+async def finalize_completed_workflow_run(
+    db: Session,
+    run: WorkflowRun,
+    *,
+    force: bool = False,
+    suppress_s3_errors: bool = True,
+    settings: Settings | None = None,
+) -> int:
+    """
+    Finalize result metadata for a successful run whose output transfers are done.
+    Returns the number of outputs synced in the current pass.
+    """
+    if not force and run.sync_completed_at is not None:
+        return 0
+
+    status = _normalize_status(run.seqera_final_status)
+    if status != PipelineStatus.SUCCEEDED.value:
+        return 0
+
+    if not check_all_output_transfers_completed(db, run):
+        return 0
+
+    outputs_synced = await _sync_completed_run_results(
+        db,
+        run,
+        suppress_s3_errors=suppress_s3_errors,
+        settings=settings,
+    )
+    run.sync_completed_at = datetime.now(tz=UTC)
+    db.add(run)
+    db.commit()
+    return outputs_synced
+
+
+def check_all_output_transfers_completed(db: Session, run: WorkflowRun) -> bool:
+    output_transfers = db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+        )
+    ).all()
+    if not output_transfers:
+        return True
+    return all(transfer.status == "completed" for transfer in output_transfers)
 
 
 async def _sync_completed_run_results(

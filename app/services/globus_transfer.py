@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from ..config import GlobusSettings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
+from .job_sync import finalize_completed_workflow_run
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,7 @@ class DataTransferSyncResult:
     completed: int = 0
     failed: int = 0
     errored: int = 0
+    finalized_runs: int = 0
 
 
 def submit_pending_transfer(
@@ -127,7 +130,6 @@ def submit_pending_transfer(
         case _:
             raise ValueError(f"Invalid direction: {direction}")
 
-
     # Persist the submission_id (temporarily held in transfer_id) before calling
     # submit_transfer, and reuse it on retry: Globus dedupes submissions on this
     # id, so a crash between submit and our own status-update commit must not
@@ -147,7 +149,11 @@ def submit_pending_transfer(
             submission_id=submission_id,
             label=f"sbp-run-{data_transfer.workflow_run_id}",
         )
-        transfer_data.add_item(source_path, destination_path)
+        transfer_data.add_item(
+            source_path,
+            destination_path,
+            recursive=source_path.endswith("/") or destination_path.endswith("/"),
+        )
         result = transfer_client.submit_transfer(transfer_data)
     except globus_sdk.GlobusAPIError as exc:
         # Covers both TransferAPIError (submission rejected) and AuthAPIError
@@ -270,6 +276,31 @@ def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
     db.commit()
 
 
+def _notify_output_sync(db: Session, data_transfer: DataTransfer) -> bool:
+    """Finalize a successful workflow run once all output transfers complete."""
+    if data_transfer.direction != "output" or data_transfer.status != "completed":
+        return False
+
+    workflow_run = data_transfer.workflow_run
+    if workflow_run.sync_completed_at is not None:
+        return False
+
+    output_transfers = db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == data_transfer.workflow_run_id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+        )
+    ).all()
+    if not output_transfers or not all(
+        transfer.status == "completed" for transfer in output_transfers
+    ):
+        return False
+
+    outputs_synced = asyncio.run(finalize_completed_workflow_run(db, workflow_run))
+    return workflow_run.sync_completed_at is not None or outputs_synced > 0
+
+
 def sync_data_transfers(
     db: Session,
     *,
@@ -289,7 +320,7 @@ def sync_data_transfers(
     )
     transfers = list(db.scalars(stmt))
 
-    submitted = completed = failed = errored = 0
+    submitted = completed = failed = errored = finalized_runs = 0
     for data_transfer in transfers:
         try:
             if data_transfer.status == "pending":
@@ -299,6 +330,8 @@ def sync_data_transfers(
             else:
                 poll_transfer(db, data_transfer, globus_settings=globus_settings)
             _notify_launcher(db, data_transfer)
+            if _notify_output_sync(db, data_transfer):
+                finalized_runs += 1
         except (GlobusConfigurationError, GlobusTransferError) as exc:
             db.rollback()
             logger.warning("Failed to sync Globus data transfer %s: %s", data_transfer.id, exc)
@@ -321,4 +354,5 @@ def sync_data_transfers(
         completed=completed,
         failed=failed,
         errored=errored,
+        finalized_runs=finalized_runs,
     )
