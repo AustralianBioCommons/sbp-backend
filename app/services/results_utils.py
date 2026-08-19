@@ -62,6 +62,15 @@ class ClassifiedOutput:
 
 
 @dataclass(frozen=True)
+class OutputTransferItem:
+    """One Gadi-to-S3 transfer item needed before result metadata sync."""
+
+    source_location: str
+    destination_location: str
+    recursive: bool = True
+
+
+@dataclass(frozen=True)
 class WorkflowResultsSpec:
     """
     Defines the output categories for a workflow, along
@@ -76,6 +85,71 @@ class WorkflowResultsSpec:
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
+
+    def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
+        """Return run-scoped output prefixes that should be transferred from Gadi."""
+        return _non_root_output_prefixes(run, self.get_prefixes(run))
+
+    def get_transfer_items(
+        self,
+        run: WorkflowRun,
+        settings: Settings | None = None,
+    ) -> list[OutputTransferItem]:
+        """Return Gadi-to-S3 transfer items for this workflow run's outputs."""
+        settings = settings or get_settings()
+        return _build_output_transfer_items(
+            run,
+            workflow_name=self.kind,
+            prefixes=self.get_transfer_prefixes(run),
+            settings=settings,
+        )
+
+    def create_output_transfers(
+        self,
+        db: Session,
+        run: WorkflowRun,
+        settings: Settings | None = None,
+    ) -> list[DataTransfer]:
+        """Create pending Globus output transfers for this run"""
+        transfer_items = self.get_transfer_items(run, settings=settings)
+        if not transfer_items:
+            return []
+
+        existing_transfers = db.scalars(
+            select(DataTransfer).where(
+                DataTransfer.workflow_run_id == run.id,
+                DataTransfer.provider == "globus",
+                DataTransfer.direction == "output",
+            )
+        ).all()
+        transfers_by_location = {
+            (transfer.source_location, transfer.destination_location): transfer
+            for transfer in existing_transfers
+        }
+
+        changed = False
+        output_transfers: list[DataTransfer] = []
+        for item in transfer_items:
+            key = (item.source_location, item.destination_location)
+            data_transfer = transfers_by_location.get(key)
+            if data_transfer is None:
+                data_transfer = DataTransfer(
+                    workflow_run_id=run.id,
+                    direction="output",
+                    provider="globus",
+                    source_location=item.source_location,
+                    destination_location=item.destination_location,
+                    status="pending",
+                )
+                db.add(data_transfer)
+                transfers_by_location[key] = data_transfer
+                changed = True
+            output_transfers.append(data_transfer)
+
+        if changed:
+            db.commit()
+
+        return output_transfers
 
     def classify_output(self, key: str, sample_id: str | None) -> ClassifiedOutput | None:
         """
@@ -355,6 +429,61 @@ def s3_uri_to_key(uri: str | None) -> str | None:
     if len(parts) < 4:
         return None
     return parts[3].strip() or None
+
+
+def _non_root_output_prefixes(run: WorkflowRun, prefixes: list[str]) -> list[str]:
+    """Return run-scoped output prefixes, excluding the broad run root prefix."""
+    if not run.id:
+        return []
+
+    root_prefix = f"{run.id}/"
+    result: list[str] = []
+    for prefix in prefixes:
+        normalized = prefix.strip().lstrip("/")
+        if not normalized or normalized == root_prefix:
+            continue
+        if normalized.startswith(root_prefix) and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _build_output_transfer_items(
+    run: WorkflowRun,
+    *,
+    workflow_name: str,
+    prefixes: list[str],
+    settings: Settings,
+) -> list[OutputTransferItem]:
+    """Map S3 output prefixes to their corresponding Gadi output directories."""
+    if not run.id:
+        return []
+
+    run_prefix = f"{run.id}/"
+    source_root = f"{settings.globus.output_dir}/{workflow_name}/{run.id}"
+    items: list[OutputTransferItem] = []
+    seen: set[tuple[str, str]] = set()
+
+    for prefix in prefixes:
+        normalized = prefix.strip().lstrip("/")
+        if not normalized or not normalized.startswith(run_prefix):
+            continue
+
+        relative_path = normalized.removeprefix(run_prefix)
+        source_location = f"{source_root}/{relative_path}" if relative_path else f"{source_root}/"
+        destination_location = _build_s3_uri(normalized, settings=settings)
+        key = (source_location, destination_location)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            OutputTransferItem(
+                source_location=source_location,
+                destination_location=destination_location,
+                recursive=normalized.endswith("/"),
+            )
+        )
+
+    return items
 
 
 def get_sample_id_for_result(run: WorkflowRun) -> str | None:

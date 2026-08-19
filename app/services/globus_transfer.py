@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, get_settings
-from ..db.models.core import DataTransfer, DataTransferStatus
+from ..db.models.core import DataTransfer, DataTransferDirection, DataTransferStatus
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 
@@ -42,12 +42,22 @@ def build_gadi_input_path(
     return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{filename}"
 
 
+def build_gadi_output_path(
+    run_id: object,
+    workflow_name: str,
+    filename: str,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> str:
+    """Build the Gadi-local destination path for an output file."""
+    globus_settings = globus_settings or get_settings().globus
+    return f"{globus_settings.output_dir}/{workflow_name}/{run_id}/{filename}"
+
+
 def _s3_relative_path(source_location: str) -> str:
     """Path relative to the S3 Globus collection root for a ``s3://bucket/key`` URI.
 
-    The collection's root maps 1:1 to the bucket root (verified against this
-    environment's actual collection - ``ls /`` mirrors the bucket's top-level keys
-    directly), so the bucket name itself is stripped from the path.
+    The collection's root maps 1:1 to the bucket root
     """
     if not source_location.startswith("s3://"):
         raise GlobusTransferError(f"Not an S3 URI: {source_location}")
@@ -99,6 +109,21 @@ def submit_pending_transfer(
     """Submit a Globus transfer for a ``pending`` DataTransfer row."""
     globus_settings = globus_settings or get_settings().globus
     transfer_client = get_transfer_client(globus_settings)
+    direction = data_transfer.direction
+    match direction:
+        case "input":
+            source_collection = globus_settings.s3_collection_id
+            source_path = _s3_relative_path(data_transfer.source_location)
+            destination_collection = globus_settings.gadi_collection_id
+            destination_path = _gadi_relative_path(data_transfer.destination_location, globus_settings=globus_settings)
+        case "output":
+            source_collection = globus_settings.gadi_collection_id
+            source_path = _gadi_relative_path(data_transfer.source_location, globus_settings=globus_settings)
+            destination_collection = globus_settings.s3_collection_id
+            destination_path = _s3_relative_path(data_transfer.destination_location)
+        case _:
+            raise ValueError(f"Invalid direction: {direction}")
+
 
     # Persist the submission_id (temporarily held in transfer_id) before calling
     # submit_transfer, and reuse it on retry: Globus dedupes submissions on this
@@ -113,15 +138,11 @@ def submit_pending_transfer(
         db.commit()
 
     try:
-        source_path = _s3_relative_path(data_transfer.source_location)
         transfer_data = globus_sdk.TransferData(
-            globus_settings.s3_collection_id,
-            globus_settings.gadi_collection_id,
+            source_endpoint=source_collection,
+            destination_endpoint=destination_collection,
             submission_id=submission_id,
             label=f"sbp-run-{data_transfer.workflow_run_id}",
-        )
-        destination_path = _gadi_relative_path(
-            data_transfer.destination_location, globus_settings=globus_settings
         )
         transfer_data.add_item(source_path, destination_path)
         result = transfer_client.submit_transfer(transfer_data)
