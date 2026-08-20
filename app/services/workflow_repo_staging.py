@@ -260,9 +260,7 @@ def _clone_and_upload_repo(
                 if not file_path.is_file():
                     continue
                 relative_path = file_path.relative_to(assets_path).as_posix()
-                s3_client.upload_file(
-                    str(file_path), bucket, f"{assets_s3_prefix}/{relative_path}"
-                )
+                s3_client.upload_file(str(file_path), bucket, f"{assets_s3_prefix}/{relative_path}")
                 assets_uploaded += 1
             logger.info(
                 "Uploaded %d plain-checkout file(s) for %s/%s@%s to s3://%s/%s",
@@ -392,9 +390,7 @@ def _promote_queued_jobs_waiting_on_repo(db: Session, workflow: Workflow) -> Non
     from .globus_transfer import _try_promote_staging_job  # local import: avoid import cycle
 
     queued_jobs = db.scalars(
-        select(QueuedJob).where(
-            QueuedJob.workflow_id == workflow.id, QueuedJob.status == "staging"
-        )
+        select(QueuedJob).where(QueuedJob.workflow_id == workflow.id, QueuedJob.status == "staging")
     ).all()
     for queued_job in queued_jobs:
         _try_promote_staging_job(db, queued_job)

@@ -49,9 +49,7 @@ def _make_local_git_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, st
     repo_dir = tmp_path / "origin"
     repo_dir.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_dir, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True
-    )
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True)
     for relative_path, content in files.items():
         file_path = repo_dir / relative_path
@@ -413,9 +411,7 @@ def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settin
 
     mock_s3_client.upload_file.side_effect = _capture_upload
 
-    with patch(
-        "app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client
-    ):
+    with patch("app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client):
         _clone_and_upload_repo(
             "test",
             "repo",
@@ -481,9 +477,7 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
 
     mock_s3_client.upload_file.side_effect = _capture_upload
 
-    with patch(
-        "app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client
-    ):
+    with patch("app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client):
         _clone_and_upload_repo(
             "test",
             "repo",

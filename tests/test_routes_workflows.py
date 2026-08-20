@@ -394,9 +394,7 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
     assert data["status"] == "staging"
     mock_prepare_proteindj.assert_called_once()
     mock_prepare_bindflow.assert_not_called()
-    assert (
-        mock_prepare_proteindj.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
-    )
+    assert mock_prepare_proteindj.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
     assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
     # rfdiffusion's s3InputKey is the starting PDB's own URI (no samplesheet exists
     # for it), and prepare_proteindj_workflow stages that file itself - so the
