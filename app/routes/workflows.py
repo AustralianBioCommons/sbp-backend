@@ -477,12 +477,7 @@ async def launch_workflow(
         )
 
     # Gadi compute nodes have no network access, so Nextflow can't fetch the
-    # pipeline from GitHub itself - it must already be staged there (like input
-    # files, via Globus). This resolves the current commit and kicks off
-    # staging in the background if it isn't already cached; repo_gadi_path is
-    # deterministic from the commit sha, so it's safe to use immediately below
-    # even before the transfer actually completes (submit_pending_jobs won't
-    # launch this run until it does - see the "staging" gate further down).
+    # pipeline from GitHub itself - it must already be staged there
     try:
         repo_staging_locations = ensure_repo_staging_requested(
             db_session, workflow, settings=settings
@@ -492,14 +487,8 @@ async def launch_workflow(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
-    # Seqera's launch API validates `pipeline` as a URL, not a bare path
-    # (confirmed in production: a plain "/g/data/..." path is rejected with
-    # "Invalid pipeline URL"). Nextflow's local-path scheme is "file:" with a
-    # single slash before the (already-absolute) path, confirmed against a
-    # known-working manually staged pipeline on Gadi - not "file://", which
-    # would add an extra slash. repo_gadi_path itself stays a plain filesystem
-    # path, since that's what the Globus transfer/admin display/
-    # _gadi_relative_path conversion all need.
+    # Seqera's launch API validates `pipeline` as a URL, Nextflow's local-path scheme is "file:" with a
+    # single slash before the (already-absolute) path
     repo_gadi_path = repo_staging_locations.gadi_path
     pipeline_url = f"file:{repo_gadi_path}"
     # bindcraft's settings_filters/settings_advanced reference files bundled
