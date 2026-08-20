@@ -240,7 +240,7 @@ class DataTransfer(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)
     destination_location: Mapped[str] = mapped_column(Text, nullable=False)
-    recursive: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    recursive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Before submission succeeds, holds Globus's submission id (an idempotency
     # key generated up front so a crash-and-retry doesn't double-submit);
     # overwritten with the real Globus task id once submission succeeds, which
