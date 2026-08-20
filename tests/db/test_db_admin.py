@@ -133,6 +133,7 @@ def test_data_transfer_admin_includes_expected_columns() -> None:
     assert "provider" in field_names
     assert "source_location" in field_names
     assert "destination_location" in field_names
+    assert "recursive" in field_names
     assert "transfer_id" in field_names
     assert "status" in field_names
     assert "created_at" in field_names
@@ -157,6 +158,7 @@ async def test_data_transfer_admin_retry_action_resets_failed_output_transfer(te
         provider="globus",
         source_location="/test/output/admin-retry-run/reports/",
         destination_location="s3://bucket/results/admin-retry-run/reports/",
+        recursive=True,
         transfer_id="task-stale",
         status="failed",
         error_message="no such file",
@@ -218,6 +220,7 @@ async def test_data_transfer_admin_retry_action_rejects_non_failed_output(test_d
         provider="globus",
         source_location="s3://bucket/input.csv",
         destination_location="/test/input/admin-retry-reject-run/input.csv",
+        recursive=False,
         transfer_id="task-input",
         status="failed",
         error_message="input failed",
@@ -275,6 +278,7 @@ async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_out
         provider="globus",
         source_location="/test/output/admin-batch-retry-run/reports/",
         destination_location="s3://bucket/results/admin-batch-retry-run/reports/",
+        recursive=True,
         transfer_id="task-stale-1",
         status="failed",
         error_message="missing report",
@@ -285,6 +289,7 @@ async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_out
         provider="globus",
         source_location="/test/output/admin-batch-retry-run/metrics/",
         destination_location="s3://bucket/results/admin-batch-retry-run/metrics/",
+        recursive=True,
         transfer_id="task-stale-2",
         status="failed",
         error_message="missing metrics",
@@ -295,6 +300,7 @@ async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_out
         provider="globus",
         source_location="/test/output/admin-batch-retry-run/logs/",
         destination_location="s3://bucket/results/admin-batch-retry-run/logs/",
+        recursive=True,
         transfer_id="task-ok",
         status="completed",
         error_message=None,
@@ -305,6 +311,7 @@ async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_out
         provider="globus",
         source_location="s3://bucket/input.csv",
         destination_location="/test/input/admin-batch-retry-run/input.csv",
+        recursive=False,
         transfer_id="task-input",
         status="failed",
         error_message="input failed",
@@ -613,6 +620,7 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         provider="s3",
         source_location=s3_object.uri,
         destination_location="/tmp/seed-run",
+        recursive=False,
     )
     output_transfer = DataTransfer(
         workflow_run_id=run_id,
@@ -620,6 +628,7 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         provider="s3",
         source_location="/tmp/seed-run",
         destination_location=s3_object.uri,
+        recursive=False,
     )
     run_input = RunInput(
         run_id=run_id, s3_object_id=s3_object.object_key, data_transfer=input_transfer

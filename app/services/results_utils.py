@@ -139,10 +139,15 @@ class WorkflowResultsSpec:
                     provider="globus",
                     source_location=item.source_location,
                     destination_location=item.destination_location,
+                    recursive=item.recursive,
                     status="pending",
                 )
                 db.add(data_transfer)
                 transfers_by_location[key] = data_transfer
+                changed = True
+            elif data_transfer.recursive != item.recursive:
+                data_transfer.recursive = item.recursive
+                db.add(data_transfer)
                 changed = True
             output_transfers.append(data_transfer)
 
@@ -1075,6 +1080,7 @@ def _sync_run_output_records(
             provider="s3",
             source_location=run_outdir,
             destination_location=s3_object.uri,
+            recursive=False,
         )
         db.add(output_transfer)
         db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))

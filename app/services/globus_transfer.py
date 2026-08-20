@@ -154,7 +154,7 @@ def submit_pending_transfer(
         transfer_data.add_item(
             source_path,
             destination_path,
-            recursive=source_path.endswith("/") or destination_path.endswith("/"),
+            recursive=data_transfer.recursive,
         )
         result = transfer_client.submit_transfer(transfer_data)
     except globus_sdk.GlobusAPIError as exc:

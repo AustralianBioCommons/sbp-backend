@@ -213,6 +213,7 @@ def test_submit_pending_transfer_output_success(
         status="pending",
         source_location="/test/output/single-prediction/run-1/reports/",
         destination_location="s3://my-bucket/results/run-1/reports/",
+        recursive=True,
         transfer_id=None,
     )
 
@@ -228,6 +229,30 @@ def test_submit_pending_transfer_output_success(
     assert submitted["DATA"][0]["source_path"] == "/output/single-prediction/run-1/reports/"
     assert submitted["DATA"][0]["destination_path"] == "/results/run-1/reports/"
     assert submitted["DATA"][0]["recursive"] is True
+
+
+def test_submit_pending_transfer_uses_recursive_column(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="pending",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        destination_location="s3://my-bucket/results/run-1/reports/",
+        recursive=False,
+        transfer_id=None,
+    )
+
+    submit_pending_transfer(test_db, data_transfer, globus_settings=globus_settings)
+
+    submitted = mock_transfer_client.submit_transfer.call_args[0][0]
+    assert submitted["DATA"][0]["recursive"] is False
 
 
 def test_submit_pending_transfer_reuses_existing_submission_id(

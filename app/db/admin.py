@@ -486,6 +486,7 @@ class DataTransferAdmin(ModelView):
         "provider",
         "source_location",
         "destination_location",
+        "recursive",
         "transfer_id",
         "status",
         "created_at",

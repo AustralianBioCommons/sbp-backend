@@ -68,6 +68,7 @@ def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
         provider="s3",
         source_location=f"/work/{object_key}",
         destination_location=f"s3://bucket/{object_key}",
+        recursive=False,
     )
     return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
@@ -371,6 +372,7 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
         provider="globus",
         source_location=f"/test/output/single-prediction/{run.id}/reports/",
         destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+        recursive=False,
         status="in_progress",
         transfer_id="task-existing",
     )
@@ -393,8 +395,10 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
     assert first_result[0].id == existing_transfer.id
     assert first_result[0].status == "in_progress"
     assert first_result[0].transfer_id == "task-existing"
+    assert first_result[0].recursive is True
     assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
     assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
+    assert [transfer.recursive for transfer in first_result] == [True, True, True, True]
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():

@@ -112,6 +112,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         provider="globus",
         source_location=proteindj_fields.starting_pdb,
         destination_location=staged_pdb_location,
+        recursive=False,
     )
     db_session.add(pdb_transfer)
     db_session.add(

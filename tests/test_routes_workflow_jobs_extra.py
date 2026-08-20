@@ -197,6 +197,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
         provider="s3",
         source_location=s3_in.uri,
         destination_location="/work/in-1",
+        recursive=False,
     )
     output_transfer = DataTransfer(
         workflow_run=run,
@@ -204,6 +205,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
         provider="s3",
         source_location="/work/out-1",
         destination_location=s3_out.uri,
+        recursive=False,
     )
     test_db.add_all(
         [
