@@ -267,11 +267,10 @@ class DataTransfer(Base):
         Reset a transfer to pending so it gets attempted again
         """
         now = datetime.now(UTC)
-        self.status = DataTransferStatus.PENDING
+        self.status = "pending"
         self.transfer_id = None
         self.error_message = None
         self.updated_at = now
         session.add(self)
         if commit:
             session.commit()
-            
