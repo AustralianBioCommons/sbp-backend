@@ -467,7 +467,6 @@ def test_sync_data_transfers_calls_globus_transfer_sync(
         completed=1,
         failed=0,
         errored=0,
-        finalized_runs=0,
     )
     mock_sync = mocker.patch.object(
         scheduler_jobs.globus_transfer, "sync_data_transfers", return_value=mock_result

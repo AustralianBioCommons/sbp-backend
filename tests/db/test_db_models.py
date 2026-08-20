@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect
@@ -129,6 +131,28 @@ def test_workflow_run_model():
     constraint_names = {c.name for c in constraints}
     assert "uq_workflow_runs_seqera_run_id" in constraint_names
     assert "uq_workflow_runs_work_dir" in constraint_names
+
+
+@pytest.mark.parametrize(
+    "seqera_final_status,synced,expected",
+    [
+        (None, False, "syncing"),
+        ("RUNNING", False, "syncing"),
+        ("SUCCEEDED", False, "syncing"),
+        ("SUCCEEDED", True, "ready"),
+        ("FAILED", False, "cancelled"),
+        ("CANCELLED", False, "cancelled"),
+        ("UNKNOWN", False, "cancelled"),
+    ],
+)
+def test_workflow_run_results_sync_status(seqera_final_status, synced, expected):
+    """A run that finished without succeeding must not report "syncing" forever -
+    results will never sync for it, so it should read "cancelled" instead."""
+    run = WorkflowRun()
+    run.seqera_final_status = seqera_final_status
+    run.sync_completed_at = datetime.now(UTC) if synced else None
+
+    assert run.results_sync_status == expected
 
 
 def test_s3_object_model():

@@ -437,6 +437,38 @@ async def test_get_result_downloads_returns_syncing_status_without_s3_lookup(
 
 
 @pytest.mark.asyncio
+async def test_get_result_downloads_returns_cancelled_status_for_failed_run(
+    test_db, mock_settings
+):
+    """A run that finished without succeeding must not report "syncing" forever -
+    its results will never sync, so the frontend should see "cancelled" instead."""
+    user = AppUser(
+        auth0_user_id="auth0|results-downloads-failed",
+        name="Downloads Failed",
+        email="results-downloads-failed@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-downloads-failed",
+        seqera_final_status="FAILED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-downloads-failed",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
+
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "cancelled"
+    assert result.downloads == []
+
+
+@pytest.mark.asyncio
 async def test_get_result_download_all_returns_valid_zip_file(
     test_db, persistent_models, mock_settings
 ):

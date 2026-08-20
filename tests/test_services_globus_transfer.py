@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -15,7 +15,6 @@ from app.services.globus_transfer import (
     STALE_TRANSFER_TIMEOUT,
     _gadi_relative_path,
     _notify_launcher,
-    _notify_output_sync,
     _s3_relative_path,
     build_gadi_input_path,
     build_gadi_output_path,
@@ -549,80 +548,6 @@ def test_notify_launcher_flips_to_pending_once_all_input_transfers_complete(
 
     queued_job = workflow_run.get_queued_job(test_db)
     assert queued_job.status == "pending"
-
-
-# ============================================================================
-# _notify_output_sync
-# ============================================================================
-
-
-def test_notify_output_sync_waits_for_all_output_transfers(test_db, persistent_models):
-    workflow_run = WorkflowRunFactory.create_sync(
-        seqera_final_status="SUCCEEDED",
-        sync_completed_at=None,
-    )
-    completed_transfer = DataTransferFactory.create_sync(
-        workflow_run=workflow_run,
-        direction="output",
-        provider="globus",
-        status="completed",
-    )
-    DataTransferFactory.create_sync(
-        workflow_run=workflow_run,
-        direction="output",
-        provider="globus",
-        status="in_progress",
-    )
-
-    with patch(
-        "app.services.globus_transfer.finalize_completed_workflow_run",
-        new_callable=AsyncMock,
-    ) as finalize:
-        notified = _notify_output_sync(test_db, completed_transfer)
-
-    test_db.refresh(workflow_run)
-    assert notified is False
-    finalize.assert_not_awaited()
-    assert workflow_run.sync_completed_at is None
-
-
-def test_notify_output_sync_finalizes_when_all_output_transfers_complete(
-    test_db, persistent_models
-):
-    workflow_run = WorkflowRunFactory.create_sync(
-        seqera_final_status="SUCCEEDED",
-        sync_completed_at=None,
-    )
-    completed_transfer = DataTransferFactory.create_sync(
-        workflow_run=workflow_run,
-        direction="output",
-        provider="globus",
-        status="completed",
-    )
-    DataTransferFactory.create_sync(
-        workflow_run=workflow_run,
-        direction="output",
-        provider="globus",
-        status="completed",
-    )
-
-    async def finalize(db, run):
-        run.sync_completed_at = datetime.now(UTC)
-        db.add(run)
-        db.commit()
-        return 2
-
-    with patch(
-        "app.services.globus_transfer.finalize_completed_workflow_run",
-        new_callable=AsyncMock,
-        side_effect=finalize,
-    ) as finalize_mock:
-        notified = _notify_output_sync(test_db, completed_transfer)
-
-    test_db.refresh(workflow_run)
-    assert notified is True
-    finalize_mock.assert_awaited_once_with(test_db, workflow_run)
-    assert workflow_run.sync_completed_at is not None
 
 
 # ============================================================================
