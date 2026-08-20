@@ -5,10 +5,10 @@ from typing import Literal
 from uuid import UUID as PyUUID
 from uuid import uuid4
 
-from schemas.workflows.shared import PipelineStatus
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES
+from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
 
 _InetType = Text().with_variant(INET(), "postgresql")
@@ -240,6 +240,7 @@ class DataTransfer(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)
     destination_location: Mapped[str] = mapped_column(Text, nullable=False)
+    recursive: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # Before submission succeeds, holds Globus's submission id (an idempotency
     # key generated up front so a crash-and-retry doesn't double-submit);
     # overwritten with the real Globus task id once submission succeeds, which
