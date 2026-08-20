@@ -601,9 +601,12 @@ def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, moc
     assert queued_job.status == "pending"
 
 
-def test_sync_data_transfers_polls_output_and_finalizes(
+def test_sync_data_transfers_polls_output_to_completion_without_finalizing(
     test_db, persistent_models, mock_transfer_client
 ):
+    """Output-transfer completion is only reflected on the DataTransfer row - finalizing
+    the workflow run (setting sync_completed_at) is owned solely by
+    sync_completed_workflow_runs/job_sync, not this job."""
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
 
     workflow_run = WorkflowRunFactory.create_sync(
@@ -618,17 +621,12 @@ def test_sync_data_transfers_polls_output_and_finalizes(
         transfer_id="task-1",
     )
 
-    with patch(
-        "app.services.globus_transfer.finalize_completed_workflow_run",
-        new_callable=AsyncMock,
-        return_value=2,
-    ) as finalize:
-        result = sync_data_transfers(test_db)
+    result = sync_data_transfers(test_db)
 
     assert result.checked == 1
     assert result.completed == 1
-    assert result.finalized_runs == 1
-    finalize.assert_awaited_once_with(test_db, workflow_run)
+    test_db.refresh(workflow_run)
+    assert workflow_run.sync_completed_at is None
 
 
 def test_sync_data_transfers_ignores_non_globus_provider(
