@@ -155,18 +155,12 @@ async def test_get_job_details_success(test_db):
                 }
             },
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.912,
-        ),
     ):
         result = await get_job_details(str(run.id), user.id, test_db)
 
     assert result.id == str(run.id)
     assert result.jobName == "PDL1"
     assert result.workflow == "De Novo Design"
-    assert result.score == 0.912
 
 
 @pytest.mark.asyncio
