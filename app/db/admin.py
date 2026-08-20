@@ -696,7 +696,7 @@ def mount_db_admin(app: FastAPI, settings: Settings) -> None:
     # before this mount) so it stays available independently of the dashboard.
     _mount_db_debug_api(app)
     _mount_admin_ui_assets(app)
-    _mount_starlette_admin(app)
+    _mount_starlette_admin(app, settings)
 
 
 def _mount_admin_ui_assets(app: FastAPI) -> None:
@@ -715,7 +715,7 @@ def _mount_admin_ui_assets(app: FastAPI) -> None:
     app.include_router(router)
 
 
-def _mount_starlette_admin(app: FastAPI) -> None:
+def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
     session_cookie_name = _get_admin_session_cookie_name()
     oauth_state_cookie_name = "sbp_admin_oauth_state"
     oauth_verifier_cookie_name = "sbp_admin_oauth_verifier"
@@ -952,7 +952,7 @@ def _mount_starlette_admin(app: FastAPI) -> None:
 
     admin = Admin(
         engine=engine,
-        title=os.getenv("DB_ADMIN_TITLE", "SBP Backend Admin"),
+        title=settings.admin.title,
         templates_dir=_ADMIN_TEMPLATES_DIR,
         auth_provider=Auth0AdminAuthProvider(),
         # Timestamps are stored as UTC; always display them in Sydney/Melbourne
