@@ -136,9 +136,10 @@ def ensure_repo_staging_requested(
         owner, repo, commit_sha, globus_settings=settings.globus
     )
 
-    up_to_date = (
-        workflow.repo_staged_commit_sha == commit_sha
-        and workflow.repo_staging_status in ("pending", "in_progress", "completed")
+    up_to_date = workflow.repo_staged_commit_sha == commit_sha and workflow.repo_staging_status in (
+        "pending",
+        "in_progress",
+        "completed",
     )
     if not up_to_date:
         workflow.repo_staged_commit_sha = commit_sha
