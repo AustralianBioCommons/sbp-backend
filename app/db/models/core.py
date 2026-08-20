@@ -154,10 +154,13 @@ class WorkflowRun(Base):
         """
         Simple sync status to report to frontend
         """
-        if self.sync_completed_at is None:
-            return "syncing"
-        else:
-            return "ready"
+        if self.seqera_final_status == PipelineStatus.SUCCEEDED.value:
+            return "ready" if self.sync_completed_at is not None else "syncing"
+        if self.is_seqera_finalized():
+            # Run finished without succeeding (failed/cancelled/unknown) - results will
+            # never sync, so don't report "syncing" forever.
+            return "cancelled"
+        return "syncing"
 
 
 class S3Object(Base):
