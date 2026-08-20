@@ -75,6 +75,7 @@ class AdminSettings(NestedSettings):
     cookie_secure: bool
     session_secret: str
     roles_claim: str
+    title: str = "SBP Backend Admin"
 
     model_config = SettingsConfigDict(env_prefix="DB_ADMIN_")
 
