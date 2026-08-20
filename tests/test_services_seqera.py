@@ -152,8 +152,10 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
             config_path=_CONFIG_PATH,
             revision="main",
             output_id="run-output-id",
+            form_data=_empty_form_data(),
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/test/workflow_repos/test-repo/abc123",
         )
 
     queued_job = test_db.scalar(
@@ -182,6 +184,105 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     )
     assert "mode:" not in queued_job.launch_payload["paramsText"]
     assert "custom_param: value" in queued_job.launch_payload["paramsText"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_bindflow_workflow_fills_in_default_when_settings_unset(
+    test_db, persistent_models, mock_settings
+):
+    """The frontend no longer sends any value for settings_filters/
+    settings_advanced (see sbp-portal's de-novo-design.ts) - an empty/missing
+    value must still resolve to the bindflow repo's bundled default file,
+    not be left blank."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="run-1")
+
+    with (
+        patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
+        patch(
+            "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
+        ),
+    ):
+        await prepare_bindflow_workflow(
+            form=form,
+            settings=mock_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="file:/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+            config_path=_CONFIG_PATH,
+            revision="dev",
+            output_id="run-output-id",
+            form_data=_empty_form_data(),
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    params_text = queued_job.launch_payload["paramsText"]
+    assert (
+        "settings_filters: /g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git/"
+        "assets/bindcraft/default_filters.json" in params_text
+    )
+    assert (
+        "settings_advanced: /g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git/"
+        "assets/bindcraft/default_4stage_multimer.json" in params_text
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepare_bindflow_workflow_passes_through_custom_settings_value(
+    test_db, persistent_models, mock_settings
+):
+    """A value that doesn't match the known default bindflow-repo URL is left
+    unchanged - there's no support for staging arbitrary user-supplied
+    settings files yet, so it's passed through as-is rather than guessed at."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="run-1")
+    form_data = WorkflowFormData(
+        workflow="de-novo-design",
+        tool="bindcraft",
+        settings_filters="https://example.com/my-custom-filters.json",
+        settings_advanced="https://example.com/my-custom-advanced.json",
+    )
+
+    with (
+        patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
+        patch(
+            "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
+        ),
+    ):
+        await prepare_bindflow_workflow(
+            form=form,
+            settings=mock_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="file:/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+            config_path=_CONFIG_PATH,
+            revision="dev",
+            output_id="run-output-id",
+            form_data=form_data,
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    params_text = queued_job.launch_payload["paramsText"]
+    assert "settings_filters: https://example.com/my-custom-filters.json" in params_text
+    assert "settings_advanced: https://example.com/my-custom-advanced.json" in params_text
 
 
 @pytest.mark.asyncio

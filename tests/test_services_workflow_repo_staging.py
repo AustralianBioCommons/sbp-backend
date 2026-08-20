@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import io
 import json
-import tarfile
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -42,17 +42,27 @@ def _globus_api_error(status_code: int, json_body: dict) -> Exception:
     return globus_sdk.TransferAPIError(response)
 
 
-def _build_tarball_bytes(top_dir: str, files: dict[str, str]) -> bytes:
-    """Build an in-memory .tar.gz matching GitHub's tarball layout: one
-    top-level "<owner>-<repo>-<short-sha>/" directory wrapping the checkout."""
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for relative_path, content in files.items():
-            data = content.encode("utf-8")
-            info = tarfile.TarInfo(name=f"{top_dir}/{relative_path}")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buffer.getvalue()
+def _make_local_git_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, str]:
+    """Create a real local git repo (used as a stand-in "GitHub" remote so
+    _clone_and_upload_repo's git commands run for real, not mocked) and return
+    (repo_path, commit_sha)."""
+    repo_dir = tmp_path / "origin"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_dir, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True)
+    for relative_path, content in files.items():
+        file_path = repo_dir / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+        subprocess.run(["git", "add", relative_path], cwd=repo_dir, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo_dir, check=True)
+    commit_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    return str(repo_dir), commit_sha
 
 
 @pytest.fixture
@@ -166,9 +176,10 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         repo_staging_status=None,
     )
 
-    gadi_path = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
-    assert gadi_path == workflow.repo_gadi_path
+    assert locations.gadi_path == workflow.repo_gadi_path
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/newsha"
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
 
@@ -212,9 +223,10 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         repo_gadi_path="/test/workflow_repos/test-repo/samesha.git",
     )
 
-    gadi_path = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
-    assert gadi_path == "/test/workflow_repos/test-repo/samesha.git"
+    assert locations.gadi_path == "/test/workflow_repos/test-repo/samesha.git"
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/samesha"
     assert workflow.repo_staging_status == "completed"
 
 
@@ -259,18 +271,17 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
 
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
+        default_revision="dev",
         repo_staged_commit_sha="abc123",
         repo_staging_status="pending",
         repo_gadi_path="/test/workflow_repos/test-repo/abc123",
         repo_staging_transfer_id=None,
     )
 
-    with patch(
-        "app.services.workflow_repo_staging._download_and_upload_repo_tarball"
-    ) as mock_download:
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo") as mock_clone:
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
-    mock_download.assert_called_once()
+    mock_clone.assert_called_once()
     submitted = mock_transfer_client.submit_transfer.call_args[0][0]
     assert submitted["source_endpoint"] == "test-s3-collection-id"
     assert submitted["destination_endpoint"] == "test-gadi-collection-id"
@@ -279,6 +290,11 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     assert submitted["DATA"][0]["destination_path"] == "/workflow_repos/test-repo/abc123"
     assert submitted["DATA"][0]["source_path"] == "/workflow-repos/test-repo/abc123"
     assert submitted["DATA"][0]["recursive"] is True
+    # Second item: the plain-checkout companion for pipeline-bundled assets
+    # (see build_repo_assets_gadi_path) - a sibling directory, no ".git" suffix.
+    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/abc123"
+    assert submitted["DATA"][1]["source_path"] == "/workflow-repos-assets/test-repo/abc123"
+    assert submitted["DATA"][1]["recursive"] is True
 
     assert workflow.repo_staging_status == "in_progress"
     assert workflow.repo_staging_transfer_id == "task-1"
@@ -298,18 +314,19 @@ def test_stage_pending_repo_download_failure_marks_failed(
 ):
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
+        default_revision="dev",
         repo_staged_commit_sha="abc123",
         repo_staging_status="pending",
     )
 
     with patch(
-        "app.services.workflow_repo_staging._download_and_upload_repo_tarball",
-        side_effect=RepoStagingError("download failed"),
+        "app.services.workflow_repo_staging._clone_and_upload_repo",
+        side_effect=RepoStagingError("clone failed"),
     ):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
     assert workflow.repo_staging_status == "failed"
-    assert "download failed" in workflow.repo_staging_error_message
+    assert "clone failed" in workflow.repo_staging_error_message
     mock_transfer_client.submit_transfer.assert_not_called()
 
 
@@ -322,12 +339,13 @@ def test_stage_pending_repo_submission_api_error_marks_failed(
     )
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
+        default_revision="dev",
         repo_staged_commit_sha="abc123",
         repo_staging_status="pending",
         repo_gadi_path="/test/workflow_repos/test-repo/abc123",
     )
 
-    with patch("app.services.workflow_repo_staging._download_and_upload_repo_tarball"):
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
     assert workflow.repo_staging_status == "failed"
@@ -340,13 +358,14 @@ def test_stage_pending_repo_reuses_existing_submission_id(
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
+        default_revision="dev",
         repo_staged_commit_sha="abc123",
         repo_staging_status="pending",
         repo_gadi_path="/test/workflow_repos/test-repo/abc123",
         repo_staging_transfer_id="already-committed-sub-id",
     )
 
-    with patch("app.services.workflow_repo_staging._download_and_upload_repo_tarball"):
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
     mock_transfer_client.get_submission_id.assert_not_called()
@@ -355,48 +374,153 @@ def test_stage_pending_repo_reuses_existing_submission_id(
 
 
 # ============================================================================
-# _download_and_upload_repo_tarball
+# _clone_and_upload_repo
 # ============================================================================
 
 
-@respx.mock
-def test_download_and_upload_repo_tarball_uploads_each_file(mock_settings):
-    from app.services.workflow_repo_staging import _download_and_upload_repo_tarball
+def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settings):
+    """The staged repo must be bare - HEAD/config/objects directly at the
+    prefix root, not nested under a .git/ subdirectory, and no plain working-
+    tree files like main.nf (see build_repo_gadi_path's docstring: Nextflow
+    resolves the ".git"-suffixed path as a git-dir directly, so a non-bare
+    checkout with a *nested* .git/ put those one level too deep to be found -
+    confirmed in production as "fatal: not a git repository: '<path>'" even
+    though the nested .git was fully and correctly staged)."""
+    from app.services.workflow_repo_staging import _clone_and_upload_repo
 
-    tarball_bytes = _build_tarball_bytes(
-        "test-repo-abc123",
-        {"main.nf": "process {}", "nextflow.config": "params {}"},
-    )
-    respx.get("https://api.github.com/repos/test/repo/tarball/abc123").mock(
-        return_value=httpx.Response(200, content=tarball_bytes)
+    revision = "dev"
+    repo_path, commit_sha = _make_local_git_repo(
+        tmp_path, {"main.nf": "process {}", "nextflow.config": "params {}"}
     )
     mock_s3_client = MagicMock()
+    prefix = "workflow-repos/test-repo/abc123"
+    # _clone_and_upload_repo's source files live under a TemporaryDirectory
+    # that's cleaned up before the function returns - copy each file's bytes
+    # out at upload time (mocked here in place of a real S3 PUT) so they can
+    # be reassembled and verified with a real `git show` after the fact.
+    staged_dir = tmp_path / "staged-verify"
+
+    def _capture_upload(source_path: str, _bucket: str, key: str) -> None:
+        # _clone_and_upload_repo also uploads a plain-checkout companion
+        # under a different prefix (see test_clone_and_upload_repo_uploads_
+        # plain_checkout_assets below) - ignore those keys here, this test
+        # only cares about the bare repo's structure.
+        if not key.startswith(f"{prefix}/"):
+            return
+        dest = staged_dir / key[len(prefix) + 1 :]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(Path(source_path).read_bytes())
+
+    mock_s3_client.upload_file.side_effect = _capture_upload
 
     with patch(
         "app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client
     ):
-        _download_and_upload_repo_tarball(
-            "test", "repo", "abc123", "workflow-repos/test-repo/abc123", settings=mock_settings
+        _clone_and_upload_repo(
+            "test",
+            "repo",
+            commit_sha,
+            repo_path,
+            prefix,
+            revision=revision,
+            settings=mock_settings,
         )
 
     uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
-    assert uploaded_keys == {
-        "workflow-repos/test-repo/abc123/main.nf",
-        "workflow-repos/test-repo/abc123/nextflow.config",
-    }
+    assert f"{prefix}/HEAD" in uploaded_keys
+    assert f"{prefix}/config" in uploaded_keys
+    assert any(key.startswith(f"{prefix}/objects/") for key in uploaded_keys)
+    # No nested .git/ - and no plain working-tree files, since a bare repo has
+    # no working tree; main.nf only exists as a blob inside the packed objects.
+    assert not any(".git/" in key for key in uploaded_keys)
+    assert f"{prefix}/main.nf" not in uploaded_keys
+    # The branch ref must be a real loose file (not packed away) so it
+    # survives the S3/Globus round-trip, which only preserves actual files.
+    assert f"{prefix}/refs/heads/{revision}" in uploaded_keys
+
+    # revision must actually resolve to the fetched commit and read back the
+    # real file content - this is what Nextflow's own checkout will do once
+    # it resolves the pipeline.
+    shown = subprocess.run(
+        ["git", f"--git-dir={staged_dir}", "show", f"{revision}:main.nf"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert shown.stdout == "process {}"
 
 
-@respx.mock
-def test_download_and_upload_repo_tarball_download_failure_raises(mock_settings):
-    from app.services.workflow_repo_staging import _download_and_upload_repo_tarball
-
-    respx.get("https://api.github.com/repos/test/repo/tarball/abc123").mock(
-        return_value=httpx.Response(404)
+def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_settings):
+    """Alongside the bare repo, a plain checkout of the same commit must be
+    uploaded under build_repo_assets_s3_prefix's prefix - this is what makes
+    pipeline-bundled asset files (e.g. bindcraft's default settings JSON,
+    see bindflow_executor.py) readable as plain files on Gadi, since the bare
+    repo has no working tree at all."""
+    from app.services.workflow_repo_staging import (
+        _clone_and_upload_repo,
+        build_repo_assets_s3_prefix,
     )
 
-    with pytest.raises(RepoStagingError, match="Failed to download tarball"):
-        _download_and_upload_repo_tarball(
-            "test", "repo", "abc123", "workflow-repos/test-repo/abc123", settings=mock_settings
+    repo_path, commit_sha = _make_local_git_repo(
+        tmp_path,
+        {
+            "main.nf": "process {}",
+            "assets/bindcraft/default_filters.json": '{"filter": true}',
+        },
+    )
+    mock_s3_client = MagicMock()
+    prefix = "workflow-repos/test-repo/abc123"
+    assets_prefix = build_repo_assets_s3_prefix("test", "repo", commit_sha)
+    # Source files live under a TemporaryDirectory cleaned up before the
+    # function returns - capture content at upload time, mocked here in
+    # place of a real S3 PUT.
+    uploaded_content: dict[str, bytes] = {}
+
+    def _capture_upload(source_path: str, _bucket: str, key: str) -> None:
+        uploaded_content[key] = Path(source_path).read_bytes()
+
+    mock_s3_client.upload_file.side_effect = _capture_upload
+
+    with patch(
+        "app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client
+    ):
+        _clone_and_upload_repo(
+            "test",
+            "repo",
+            commit_sha,
+            repo_path,
+            prefix,
+            revision="dev",
+            settings=mock_settings,
+        )
+
+    assert f"{assets_prefix}/main.nf" in uploaded_content
+    assert f"{assets_prefix}/assets/bindcraft/default_filters.json" in uploaded_content
+    # Plain files, readable directly - not blobs needing `git show` to extract.
+    assert uploaded_content[f"{assets_prefix}/main.nf"] == b"process {}"
+    assert (
+        uploaded_content[f"{assets_prefix}/assets/bindcraft/default_filters.json"]
+        == b'{"filter": true}'
+    )
+    # No .git internals in the plain checkout - that's what the bare repo
+    # (uploaded separately, under `prefix`) is for.
+    assert not any(key.startswith(f"{assets_prefix}/.git") for key in uploaded_content)
+
+
+def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):
+    from app.services.workflow_repo_staging import _clone_and_upload_repo
+
+    nonexistent_repo_path = str(tmp_path / "does-not-exist")
+
+    with pytest.raises(RepoStagingError, match="Failed to clone"):
+        _clone_and_upload_repo(
+            "test",
+            "repo",
+            "abc123",
+            nonexistent_repo_path,
+            "workflow-repos/test-repo/abc123",
+            revision="dev",
+            settings=mock_settings,
         )
 
 
@@ -484,13 +608,14 @@ def test_sync_workflow_repo_staging_submits_pending(
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
     WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
+        default_revision="dev",
         repo_staged_commit_sha="abc123",
         repo_staging_status="pending",
         repo_gadi_path="/test/workflow_repos/test-repo/abc123",
         repo_staging_transfer_id=None,
     )
 
-    with patch("app.services.workflow_repo_staging._download_and_upload_repo_tarball"):
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
         result = sync_workflow_repo_staging(test_db, settings=mock_settings)
 
     assert result.checked == 1

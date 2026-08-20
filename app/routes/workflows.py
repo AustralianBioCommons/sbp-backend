@@ -44,7 +44,7 @@ from ..schemas.workflows.single_prediction import (
     SinglePredictionEntity,
     validate_single_prediction_entities,
 )
-from ..services.bindflow_executor import prepare_bindflow_workflow
+from ..services.bindflow_executor import prepare_bindflow_workflow, resolve_bindflow_asset_path
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -282,6 +282,64 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
+async def _rewrite_bindflow_settings_asset_columns(
+    *, s3_input_key: str, repo_assets_path: str
+) -> str:
+    """Fill in settings_filters/settings_advanced samplesheet columns with the
+    local Gadi path to bindflow's bundled default JSON files - the frontend
+    leaves these fields unset (see sbp-portal's de-novo-design.ts), so
+    resolve_bindflow_asset_path fills in the known default; any other,
+    genuinely custom value is left untouched.
+
+    Unlike starting_pdb (_stage_referenced_samplesheet_file, above) these
+    columns don't need their own Globus transfer or RunInput/DataTransfer
+    bookkeeping - they reference files that are already part of the workflow
+    repo, staged as a whole. This is a plain string rewrite, re-uploaded only
+    if something actually changed.
+    """
+    try:
+        samplesheet_rows = await read_csv_from_s3(s3_input_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+        ) from exc
+    if not samplesheet_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Samplesheet at s3InputKey is empty.",
+        )
+    samplesheet_row = samplesheet_rows[0]
+    changed = False
+    for field_name in ("settings_filters", "settings_advanced"):
+        resolved = resolve_bindflow_asset_path(
+            field_name, samplesheet_row.get(field_name), repo_assets_path=repo_assets_path
+        )
+        if resolved is not None and resolved != samplesheet_row.get(field_name):
+            samplesheet_row[field_name] = resolved
+            changed = True
+    if not changed:
+        return s3_input_key
+    try:
+        csv_upload = await upload_csv_to_s3(samplesheet_row)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to re-upload corrected samplesheet: {exc}",
+        ) from exc
+    return csv_upload.file_key
+
+
 def _stage_wisps_fasta(
     *,
     db_session: Session,
@@ -426,7 +484,7 @@ async def launch_workflow(
     # even before the transfer actually completes (submit_pending_jobs won't
     # launch this run until it does - see the "staging" gate further down).
     try:
-        repo_gadi_path = ensure_repo_staging_requested(
+        repo_staging_locations = ensure_repo_staging_requested(
             db_session, workflow, settings=settings
         )
     except RepoStagingError as exc:
@@ -442,7 +500,14 @@ async def launch_workflow(
     # would add an extra slash. repo_gadi_path itself stays a plain filesystem
     # path, since that's what the Globus transfer/admin display/
     # _gadi_relative_path conversion all need.
+    repo_gadi_path = repo_staging_locations.gadi_path
     pipeline_url = f"file:{repo_gadi_path}"
+    # bindcraft's settings_filters/settings_advanced reference files bundled
+    # inside the workflow repo itself - repo_gadi_path is a bare git repo
+    # (see build_repo_gadi_path) with no working-tree files on disk, so asset
+    # resolution uses the separate plain checkout staged alongside it instead
+    # (see build_repo_assets_gadi_path, _rewrite_bindflow_settings_asset_columns).
+    repo_assets_path = repo_staging_locations.assets_gadi_path
 
     user = db_session.execute(
         select(AppUser.email).where(AppUser.id == current_user_id)
@@ -544,6 +609,9 @@ async def launch_workflow(
             run_id=run_id,
             workflow_name=workflow_name,
             globus_settings=settings.globus,
+        )
+        s3_input_key = await _rewrite_bindflow_settings_asset_columns(
+            s3_input_key=s3_input_key, repo_assets_path=repo_assets_path
         )
     elif is_proteinfold_launch:
         s3_input_key = await _stage_referenced_samplesheet_file(
@@ -648,8 +716,10 @@ async def launch_workflow(
                     config_path=workflow.config_path,
                     revision=workflow.default_revision,
                     output_id=str(run_id),
+                    form_data=payload.formData,
                     user_details=user_details,
                     staged_input_location=staged_input_location,
+                    repo_assets_path=repo_assets_path,
                 )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None

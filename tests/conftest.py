@@ -354,9 +354,14 @@ def mock_repo_staging(mocker):
     GitHub API request - stub it out by default so tests don't hit the network.
     Tests that specifically exercise repo staging behavior can override this
     with their own patch of the same target."""
+    from app.services.workflow_repo_staging import RepoStagingLocations
+
     return mocker.patch(
         "app.routes.workflows.ensure_repo_staging_requested",
-        return_value="/staged/workflow-repo/path",
+        return_value=RepoStagingLocations(
+            gadi_path="/staged/workflow-repo/path",
+            assets_gadi_path="/staged/workflow-repo/assets",
+        ),
     )
 
 

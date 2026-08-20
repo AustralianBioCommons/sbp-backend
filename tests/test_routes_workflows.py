@@ -218,6 +218,49 @@ def test_launch_success_without_dataset(
 
 @patch("app.routes.workflows.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_bindcraft_fills_in_default_settings_assets_in_samplesheet(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient
+):
+    """settings_filters/settings_advanced samplesheet columns are left empty
+    by the frontend (see sbp-portal's de-novo-design.ts) - confirmed in
+    production via a real staged samplesheet. _rewrite_bindflow_settings_
+    asset_columns must fill them in with the local Gadi path to bindflow's
+    bundled default JSON files before the samplesheet is staged to Gadi."""
+    mock_read_csv.return_value = [
+        {
+            "starting_pdb": "s3://test-bucket/pdb/target.pdb",
+            "settings_filters": "",
+            "settings_advanced": "",
+        }
+    ]
+    mock_upload_csv.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-bucket"
+    )
+
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "test-run"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    # First call corrects starting_pdb (_stage_referenced_samplesheet_file),
+    # second call rewrites the settings_* columns - both re-upload the row.
+    assert mock_upload_csv.call_count == 2
+    rewritten_row = mock_upload_csv.call_args_list[1].args[0]
+    assert rewritten_row["settings_filters"] == (
+        "/staged/workflow-repo/assets/assets/bindcraft/default_filters.json"
+    )
+    assert rewritten_row["settings_advanced"] == (
+        "/staged/workflow-repo/assets/assets/bindcraft/default_4stage_multimer.json"
+    )
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_bindflow_workflow")
 def test_launch_queue_preparation_configuration_error(
     mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine

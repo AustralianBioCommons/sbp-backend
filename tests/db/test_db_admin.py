@@ -78,7 +78,7 @@ def test_mount_db_admin_mounts_both_when_enabled(mocker, mock_settings):
     mock_settings.enable_db_admin = True
     mount_db_admin(app, mock_settings)
 
-    mount_admin.assert_called_once_with(app)
+    mount_admin.assert_called_once_with(app, mock_settings)
     mount_debug.assert_called_once_with(app)
 
 
