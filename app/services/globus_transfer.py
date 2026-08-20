@@ -123,10 +123,14 @@ def submit_pending_transfer(
             source_collection = globus_settings.s3_collection_id
             source_path = _s3_relative_path(data_transfer.source_location)
             destination_collection = globus_settings.gadi_collection_id
-            destination_path = _gadi_relative_path(data_transfer.destination_location, globus_settings=globus_settings)
+            destination_path = _gadi_relative_path(
+                data_transfer.destination_location, globus_settings=globus_settings
+            )
         case "output":
             source_collection = globus_settings.gadi_collection_id
-            source_path = _gadi_relative_path(data_transfer.source_location, globus_settings=globus_settings)
+            source_path = _gadi_relative_path(
+                data_transfer.source_location, globus_settings=globus_settings
+            )
             destination_collection = globus_settings.s3_collection_id
             destination_path = _s3_relative_path(data_transfer.destination_location)
         case _:

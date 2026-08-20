@@ -316,9 +316,7 @@ async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_out
         status="failed",
         error_message="input failed",
     )
-    test_db.add_all(
-        [user, run, failed_output_1, failed_output_2, completed_output, failed_input]
-    )
+    test_db.add_all([user, run, failed_output_1, failed_output_2, completed_output, failed_input])
     test_db.commit()
 
     request = Request(

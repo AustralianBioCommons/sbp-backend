@@ -240,9 +240,7 @@ async def test_sync_workflow_run_terminal_non_success_records_status_without_res
     assert run.sync_completed_at is None
 
 
-def test_get_runs_requiring_sync_excludes_non_success_terminal_runs(
-    test_db, persistent_models
-):
+def test_get_runs_requiring_sync_excludes_non_success_terminal_runs(test_db, persistent_models):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="single-prediction", tool="boltz")
     failed_run = WorkflowRunFactory.create_sync(

@@ -79,8 +79,7 @@ def get_runs_requiring_sync(db: Session, *, limit: int = 100) -> list[WorkflowRu
             or_(
                 WorkflowRun.seqera_final_status.is_(None),
                 and_(
-                    func.upper(WorkflowRun.seqera_final_status)
-                    == PipelineStatus.SUCCEEDED.value,
+                    func.upper(WorkflowRun.seqera_final_status) == PipelineStatus.SUCCEEDED.value,
                     WorkflowRun.sync_completed_at.is_(None),
                 ),
             ),
