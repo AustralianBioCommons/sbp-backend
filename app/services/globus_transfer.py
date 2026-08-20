@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
+from uuid import UUID
 
 import globus_sdk
 from sqlalchemy import select
@@ -232,6 +234,34 @@ def poll_transfer(
         data_transfer.error_message = fatal_error.get("description") or "Globus transfer failed"
     db.add(data_transfer)
     db.commit()
+
+
+def reset_failed_output_transfers(
+    db: Session,
+    *,
+    transfer_ids: Iterable[UUID] | None = None,
+    workflow_run_id: UUID | None = None,
+) -> int:
+    """Reset failed Globus output transfers so the sync worker can retry them."""
+    conditions = [
+        DataTransfer.provider == "globus",
+        DataTransfer.direction == "output",
+        DataTransfer.status == "failed",
+    ]
+    if transfer_ids is not None:
+        transfer_ids = list(transfer_ids)
+        if not transfer_ids:
+            return 0
+        conditions.append(DataTransfer.id.in_(transfer_ids))
+    if workflow_run_id is not None:
+        conditions.append(DataTransfer.workflow_run_id == workflow_run_id)
+
+    transfers = list(db.scalars(select(DataTransfer).where(*conditions)))
+    for data_transfer in transfers:
+        data_transfer.reset_to_pending(session=db, commit=False)
+    if transfers:
+        db.commit()
+    return len(transfers)
 
 
 def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:

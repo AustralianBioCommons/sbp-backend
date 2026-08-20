@@ -260,3 +260,17 @@ class DataTransfer(Base):
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
     run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
     run_output: Mapped[RunOutput | None] = relationship(back_populates="data_transfer")
+
+    def reset_to_pending(self, session: Session, commit: bool = True):
+        """
+        Reset a transfer to pending so it gets attempted again
+        """
+        now = datetime.now(UTC)
+        self.status = DataTransferStatus.PENDING
+        self.transfer_id = None
+        self.error_message = None
+        self.updated_at = now
+        session.add(self)
+        if commit:
+            session.commit()
+            

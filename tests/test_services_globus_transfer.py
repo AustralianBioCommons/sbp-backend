@@ -20,6 +20,7 @@ from app.services.globus_transfer import (
     build_gadi_input_path,
     build_gadi_output_path,
     poll_transfer,
+    reset_failed_output_transfers,
     submit_pending_transfer,
     sync_data_transfers,
 )
@@ -280,6 +281,52 @@ def test_submit_pending_transfer_api_error_marks_failed(
     assert data_transfer.status == "failed"
     assert "UNKNOWN_SCOPE_ERROR" in data_transfer.error_message
     assert data_transfer.transfer_id is None
+
+
+def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_models):
+    workflow_run = WorkflowRunFactory.create_sync()
+    failed_output = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="failed",
+        transfer_id="task-stale",
+        error_message="no such file",
+    )
+    failed_input = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="input",
+        provider="globus",
+        status="failed",
+        transfer_id="task-input",
+        error_message="input failed",
+    )
+    failed_s3_output = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="s3",
+        status="failed",
+        transfer_id="s3-transfer",
+        error_message="s3 failed",
+    )
+
+    reset_count = reset_failed_output_transfers(
+        test_db,
+        transfer_ids=[failed_output.id, failed_input.id, failed_s3_output.id],
+    )
+
+    assert reset_count == 1
+    assert failed_output.status == "pending"
+    assert failed_output.transfer_id is None
+    assert failed_output.error_message is None
+    assert failed_output.updated_at is not None
+
+    assert failed_input.status == "failed"
+    assert failed_input.transfer_id == "task-input"
+    assert failed_input.error_message == "input failed"
+    assert failed_s3_output.status == "failed"
+    assert failed_s3_output.transfer_id == "s3-transfer"
+    assert failed_s3_output.error_message == "s3 failed"
 
 
 # ============================================================================
