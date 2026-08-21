@@ -7,10 +7,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 import requests
-import respx
+from github import GithubException
 
 from app.config import GlobusSettings
 from app.services.globus_errors import GlobusTransferError
@@ -26,6 +25,22 @@ from app.services.workflow_repo_staging import (
     sync_workflow_repo_staging,
 )
 from tests.datagen import QueuedJobFactory, WorkflowFactory
+
+
+def _mock_github_client(*, sha: str | None = None, raises: Exception | None = None) -> MagicMock:
+    """PyGithub client double - resolve_latest_commit_sha only ever calls
+    client.get_repo(...).get_commit(...).sha, so that's all this needs to
+    fake. PyGithub uses `requests` internally (not httpx), so respx can't
+    intercept its calls - mocking at this boundary is simpler than pulling in
+    another HTTP-mocking library just for these few tests."""
+    client = MagicMock()
+    if raises is not None:
+        client.get_repo.return_value.get_commit.side_effect = raises
+    else:
+        commit = MagicMock()
+        commit.sha = sha
+        client.get_repo.return_value.get_commit.return_value = commit
+    return client
 
 
 def _globus_api_error(status_code: int, json_body: dict) -> Exception:
@@ -129,30 +144,39 @@ def test_build_repo_gadi_path(globus_settings):
 # ============================================================================
 
 
-@respx.mock
-def test_resolve_latest_commit_sha_success():
-    respx.get("https://api.github.com/repos/nf-core/proteinfold/commits/dev").mock(
-        return_value=httpx.Response(200, json={"sha": "abc123"})
-    )
-    assert resolve_latest_commit_sha("https://github.com/nf-core/proteinfold", "dev") == "abc123"
+def test_resolve_latest_commit_sha_success(mock_settings):
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="abc123"),
+    ):
+        assert (
+            resolve_latest_commit_sha(
+                "https://github.com/nf-core/proteinfold", "dev", settings=mock_settings
+            )
+            == "abc123"
+        )
 
 
-@respx.mock
-def test_resolve_latest_commit_sha_http_error_raises():
-    respx.get("https://api.github.com/repos/nf-core/proteinfold/commits/dev").mock(
-        return_value=httpx.Response(404, json={"message": "Not Found"})
-    )
-    with pytest.raises(RepoStagingError, match="Failed to resolve commit"):
-        resolve_latest_commit_sha("https://github.com/nf-core/proteinfold", "dev")
+def test_resolve_latest_commit_sha_http_error_raises(mock_settings):
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(raises=GithubException(404, {"message": "Not Found"}, {})),
+    ):
+        with pytest.raises(RepoStagingError, match="Failed to resolve commit"):
+            resolve_latest_commit_sha(
+                "https://github.com/nf-core/proteinfold", "dev", settings=mock_settings
+            )
 
 
-@respx.mock
-def test_resolve_latest_commit_sha_missing_sha_raises():
-    respx.get("https://api.github.com/repos/nf-core/proteinfold/commits/dev").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    with pytest.raises(RepoStagingError, match="no commit sha"):
-        resolve_latest_commit_sha("https://github.com/nf-core/proteinfold", "dev")
+def test_resolve_latest_commit_sha_missing_sha_raises(mock_settings):
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha=None),
+    ):
+        with pytest.raises(RepoStagingError, match="no commit sha"):
+            resolve_latest_commit_sha(
+                "https://github.com/nf-core/proteinfold", "dev", settings=mock_settings
+            )
 
 
 # ============================================================================
@@ -160,13 +184,9 @@ def test_resolve_latest_commit_sha_missing_sha_raises():
 # ============================================================================
 
 
-@respx.mock
 def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
     test_db, persistent_models, mock_settings
 ):
-    respx.get("https://api.github.com/repos/test/repo/commits/dev").mock(
-        return_value=httpx.Response(200, json={"sha": "newsha"})
-    )
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
@@ -174,7 +194,11 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         repo_staging_status=None,
     )
 
-    locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="newsha"),
+    ):
+        locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == workflow.repo_gadi_path
     assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/newsha"
@@ -182,13 +206,9 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
     assert workflow.repo_staging_status == "pending"
 
 
-@respx.mock
 def test_ensure_repo_staging_requested_resets_on_commit_change(
     test_db, persistent_models, mock_settings
 ):
-    respx.get("https://api.github.com/repos/test/repo/commits/dev").mock(
-        return_value=httpx.Response(200, json={"sha": "newsha"})
-    )
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
@@ -199,20 +219,20 @@ def test_ensure_repo_staging_requested_resets_on_commit_change(
         repo_staging_error_message=None,
     )
 
-    ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="newsha"),
+    ):
+        ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
     assert workflow.repo_staging_transfer_id is None
 
 
-@respx.mock
 def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_models, mock_settings):
     """Same commit, already completed - must not reset back to pending (that
     would re-trigger staging for no reason)."""
-    respx.get("https://api.github.com/repos/test/repo/commits/dev").mock(
-        return_value=httpx.Response(200, json={"sha": "samesha"})
-    )
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
@@ -221,22 +241,22 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         repo_gadi_path="/test/workflow_repos/test-repo/samesha.git",
     )
 
-    locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="samesha"),
+    ):
+        locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == "/test/workflow_repos/test-repo/samesha.git"
     assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/samesha"
     assert workflow.repo_staging_status == "completed"
 
 
-@respx.mock
 def test_ensure_repo_staging_requested_retries_after_failure(
     test_db, persistent_models, mock_settings
 ):
     """Same commit but previously failed - must re-request staging, not treat
     the failure as a permanent cache entry."""
-    respx.get("https://api.github.com/repos/test/repo/commits/dev").mock(
-        return_value=httpx.Response(200, json={"sha": "samesha"})
-    )
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
@@ -245,7 +265,11 @@ def test_ensure_repo_staging_requested_retries_after_failure(
         repo_staging_error_message="boom",
     )
 
-    ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="samesha"),
+    ):
+        ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert workflow.repo_staging_status == "pending"
     assert workflow.repo_staging_error_message is None

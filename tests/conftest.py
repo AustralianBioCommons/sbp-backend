@@ -15,6 +15,7 @@ from app.config import (
     AdminSettings,
     AuthSettings,
     AwsSettings,
+    GithubSettings,
     GlobusSettings,
     SeqeraSettings,
     Settings,
@@ -321,6 +322,10 @@ class GlobusSettingsNoEnv(GlobusSettings):
     model_config = {**GlobusSettings.model_config, "env_file": None}
 
 
+class GithubSettingsNoEnv(GithubSettings):
+    model_config = {**GithubSettings.model_config, "env_file": None}
+
+
 class SettingsNoEnv(Settings):
     """
     Settings class that ignores any .env files for testing
@@ -332,6 +337,7 @@ class SettingsNoEnv(Settings):
     admin: AdminSettings = Field(default_factory=AdminSettingsNoEnv)
     auth: AuthSettings = Field(default_factory=AuthSettingsNoEnv)
     globus: GlobusSettings = Field(default_factory=GlobusSettingsNoEnv)
+    github: GithubSettings = Field(default_factory=GithubSettingsNoEnv)
 
 
 @pytest.fixture

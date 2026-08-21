@@ -22,7 +22,7 @@ from typing import cast
 from urllib.parse import urlparse
 
 import globus_sdk
-import httpx
+from github import Auth, Github, GithubException, GithubIntegration
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,8 +35,6 @@ from .s3 import get_s3_client
 
 logger = logging.getLogger(__name__)
 
-GITHUB_API_URL = "https://api.github.com"
-_HTTP_TIMEOUT = 15
 _DOWNLOAD_TIMEOUT = 120
 
 
@@ -56,27 +54,48 @@ def parse_github_repo(repo_url: str) -> tuple[str, str]:
     return owner, repo.removesuffix(".git")
 
 
-def resolve_latest_commit_sha(repo_url: str, revision: str) -> str:
+def _get_github_client(owner: str, repo: str, *, settings: Settings) -> Github:
+    """Build a PyGithub client authorized to read owner/repo.
+
+    Prefers GitHub App installation auth.
+    get_repo_installation looks up which installation of the App covers this
+    repo, and get_github_for_installation returns a client whose short-lived
+    token PyGithub mints and refreshes automatically. Falls back to a plain
+    token, then to unauthenticated, for local development only.
+    """
+    github_settings = settings.github
+    if github_settings.app_id and github_settings.app_private_key:
+        integration = GithubIntegration(
+            auth=Auth.AppAuth(github_settings.app_id, github_settings.app_private_key)
+        )
+        installation = integration.get_repo_installation(owner, repo)
+        return integration.get_github_for_installation(installation.id)
+    if github_settings.token:
+        return Github(auth=Auth.Token(github_settings.token))
+    return Github()
+
+
+def resolve_latest_commit_sha(
+    repo_url: str, revision: str, *, settings: Settings | None = None
+) -> str:
     """Resolve a branch/tag/ref to its current commit sha via the GitHub API.
 
     One lightweight network call - no local clone needed - cheap enough to
     run on every launch to check whether the staged copy is still current.
     """
+    settings = settings or get_settings()
     owner, repo = parse_github_repo(repo_url)
-    url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/commits/{revision}"
+    client = _get_github_client(owner, repo, settings=settings)
     try:
-        response = httpx.get(
-            url, headers={"Accept": "application/vnd.github+json"}, timeout=_HTTP_TIMEOUT
-        )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
+        gh_repo = client.get_repo(f"{owner}/{repo}")
+        commit = gh_repo.get_commit(revision)
+    except GithubException as exc:
         raise RepoStagingError(
             f"Failed to resolve commit for {owner}/{repo}@{revision}: {exc}"
         ) from exc
-    sha = response.json().get("sha")
-    if not sha:
+    if not commit.sha:
         raise RepoStagingError(f"GitHub API returned no commit sha for {owner}/{repo}@{revision}")
-    return cast(str, sha)
+    return cast(str, commit.sha)
 
 
 def build_repo_s3_prefix(owner: str, repo: str, commit_sha: str) -> str:
@@ -130,7 +149,9 @@ def ensure_repo_staging_requested(
     """
     settings = settings or get_settings()
     owner, repo = parse_github_repo(workflow.repo_url)
-    commit_sha = resolve_latest_commit_sha(workflow.repo_url, workflow.default_revision)
+    commit_sha = resolve_latest_commit_sha(
+        workflow.repo_url, workflow.default_revision, settings=settings
+    )
     gadi_path = build_repo_gadi_path(owner, repo, commit_sha, globus_settings=settings.globus)
     assets_gadi_path = build_repo_assets_gadi_path(
         owner, repo, commit_sha, globus_settings=settings.globus

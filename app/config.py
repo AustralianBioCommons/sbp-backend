@@ -126,6 +126,28 @@ class GlobusSettings(NestedSettings):
     model_config = SettingsConfigDict(env_prefix="GLOBUS_")
 
 
+class GithubSettings(NestedSettings):
+    """Credentials for GitHub API calls in workflow_repo_staging.py.
+
+    Prefer GitHub App auth (app_id/app_private_key) - org-owned, not tied to
+    a person. `token` (a PAT) is a local-dev-only fallback.
+    """
+
+    app_id: str | None = None
+    app_private_key: str | None = None
+    token: str | None = None
+
+    @field_validator("app_private_key")
+    @classmethod
+    def _normalize_private_key_newlines(cls, value: str | None) -> str | None:
+        # Secrets managers often flatten PEM newlines to literal "\n" - restore them.
+        if value is None:
+            return None
+        return value.replace("\\n", "\n")
+
+    model_config = SettingsConfigDict(env_prefix="GITHUB_")
+
+
 class Settings(BaseSettings):
     """
     Core settings for the app.
@@ -151,6 +173,7 @@ class Settings(BaseSettings):
     admin: AdminSettings = Field(default_factory=AdminSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     globus: GlobusSettings = Field(default_factory=GlobusSettings)
+    github: GithubSettings = Field(default_factory=GithubSettings)
 
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="only_existing")
 
