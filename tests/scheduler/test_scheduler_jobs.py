@@ -461,7 +461,13 @@ def test_sync_data_transfers_calls_globus_transfer_sync(
     test_db, monkeypatch, mocker: MockerFixture
 ):
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    mock_result = SimpleNamespace(checked=2, submitted=1, completed=1, failed=0, errored=0)
+    mock_result = SimpleNamespace(
+        checked=2,
+        submitted=1,
+        completed=1,
+        failed=0,
+        errored=0,
+    )
     mock_sync = mocker.patch.object(
         scheduler_jobs.globus_transfer, "sync_data_transfers", return_value=mock_result
     )

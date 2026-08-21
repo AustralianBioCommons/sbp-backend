@@ -15,6 +15,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette_admin._types import RequestAction
+from starlette_admin.exceptions import ActionFailed
 
 from app.config import get_settings
 from app.db.admin import (
@@ -132,9 +133,238 @@ def test_data_transfer_admin_includes_expected_columns() -> None:
     assert "provider" in field_names
     assert "source_location" in field_names
     assert "destination_location" in field_names
+    assert "recursive" in field_names
     assert "transfer_id" in field_names
     assert "status" in field_names
     assert "created_at" in field_names
+
+
+async def test_data_transfer_admin_retry_action_resets_failed_output_transfer(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|data-transfer-admin",
+        name="Data Transfer Admin",
+        email="data-transfer-admin@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="admin-retry-run",
+        work_dir="/tmp/admin-retry-run",
+    )
+    failed_output = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location="/test/output/admin-retry-run/reports/",
+        destination_location="s3://bucket/results/admin-retry-run/reports/",
+        recursive=True,
+        transfer_id="task-stale",
+        status="failed",
+        error_message="no such file",
+    )
+    test_db.add_all([user, run, failed_output])
+    test_db.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.session = test_db
+    request.state.action = RequestAction.ROW_ACTION
+
+    view = DataTransferAdmin(DataTransfer)
+
+    request.state.action = RequestAction.DETAIL
+    actions = await view.get_all_row_actions(request)
+    assert "retry_output_transfer" in {action["name"] for action in actions}
+
+    request.state.action = RequestAction.ROW_ACTION
+    message = await view.handle_row_action(
+        request,
+        str(failed_output.id),
+        "retry_output_transfer",
+    )
+
+    assert message == "Output transfer reset to pending."
+    test_db.refresh(failed_output)
+    assert failed_output.status == "pending"
+    assert failed_output.transfer_id is None
+    assert failed_output.error_message is None
+
+
+async def test_data_transfer_admin_retry_action_rejects_non_failed_output(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|data-transfer-admin-reject",
+        name="Data Transfer Admin Reject",
+        email="data-transfer-admin-reject@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="admin-retry-reject-run",
+        work_dir="/tmp/admin-retry-reject-run",
+    )
+    failed_input = DataTransfer(
+        workflow_run_id=run.id,
+        direction="input",
+        provider="globus",
+        source_location="s3://bucket/input.csv",
+        destination_location="/test/input/admin-retry-reject-run/input.csv",
+        recursive=False,
+        transfer_id="task-input",
+        status="failed",
+        error_message="input failed",
+    )
+    test_db.add_all([user, run, failed_input])
+    test_db.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.session = test_db
+    request.state.action = RequestAction.ROW_ACTION
+
+    view = DataTransferAdmin(DataTransfer)
+    with pytest.raises(ActionFailed, match="Only failed Globus output transfers"):
+        await view.handle_row_action(
+            request,
+            str(failed_input.id),
+            "retry_output_transfer",
+        )
+
+    test_db.refresh(failed_input)
+    assert failed_input.status == "failed"
+    assert failed_input.transfer_id == "task-input"
+    assert failed_input.error_message == "input failed"
+
+
+async def test_data_transfer_admin_batch_retry_action_resets_selected_failed_outputs(
+    test_db,
+) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|data-transfer-admin-batch",
+        name="Data Transfer Admin Batch",
+        email="data-transfer-admin-batch@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="admin-batch-retry-run",
+        work_dir="/tmp/admin-batch-retry-run",
+    )
+    failed_output_1 = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location="/test/output/admin-batch-retry-run/reports/",
+        destination_location="s3://bucket/results/admin-batch-retry-run/reports/",
+        recursive=True,
+        transfer_id="task-stale-1",
+        status="failed",
+        error_message="missing report",
+    )
+    failed_output_2 = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location="/test/output/admin-batch-retry-run/metrics/",
+        destination_location="s3://bucket/results/admin-batch-retry-run/metrics/",
+        recursive=True,
+        transfer_id="task-stale-2",
+        status="failed",
+        error_message="missing metrics",
+    )
+    completed_output = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location="/test/output/admin-batch-retry-run/logs/",
+        destination_location="s3://bucket/results/admin-batch-retry-run/logs/",
+        recursive=True,
+        transfer_id="task-ok",
+        status="completed",
+        error_message=None,
+    )
+    failed_input = DataTransfer(
+        workflow_run_id=run.id,
+        direction="input",
+        provider="globus",
+        source_location="s3://bucket/input.csv",
+        destination_location="/test/input/admin-batch-retry-run/input.csv",
+        recursive=False,
+        transfer_id="task-input",
+        status="failed",
+        error_message="input failed",
+    )
+    test_db.add_all([user, run, failed_output_1, failed_output_2, completed_output, failed_input])
+    test_db.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.session = test_db
+    request.state.action = RequestAction.ACTION
+
+    view = DataTransferAdmin(DataTransfer)
+
+    actions = await view.get_all_actions(request)
+    assert "retry_output_transfers" in {action["name"] for action in actions}
+
+    message = await view.handle_action(
+        request,
+        [
+            str(failed_output_1.id),
+            str(failed_output_2.id),
+            str(completed_output.id),
+            str(failed_input.id),
+        ],
+        "retry_output_transfers",
+    )
+
+    assert message == "2 output transfers reset to pending."
+    for failed_output in (failed_output_1, failed_output_2):
+        test_db.refresh(failed_output)
+        assert failed_output.status == "pending"
+        assert failed_output.transfer_id is None
+        assert failed_output.error_message is None
+
+    test_db.refresh(completed_output)
+    assert completed_output.status == "completed"
+    assert completed_output.transfer_id == "task-ok"
+
+    test_db.refresh(failed_input)
+    assert failed_input.status == "failed"
+    assert failed_input.transfer_id == "task-input"
+    assert failed_input.error_message == "input failed"
 
 
 def test_workflow_run_admin_renames_service_usage_and_adds_sbp_credit() -> None:
@@ -388,6 +618,7 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         provider="s3",
         source_location=s3_object.uri,
         destination_location="/tmp/seed-run",
+        recursive=False,
     )
     output_transfer = DataTransfer(
         workflow_run_id=run_id,
@@ -395,6 +626,7 @@ def test_mount_db_debug_api_endpoints(test_db) -> None:
         provider="s3",
         source_location="/tmp/seed-run",
         destination_location=s3_object.uri,
+        recursive=False,
     )
     run_input = RunInput(
         run_id=run_id, s3_object_id=s3_object.object_key, data_transfer=input_transfer

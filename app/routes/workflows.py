@@ -263,6 +263,7 @@ async def _stage_referenced_samplesheet_file(
                 provider="globus",
                 source_location=source_uri,
                 destination_location=staged_location,
+                recursive=False,
             ),
         )
     )
@@ -380,6 +381,7 @@ def _stage_wisps_fasta(
                     os.path.basename(fasta_key),
                     globus_settings=globus_settings,
                 ),
+                recursive=False,
             ),
         )
     )
@@ -646,6 +648,7 @@ async def launch_workflow(
             provider="globus",
             source_location=s3_input_uri,
             destination_location=staged_input_location,
+            recursive=False,
         )
         db_session.add(input_transfer)
         db_session.add(

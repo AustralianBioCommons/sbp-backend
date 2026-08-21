@@ -27,15 +27,17 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette_admin import CustomView, DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
-from starlette_admin.actions import link_row_action
+from starlette_admin.actions import action, link_row_action, row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
+from starlette_admin.exceptions import ActionFailed
 from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..config import Settings, get_settings
 from ..routes.dependencies import get_db
 from ..services.credits import launch_credit_cost
+from ..services.globus_transfer import reset_failed_output_transfers
 from . import engine
 from .models.core import (
     AppUser,
@@ -499,6 +501,7 @@ class DataTransferAdmin(ModelView):
         "provider",
         "source_location",
         "destination_location",
+        "recursive",
         "transfer_id",
         "status",
         "created_at",
@@ -510,6 +513,56 @@ class DataTransferAdmin(ModelView):
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.direction} transfer via {obj.provider}"
+
+    @action(
+        name="retry_output_transfers",
+        text="Retry selected output transfers",
+        confirmation=(
+            "Reset selected failed Globus output transfers to pending? "
+            "The next data-transfer sync will submit new Globus tasks."
+        ),
+        submit_btn_text="Reset to pending",
+        submit_btn_class="btn-warning",
+        icon_class="fa-solid fa-rotate-right",
+    )
+    async def retry_output_transfers_action(self, request: Request, pks: list[Any]) -> str:
+        data_transfers = await self.find_by_pks(request, pks)
+        reset_count = reset_failed_output_transfers(
+            request.state.session,
+            transfer_ids=[data_transfer.id for data_transfer in data_transfers],
+        )
+        if reset_count == 0:
+            raise ActionFailed("No failed Globus output transfers were selected.")
+
+        if reset_count == 1:
+            return "1 output transfer reset to pending."
+        return f"{reset_count} output transfers reset to pending."
+
+    @row_action(
+        name="retry_output_transfer",
+        text="Retry output transfer",
+        confirmation=(
+            "Reset this failed Globus output transfer to pending? "
+            "The next data-transfer sync will submit a new Globus task."
+        ),
+        submit_btn_text="Reset to pending",
+        submit_btn_class="btn-warning",
+        action_btn_class="btn-warning",
+        icon_class="fa-solid fa-rotate-right",
+    )
+    async def row_action_3_retry_output_transfer(self, request: Request, pk: Any) -> str:
+        data_transfer = await self.find_by_pk(request, pk)
+        if data_transfer is None:
+            raise ActionFailed("Data transfer not found.")
+
+        reset_count = reset_failed_output_transfers(
+            request.state.session,
+            transfer_ids=[data_transfer.id],
+        )
+        if reset_count == 0:
+            raise ActionFailed("Only failed Globus output transfers can be reset.")
+
+        return "Output transfer reset to pending."
 
 
 class QueuedJobAdmin(ModelView):

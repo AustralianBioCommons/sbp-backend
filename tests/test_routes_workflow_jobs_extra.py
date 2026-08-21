@@ -155,18 +155,12 @@ async def test_get_job_details_success(test_db):
                 }
             },
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.912,
-        ),
     ):
         result = await get_job_details(str(run.id), user.id, test_db)
 
     assert result.id == str(run.id)
     assert result.jobName == "PDL1"
     assert result.workflow == "De Novo Design"
-    assert result.score == 0.912
 
 
 @pytest.mark.asyncio
@@ -197,6 +191,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
         provider="s3",
         source_location=s3_in.uri,
         destination_location="/work/in-1",
+        recursive=False,
     )
     output_transfer = DataTransfer(
         workflow_run=run,
@@ -204,6 +199,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
         provider="s3",
         source_location="/work/out-1",
         destination_location=s3_out.uri,
+        recursive=False,
     )
     test_db.add_all(
         [

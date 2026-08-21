@@ -29,14 +29,12 @@ from ...schemas.workflows.shared import (
 from ...services.job_utils import (
     UserJobListRow,
     coerce_workflow_payload,
-    ensure_completed_run_score,
     extract_pipeline_status,
     format_tool_name,
     format_workflow_name,
     get_owned_run_by_id,
     get_user_job_list_rows,
     parse_submit_datetime,
-    sync_service_usage,
 )
 from ...services.seqera import describe_workflow
 from ...services.seqera_client import cancel_workflow_raw, delete_workflow_raw, delete_workflows_raw
@@ -232,14 +230,6 @@ async def list_jobs(
             ui_status = "Completed"
 
         score = db_score
-        sync_incomplete = owned_run.sync_completed_at is None
-        if score is None and sync_incomplete:
-            score = await ensure_completed_run_score(db, owned_run, ui_status, settings=settings)
-
-        # Keep request-time sync as a fallback only until the scheduler has
-        # completed result syncing for this run.
-        if sync_incomplete and owned_run.service_usage is None:
-            await sync_service_usage(db, run=owned_run, ui_status=ui_status, settings=settings)
 
         jobs.append(
             JobListItem(
@@ -313,11 +303,6 @@ async def get_job_details(
     score = None
     if ui_status == "Completed":
         score = _resolve_stored_score(owned_run)
-        sync_incomplete = owned_run.sync_completed_at is None
-        if score is None and sync_incomplete:
-            score = await ensure_completed_run_score(db, owned_run, ui_status, settings=settings)
-        if sync_incomplete and owned_run.service_usage is None:
-            await sync_service_usage(db, run=owned_run, ui_status=ui_status, settings=settings)
 
     raw_tool: str | None = getattr(owned_run, "tool", None) or None
     if not raw_tool:

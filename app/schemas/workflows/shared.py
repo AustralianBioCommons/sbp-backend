@@ -341,6 +341,7 @@ class ResultDownloadsResponse(BaseModel):
     """Download links for result artifacts."""
 
     runId: str
+    resultsSyncStatus: str = "ready"
     downloads: list[ResultDownloadItem] = Field(default_factory=list)
 
 
@@ -348,6 +349,7 @@ class ResultSnapshotsResponse(BaseModel):
     """Snapshot download links for a result view."""
 
     runId: str
+    resultsSyncStatus: str = "ready"
     snapshots: list[ResultDownloadItem] = Field(default_factory=list)
 
 
@@ -355,6 +357,7 @@ class ResultReportResponse(BaseModel):
     """Primary HTML report link for a result view."""
 
     runId: str
+    resultsSyncStatus: str = "ready"
     report: ResultDownloadItem | None = None
 
 

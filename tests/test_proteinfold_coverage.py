@@ -395,7 +395,10 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["configText"] == "config_text"
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
-    assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
+    assert (
+        "outdir: /test/output/single-prediction/run-output-id"
+        in queued_job.launch_payload["paramsText"]
+    )
     assert (
         "input: /test/input/single-prediction/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]

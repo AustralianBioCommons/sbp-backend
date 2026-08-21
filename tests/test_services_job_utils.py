@@ -30,6 +30,7 @@ def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
         provider="s3",
         source_location=f"/work/{object_key}",
         destination_location=f"s3://bucket/{object_key}",
+        recursive=False,
     )
     return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 

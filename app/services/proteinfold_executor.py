@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_output_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -85,11 +86,14 @@ async def prepare_proteinfold_workflow(
     workspace_id = settings.seqera.work_space
     compute_env_id = settings.seqera.compute_id
     work_dir = settings.seqera.work_dir
-    s3_bucket = settings.aws.s3_bucket
 
     if not output_id or not output_id.strip():
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
+    out_dir = build_gadi_output_path(
+        output_id.strip(),
+        "single-prediction",
+        globus_settings=settings.globus,
+    )
 
     if not form.runName or not form.runName.strip():
         raise WorkflowLaunchError("Missing run name for workflow launch")

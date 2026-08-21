@@ -8,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -23,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES
+from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
 
 _InetType = Text().with_variant(INET(), "postgresql")
@@ -159,6 +160,27 @@ class WorkflowRun(Base):
             return False
         return self.seqera_final_status.upper() in TERMINAL_SEQERA_STATUSES
 
+    def is_syncing_results(self) -> bool:
+        if self.seqera_final_status is None:
+            return False
+        return (
+            self.seqera_final_status == PipelineStatus.SUCCEEDED.value
+            and self.sync_completed_at is None
+        )
+
+    @property
+    def results_sync_status(self):
+        """
+        Simple sync status to report to frontend
+        """
+        if self.seqera_final_status == PipelineStatus.SUCCEEDED.value:
+            return "ready" if self.sync_completed_at is not None else "syncing"
+        if self.is_seqera_finalized():
+            # Run finished without succeeding (failed/cancelled/unknown) - results will
+            # never sync, so don't report "syncing" forever.
+            return "cancelled"
+        return "syncing"
+
 
 class S3Object(Base):
     __tablename__ = "s3_objects"
@@ -240,6 +262,7 @@ class DataTransfer(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)
     destination_location: Mapped[str] = mapped_column(Text, nullable=False)
+    recursive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Before submission succeeds, holds Globus's submission id (an idempotency
     # key generated up front so a crash-and-retry doesn't double-submit);
     # overwritten with the real Globus task id once submission succeeds, which
@@ -260,3 +283,16 @@ class DataTransfer(Base):
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
     run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
     run_output: Mapped[RunOutput | None] = relationship(back_populates="data_transfer")
+
+    def reset_to_pending(self, session: Session, commit: bool = True):
+        """
+        Reset a transfer to pending so it gets attempted again
+        """
+        now = datetime.now(UTC)
+        self.status = "pending"
+        self.transfer_id = None
+        self.error_message = None
+        self.updated_at = now
+        session.add(self)
+        if commit:
+            session.commit()

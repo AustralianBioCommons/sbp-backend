@@ -17,7 +17,9 @@ from app.services.globus_transfer import (
     _notify_launcher,
     _s3_relative_path,
     build_gadi_input_path,
+    build_gadi_output_path,
     poll_transfer,
+    reset_failed_output_transfers,
     submit_pending_transfer,
     sync_data_transfers,
 )
@@ -98,6 +100,36 @@ def test_build_gadi_input_path():
         globus_settings=globus_settings,
     )
     assert path == "/g/data/yz52/sbp_data/dev_input/single-prediction/run-123/sample.csv"
+
+
+def test_build_gadi_output_path():
+    globus_settings = GlobusSettings(
+        client_id="test-globus-client-id",
+        client_secret="test-globus-client-secret",
+        gadi_collection_id="test-gadi-collection-id",
+        s3_collection_id="test-s3-collection-id",
+        gadi_collection_root="/g/data/yz52/sbp_data",
+        input_dir="/g/data/yz52/sbp_data/dev_input",
+        output_dir="/g/data/yz52/sbp_data/dev_output",
+    )
+
+    assert (
+        build_gadi_output_path(
+            "run-123",
+            "single-prediction",
+            globus_settings=globus_settings,
+        )
+        == "/g/data/yz52/sbp_data/dev_output/single-prediction/run-123"
+    )
+    assert (
+        build_gadi_output_path(
+            "run-123",
+            "single-prediction",
+            "reports/",
+            globus_settings=globus_settings,
+        )
+        == "/g/data/yz52/sbp_data/dev_output/single-prediction/run-123/reports/"
+    )
 
 
 def test_s3_relative_path_strips_bucket():
@@ -182,6 +214,62 @@ def test_submit_pending_transfer_success(test_db, persistent_models, mock_transf
     assert submitted["DATA"][0]["destination_path"] == "/input/single-prediction/run-1/a.csv"
 
 
+def test_submit_pending_transfer_output_success(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="pending",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        destination_location="s3://my-bucket/results/run-1/reports/",
+        recursive=True,
+        transfer_id=None,
+    )
+
+    submit_pending_transfer(test_db, data_transfer, globus_settings=globus_settings)
+
+    assert data_transfer.status == "in_progress"
+    assert data_transfer.transfer_id == "task-abc"
+
+    submitted = mock_transfer_client.submit_transfer.call_args[0][0]
+    assert submitted["source_endpoint"] == "test-gadi-collection-id"
+    assert submitted["destination_endpoint"] == "test-s3-collection-id"
+    assert submitted["submission_id"] == "sub-123"
+    assert submitted["DATA"][0]["source_path"] == "/output/single-prediction/run-1/reports/"
+    assert submitted["DATA"][0]["destination_path"] == "/results/run-1/reports/"
+    assert submitted["DATA"][0]["recursive"] is True
+
+
+def test_submit_pending_transfer_uses_recursive_column(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="pending",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        destination_location="s3://my-bucket/results/run-1/reports/",
+        recursive=False,
+        transfer_id=None,
+    )
+
+    submit_pending_transfer(test_db, data_transfer, globus_settings=globus_settings)
+
+    submitted = mock_transfer_client.submit_transfer.call_args[0][0]
+    assert submitted["DATA"][0]["recursive"] is False
+
+
 def test_submit_pending_transfer_reuses_existing_submission_id(
     test_db, persistent_models, mock_transfer_client
 ):
@@ -233,6 +321,52 @@ def test_submit_pending_transfer_api_error_marks_failed(
     assert data_transfer.status == "failed"
     assert "UNKNOWN_SCOPE_ERROR" in data_transfer.error_message
     assert data_transfer.transfer_id is None
+
+
+def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_models):
+    workflow_run = WorkflowRunFactory.create_sync()
+    failed_output = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="failed",
+        transfer_id="task-stale",
+        error_message="no such file",
+    )
+    failed_input = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="input",
+        provider="globus",
+        status="failed",
+        transfer_id="task-input",
+        error_message="input failed",
+    )
+    failed_s3_output = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="s3",
+        status="failed",
+        transfer_id="s3-transfer",
+        error_message="s3 failed",
+    )
+
+    reset_count = reset_failed_output_transfers(
+        test_db,
+        transfer_ids=[failed_output.id, failed_input.id, failed_s3_output.id],
+    )
+
+    assert reset_count == 1
+    assert failed_output.status == "pending"
+    assert failed_output.transfer_id is None
+    assert failed_output.error_message is None
+    assert failed_output.updated_at is not None
+
+    assert failed_input.status == "failed"
+    assert failed_input.transfer_id == "task-input"
+    assert failed_input.error_message == "input failed"
+    assert failed_s3_output.status == "failed"
+    assert failed_s3_output.transfer_id == "s3-transfer"
+    assert failed_s3_output.error_message == "s3 failed"
 
 
 # ============================================================================
@@ -495,6 +629,34 @@ def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, moc
     assert result.completed == 1
     queued_job = workflow_run.get_queued_job(test_db)
     assert queued_job.status == "pending"
+
+
+def test_sync_data_transfers_polls_output_to_completion_without_finalizing(
+    test_db, persistent_models, mock_transfer_client
+):
+    """Output-transfer completion is only reflected on the DataTransfer row - finalizing
+    the workflow run (setting sync_completed_at) is owned solely by
+    sync_completed_workflow_runs/job_sync, not this job."""
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+
+    workflow_run = WorkflowRunFactory.create_sync(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="in_progress",
+        transfer_id="task-1",
+    )
+
+    result = sync_data_transfers(test_db)
+
+    assert result.checked == 1
+    assert result.completed == 1
+    test_db.refresh(workflow_run)
+    assert workflow_run.sync_completed_at is None
 
 
 def test_sync_data_transfers_ignores_non_globus_provider(
