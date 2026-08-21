@@ -15,6 +15,7 @@ from app.config import (
     AdminSettings,
     AuthSettings,
     AwsSettings,
+    GithubSettings,
     GlobusSettings,
     SeqeraSettings,
     Settings,
@@ -321,6 +322,10 @@ class GlobusSettingsNoEnv(GlobusSettings):
     model_config = {**GlobusSettings.model_config, "env_file": None}
 
 
+class GithubSettingsNoEnv(GithubSettings):
+    model_config = {**GithubSettings.model_config, "env_file": None}
+
+
 class SettingsNoEnv(Settings):
     """
     Settings class that ignores any .env files for testing
@@ -332,6 +337,7 @@ class SettingsNoEnv(Settings):
     admin: AdminSettings = Field(default_factory=AdminSettingsNoEnv)
     auth: AuthSettings = Field(default_factory=AuthSettingsNoEnv)
     globus: GlobusSettings = Field(default_factory=GlobusSettingsNoEnv)
+    github: GithubSettings = Field(default_factory=GithubSettingsNoEnv)
 
 
 @pytest.fixture
@@ -345,6 +351,24 @@ def override_settings(mock_settings):
     fastapi_app.dependency_overrides[get_settings] = lambda: mock_settings
     yield
     fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def mock_repo_staging(mocker):
+    """launch_workflow resolves+stages the workflow's GitHub repo on every call
+    (workflow_repo_staging.ensure_repo_staging_requested), which makes a real
+    GitHub API request - stub it out by default so tests don't hit the network.
+    Tests that specifically exercise repo staging behavior can override this
+    with their own patch of the same target."""
+    from app.services.workflow_repo_staging import RepoStagingLocations
+
+    return mocker.patch(
+        "app.routes.workflows.ensure_repo_staging_requested",
+        return_value=RepoStagingLocations(
+            gadi_path="/staged/workflow-repo/path",
+            assets_gadi_path="/staged/workflow-repo/assets",
+        ),
+    )
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
+from ..db.models.job_queue import QueuedJob
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 
@@ -205,7 +206,8 @@ def poll_transfer(
 
 
 def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
-    """After an input transfer settles, move the run's QueuedJob out of "staging".
+    """After an input transfer settles, try to move the run's QueuedJob out of
+    "staging".
 
     Observed once in production: all input transfers for a run showed
     ``completed`` minutes before Nextflow started, yet the first process still
@@ -222,23 +224,48 @@ def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
         return
 
     queued_job = data_transfer.workflow_run.get_queued_job(db)
-    if queued_job is None or queued_job.status != "staging":
+    if queued_job is None:
+        return
+    _try_promote_staging_job(db, queued_job)
+
+
+def _try_promote_staging_job(db: Session, queued_job: QueuedJob) -> None:
+    """Flip a "staging" QueuedJob to "pending" once every gate clears: all of
+    its input DataTransfers completed, and its workflow's repo staging (if
+    applicable - see workflow_repo_staging.py) completed. Fails the job
+    immediately if any gate reports failure, rather than leaving it stuck.
+
+    Called both after an input transfer settles (_notify_launcher, above) and
+    after a workflow's repo staging settles (workflow_repo_staging.py) - either
+    event can be the last one a given run was waiting on.
+    """
+    if queued_job.status != "staging":
         return
 
-    if data_transfer.status == "failed":
-        queued_job.status = "failed"
-        queued_job.error = f"Input staging failed: {data_transfer.error_message}"
-        db.add(queued_job)
-        db.commit()
-        return
-
-    other_input_transfers = db.scalars(
+    input_transfers = db.scalars(
         select(DataTransfer).where(
-            DataTransfer.workflow_run_id == data_transfer.workflow_run_id,
+            DataTransfer.workflow_run_id == queued_job.workflow_run_id,
             DataTransfer.direction == "input",
         )
     ).all()
-    if not all(transfer.status == "completed" for transfer in other_input_transfers):
+    failed_transfer = next((t for t in input_transfers if t.status == "failed"), None)
+    if failed_transfer is not None:
+        queued_job.status = "failed"
+        queued_job.error = f"Input staging failed: {failed_transfer.error_message}"
+        db.add(queued_job)
+        db.commit()
+        return
+    if not all(transfer.status == "completed" for transfer in input_transfers):
+        return
+
+    workflow = queued_job.workflow
+    if workflow.repo_staging_status == "failed":
+        queued_job.status = "failed"
+        queued_job.error = f"Workflow repo staging failed: {workflow.repo_staging_error_message}"
+        db.add(queued_job)
+        db.commit()
+        return
+    if workflow.repo_staging_status is not None and workflow.repo_staging_status != "completed":
         return
 
     queued_job.status = "pending"

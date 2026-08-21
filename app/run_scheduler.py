@@ -18,11 +18,13 @@ from app.scheduler.jobs import (  # noqa: E402
     submit_pending_jobs,
     sync_completed_workflow_runs,
     sync_data_transfers,
+    sync_workflow_repo_staging,
 )
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
 SYNC_INTERVAL = IntervalTrigger(minutes=10)
 DATA_TRANSFER_SYNC_INTERVAL = IntervalTrigger(minutes=2)
+REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 # Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
 # miscalculates day=1 across Sydney's October DST switch and skips November entirely.
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
@@ -64,6 +66,20 @@ def main(dry_run: bool = False):
             trigger=DATA_TRANSFER_SYNC_INTERVAL,
             next_run_time=datetime.now(tz=UTC) + timedelta(minutes=1),
             id="sync_data_transfers",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info(
+            f"Adding sync_workflow_repo_staging to scheduler: trigger = {REPO_STAGING_SYNC_INTERVAL}"
+        )
+        SCHEDULER.add_job(
+            sync_workflow_repo_staging,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=REPO_STAGING_SYNC_INTERVAL,
+            next_run_time=datetime.now(tz=UTC) + timedelta(minutes=1),
+            id="sync_workflow_repo_staging",
             misfire_grace_time=60,
             max_instances=1,
             replace_existing=True,

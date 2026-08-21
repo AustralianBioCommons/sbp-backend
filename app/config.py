@@ -75,6 +75,7 @@ class AdminSettings(NestedSettings):
     cookie_secure: bool
     session_secret: str
     roles_claim: str
+    title: str = "SBP Backend Admin"
 
     model_config = SettingsConfigDict(env_prefix="DB_ADMIN_")
 
@@ -125,6 +126,30 @@ class GlobusSettings(NestedSettings):
     model_config = SettingsConfigDict(env_prefix="GLOBUS_")
 
 
+class GithubSettings(NestedSettings):
+    """Credentials for GitHub API calls in workflow_repo_staging.py.
+
+    Prefer the workflow-staging-automation GitHub App
+    (workflow_staging_automation_app_id/_private_key) - org-owned, not tied
+    to a person. workflow_staging_automation_token (a PAT) is a local-dev-only
+    fallback.
+    """
+
+    workflow_staging_automation_app_id: str | None = None
+    workflow_staging_automation_app_private_key: str | None = None
+    workflow_staging_automation_token: str | None = None
+
+    @field_validator("workflow_staging_automation_app_private_key")
+    @classmethod
+    def _normalize_private_key_newlines(cls, value: str | None) -> str | None:
+        # Secrets managers often flatten PEM newlines to literal "\n" - restore them.
+        if value is None:
+            return None
+        return value.replace("\\n", "\n")
+
+    model_config = SettingsConfigDict(env_prefix="GITHUB_")
+
+
 class Settings(BaseSettings):
     """
     Core settings for the app.
@@ -150,6 +175,7 @@ class Settings(BaseSettings):
     admin: AdminSettings = Field(default_factory=AdminSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     globus: GlobusSettings = Field(default_factory=GlobusSettings)
+    github: GithubSettings = Field(default_factory=GithubSettings)
 
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="only_existing")
 

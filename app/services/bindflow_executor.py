@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
+from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
@@ -31,6 +31,29 @@ from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
 
+# settings_filters/settings_advanced reference default JSON files bundled in
+# the bindflow repo itself. The frontend leaves these fields unset (see
+# sbp-portal's de-novo-design.ts) and relies on the backend to fill in the
+# local Gadi path: resolve_bindflow_asset_path below fills in the known
+# default for an empty value; anything else (a genuinely custom value) is
+# passed through unchanged rather than guessed at, since staging arbitrary
+# user-supplied settings files isn't supported yet.
+_BINDFLOW_DEFAULT_ASSET_RELATIVE_PATHS = {
+    "settings_filters": "assets/bindcraft/default_filters.json",
+    "settings_advanced": "assets/bindcraft/default_4stage_multimer.json",
+}
+
+
+def resolve_bindflow_asset_path(
+    field_name: str, value: object, *, repo_assets_path: str
+) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    default_relative_path = _BINDFLOW_DEFAULT_ASSET_RELATIVE_PATHS.get(field_name)
+    if default_relative_path is None:
+        return None
+    return f"{repo_assets_path}/{default_relative_path}"
+
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
@@ -42,8 +65,10 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
+    form_data: WorkflowFormData,
     user_details: WorkflowUserDetails,
     staged_input_location: str,
+    repo_assets_path: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
@@ -62,6 +87,20 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     out_dir = f"s3://{s3_bucket}/{output_key}"
 
     default_params = get_bindflow_default_params(out_dir, staged_input_location)
+    settings_filters = resolve_bindflow_asset_path(
+        "settings_filters",
+        form_data.extra_fields.get("settings_filters"),
+        repo_assets_path=repo_assets_path,
+    )
+    settings_advanced = resolve_bindflow_asset_path(
+        "settings_advanced",
+        form_data.extra_fields.get("settings_advanced"),
+        repo_assets_path=repo_assets_path,
+    )
+    if settings_filters:
+        default_params["settings_filters"] = settings_filters
+    if settings_advanced:
+        default_params["settings_advanced"] = settings_advanced
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)

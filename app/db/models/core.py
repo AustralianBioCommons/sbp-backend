@@ -53,6 +53,11 @@ class AppUser(Base):
     workflow_runs: Mapped[list[WorkflowRun]] = relationship(back_populates="owner")
 
 
+# Mirrors DataTransferStatus (defined further below) - kept as its own alias
+# since a workflow's repo staging is a distinct cache concept, not a DataTransfer.
+RepoStagingStatus = Literal["pending", "in_progress", "completed", "failed"]
+
+
 class Workflow(Base):
     __tablename__ = "workflows"
     __table_args__ = (
@@ -81,6 +86,20 @@ class Workflow(Base):
     config_path: Mapped[str] = mapped_column(Text, nullable=False)
     prerun_script_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Cache of the most recently staged (repo_url, default_revision) commit on
+    # Gadi, shared across every run of this workflow
+    repo_staged_commit_sha: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_status: Mapped[RepoStagingStatus | None] = mapped_column(
+        String(length=20), nullable=True
+    )
+    repo_gadi_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Holds Globus's submission id until submission succeeds, then the real
+    # Globus task id thereafter - same reuse trick as DataTransfer.transfer_id.
+    repo_staging_transfer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")
 

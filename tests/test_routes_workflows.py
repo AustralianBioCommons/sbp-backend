@@ -148,7 +148,7 @@ def test_launch_success_without_dataset(
     assert "submitTime" in data
     launch_form_arg = mock_prepare.call_args.args[0]
     assert launch_form_arg.tool == "bindcraft"
-    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
+    assert mock_prepare.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
     assert mock_prepare.call_args.kwargs["revision"] == "dev"
     assert mock_prepare.call_args.kwargs["output_id"] == data["runId"]
 
@@ -214,6 +214,49 @@ def test_launch_success_without_dataset(
         assert pdb_transfer.destination_location == (
             f"/test/input/de-novo-design/{created_run.id}/target.pdb"
         )
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_bindcraft_fills_in_default_settings_assets_in_samplesheet(
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient
+):
+    """settings_filters/settings_advanced samplesheet columns are left empty
+    by the frontend (see sbp-portal's de-novo-design.ts) - confirmed in
+    production via a real staged samplesheet. _rewrite_bindflow_settings_
+    asset_columns must fill them in with the local Gadi path to bindflow's
+    bundled default JSON files before the samplesheet is staged to Gadi."""
+    mock_read_csv.return_value = [
+        {
+            "starting_pdb": "s3://test-bucket/pdb/target.pdb",
+            "settings_filters": "",
+            "settings_advanced": "",
+        }
+    ]
+    mock_upload_csv.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-bucket"
+    )
+
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "test-run"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
+    }
+
+    response = client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    # First call corrects starting_pdb (_stage_referenced_samplesheet_file),
+    # second call rewrites the settings_* columns - both re-upload the row.
+    assert mock_upload_csv.call_count == 2
+    rewritten_row = mock_upload_csv.call_args_list[1].args[0]
+    assert rewritten_row["settings_filters"] == (
+        "/staged/workflow-repo/assets/assets/bindcraft/default_filters.json"
+    )
+    assert rewritten_row["settings_advanced"] == (
+        "/staged/workflow-repo/assets/assets/bindcraft/default_4stage_multimer.json"
+    )
 
 
 @patch("app.routes.workflows.upload_csv_to_s3")
@@ -351,9 +394,7 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
     assert data["status"] == "staging"
     mock_prepare_proteindj.assert_called_once()
     mock_prepare_bindflow.assert_not_called()
-    assert (
-        mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
-    )
+    assert mock_prepare_proteindj.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
     assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
     # rfdiffusion's s3InputKey is the starting PDB's own URI (no samplesheet exists
     # for it), and prepare_proteindj_workflow stages that file itself - so the
@@ -704,7 +745,7 @@ def test_launch_proteinfold_success(
     assert data["status"] == "staging"
     run_id = UUID(data["runId"])
     mock_prepare.assert_called_once()
-    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/nf-core/proteinfold"
+    assert mock_prepare.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
     assert mock_prepare.call_args.kwargs["revision"] == "dev"
     assert mock_prepare.call_args.kwargs["output_id"] == str(run_id)
     with Session(test_engine) as db:
@@ -1059,7 +1100,7 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
     call_kwargs = mock_prepare.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
     assert call_kwargs["form_data"].splitOutputDir == "/data/split"
-    assert call_kwargs["pipeline"] == "https://github.com/test/wisps"
+    assert call_kwargs["pipeline"] == "file:/staged/workflow-repo/path"
     assert call_kwargs["revision"] in {"dev", "main"}
     assert call_kwargs["output_id"] == str(run_id)
 

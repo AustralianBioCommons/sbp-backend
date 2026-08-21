@@ -28,6 +28,7 @@ dependencies = [
     "rdkit~=2026.3",
     "pydantic-settings~=2.15",
     "globus-sdk>=4.9.0",
+    "pygithub>=2.10.0",
 ]
 
 [tool.setuptools]

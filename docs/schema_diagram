@@ -27,6 +27,9 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">credit_updated_by</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">sbp_bundle_credit_granted_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
                          </TR></TABLE>> URL="http://AppUser_details.html"]
 	AppUser -> WorkflowRun [label=workflow_runs color="#1E88E5" style=dashed tooltip="Relation between AppUser and WorkflowRun"]
 	Workflow [label=<
@@ -56,6 +59,24 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">tool</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_staged_commit_sha</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_staging_status</TD>
+                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_gadi_path</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_staging_transfer_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_staging_error_message</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">repo_staging_updated_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
                          </TR></TABLE>> URL="http://Workflow_details.html"]
 	Workflow -> WorkflowRun [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
 	WorkflowRun [label=<
@@ -100,6 +121,12 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">service_usage</TD>
                          <TD BGCOLOR="#BBDEFB">FLOAT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">seqera_final_status</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">sync_completed_at</TD>
+                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
                          </TR></TABLE>> URL="http://WorkflowRun_details.html"]
 	WorkflowRun -> AppUser [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
 	WorkflowRun -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]
@@ -198,9 +225,6 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">status</TD>
                          <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">provider_metadata</TD>
-                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">created_at</TD>
                          <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
