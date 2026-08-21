@@ -64,14 +64,20 @@ def _get_github_client(owner: str, repo: str, *, settings: Settings) -> Github:
     token, then to unauthenticated, for local development only.
     """
     github_settings = settings.github
-    if github_settings.app_id and github_settings.app_private_key:
+    if (
+        github_settings.workflow_staging_automation_app_id
+        and github_settings.workflow_staging_automation_app_private_key
+    ):
         integration = GithubIntegration(
-            auth=Auth.AppAuth(github_settings.app_id, github_settings.app_private_key)
+            auth=Auth.AppAuth(
+                github_settings.workflow_staging_automation_app_id,
+                github_settings.workflow_staging_automation_app_private_key,
+            )
         )
         installation = integration.get_repo_installation(owner, repo)
         return integration.get_github_for_installation(installation.id)
-    if github_settings.token:
-        return Github(auth=Auth.Token(github_settings.token))
+    if github_settings.workflow_staging_automation_token:
+        return Github(auth=Auth.Token(github_settings.workflow_staging_automation_token))
     return Github()
 
 

@@ -129,15 +129,17 @@ class GlobusSettings(NestedSettings):
 class GithubSettings(NestedSettings):
     """Credentials for GitHub API calls in workflow_repo_staging.py.
 
-    Prefer GitHub App auth (app_id/app_private_key) - org-owned, not tied to
-    a person. `token` (a PAT) is a local-dev-only fallback.
+    Prefer the workflow-staging-automation GitHub App
+    (workflow_staging_automation_app_id/_private_key) - org-owned, not tied
+    to a person. workflow_staging_automation_token (a PAT) is a local-dev-only
+    fallback.
     """
 
-    app_id: str | None = None
-    app_private_key: str | None = None
-    token: str | None = None
+    workflow_staging_automation_app_id: str | None = None
+    workflow_staging_automation_app_private_key: str | None = None
+    workflow_staging_automation_token: str | None = None
 
-    @field_validator("app_private_key")
+    @field_validator("workflow_staging_automation_app_private_key")
     @classmethod
     def _normalize_private_key_newlines(cls, value: str | None) -> str | None:
         # Secrets managers often flatten PEM newlines to literal "\n" - restore them.
