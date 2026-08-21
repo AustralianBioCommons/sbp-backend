@@ -437,9 +437,7 @@ async def test_get_result_downloads_returns_syncing_status_without_s3_lookup(
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_returns_cancelled_status_for_failed_run(
-    test_db, mock_settings
-):
+async def test_get_result_downloads_returns_cancelled_status_for_failed_run(test_db, mock_settings):
     """A run that finished without succeeding must not report "syncing" forever -
     its results will never sync, so the frontend should see "cancelled" instead."""
     user = AppUser(
