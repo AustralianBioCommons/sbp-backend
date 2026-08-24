@@ -14,6 +14,7 @@ load_dotenv()
 
 from app.scheduler import SCHEDULER  # noqa: E402
 from app.scheduler.jobs import (  # noqa: E402
+    refresh_seqera_health_status,
     refresh_user_credits,
     submit_pending_jobs,
     sync_completed_workflow_runs,
@@ -25,6 +26,11 @@ SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
 SYNC_INTERVAL = IntervalTrigger(minutes=10)
 DATA_TRANSFER_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
+# Sole source of live Seqera health probes now - submit_pending_jobs/launch_job/
+# sync_completed_workflow_runs only read the cache this job refreshes (see
+# is_seqera_available). Matched against SEQERA_HEALTH_CACHE_TTL_SECONDS so the
+# cache stays fresh for other readers (admin dashboard, portal banner) too.
+HEALTH_CHECK_INTERVAL = IntervalTrigger(minutes=2)
 # Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
 # miscalculates day=1 across Sydney's October DST switch and skips November entirely.
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
@@ -32,6 +38,20 @@ MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisb
 
 def main(dry_run: bool = False):
     try:
+        logger.info(
+            f"Adding refresh_seqera_health_status to scheduler: trigger = {HEALTH_CHECK_INTERVAL}"
+        )
+        SCHEDULER.add_job(
+            refresh_seqera_health_status,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=HEALTH_CHECK_INTERVAL,
+            next_run_time=datetime.now(tz=UTC),
+            id="refresh_seqera_health_status",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
         logger.info(f"Adding submit_pending_jobs to scheduler: trigger = {SUBMIT_INTERVAL}")
         SCHEDULER.add_job(
             submit_pending_jobs,

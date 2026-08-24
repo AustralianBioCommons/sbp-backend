@@ -115,6 +115,21 @@ def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
     assert scheduler_jobs.is_seqera_available(test_db) is False
 
 
+def test_is_seqera_available_skip_health_gate_bypasses_probes(
+    test_db, mock_settings, monkeypatch
+):
+    """SEQERA_SKIP_HEALTH_GATE short-circuits before any Seqera probe runs -
+    for local testing when Seqera/the compute env can't be reached at all."""
+
+    async def _boom(_db, **_kwargs):
+        raise AssertionError("get_system_status should not be called when the gate is skipped")
+
+    monkeypatch.setattr(scheduler_jobs.health, "get_system_status", _boom)
+    mock_settings.seqera.skip_health_gate = True
+
+    assert scheduler_jobs.is_seqera_available(test_db, settings=mock_settings) is True
+
+
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))

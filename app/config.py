@@ -52,7 +52,12 @@ class SeqeraSettings(NestedSettings):
     gadi_project: str = "yz52"
     enable_agent_healthcheck: bool = False
     healthcheck_agent_timeout_seconds: int = 20
-    health_cache_ttl_seconds: int = 30
+    # Kept above the scheduler's refresh_seqera_health_status interval (2 minutes,
+    # see run_scheduler.py) so that job's periodic refresh is the only thing that
+    # ever runs a live probe - other cache readers (admin dashboard, portal
+    # banner) always land inside this window and never trigger one themselves.
+    health_cache_ttl_seconds: int = 150
+    skip_health_gate: bool = False
     max_concurrent_workflows: int = 25
     workflow_sync_batch_limit: int = 50
 
