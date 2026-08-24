@@ -641,3 +641,10 @@ def test_validate_single_prediction_rejects_invalid_ccd_codes(code):
     ccd = SinglePredictionEntity(id="c", moleculeType="ccd", copyNumber=1, sequence=code)
     with pytest.raises(ValueError, match="unsupported ligand code"):
         validate_single_prediction_entities([_protein(), ccd], "colabfold")
+
+
+def test_bulk_prediction_reexports_wisps_form_data():
+    from app.schemas.workflows.bulk_prediction import WispsFormData as BulkWispsFormData
+    from app.schemas.workflows.interaction_screening import WispsFormData
+
+    assert BulkWispsFormData is WispsFormData

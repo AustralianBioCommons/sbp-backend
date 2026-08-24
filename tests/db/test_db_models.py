@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import os
+from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy import inspect
 
 from app.db import Base, SessionLocal, _get_database_url, engine
@@ -18,30 +20,26 @@ from app.db.models import (
 )
 
 
-def test_get_database_url_with_env():
+def test_get_database_url_with_env(monkeypatch, mocker, test_get_settings):
     """Test _get_database_url returns DATABASE_URL from environment."""
     expected_url = "postgresql+psycopg://test:test@testhost:5432/testdb"
-    os.environ["DATABASE_URL"] = expected_url
+    monkeypatch.setenv("DATABASE_URL", expected_url)
+    mocker.patch("app.db.get_settings", test_get_settings)
     result = _get_database_url()
     assert result == expected_url
 
 
-def test_get_database_url_default():
-    """Test _get_database_url returns default when env var not set."""
-    # Save current value
-    current_url = os.environ.get("DATABASE_URL")
+def test_get_database_url_raises_when_missing(monkeypatch, mocker, test_get_settings):
+    """Test _get_database_url raises when DATABASE_URL is not configured."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    mocker.patch("app.db.get_settings", test_get_settings)
 
-    # Remove env var if it exists
-    if "DATABASE_URL" in os.environ:
-        del os.environ["DATABASE_URL"]
+    with pytest.raises(ValidationError) as exc:
+        _get_database_url()
 
-    result = _get_database_url()
-    assert result.startswith("postgresql+psycopg://postgres:postgres@localhost:")
-    assert result.endswith("/sbp")
-
-    # Restore original value
-    if current_url:
-        os.environ["DATABASE_URL"] = current_url
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("database_url",)
+    assert field_error["type"] == "missing"
 
 
 def test_base_class():
@@ -133,6 +131,28 @@ def test_workflow_run_model():
     constraint_names = {c.name for c in constraints}
     assert "uq_workflow_runs_seqera_run_id" in constraint_names
     assert "uq_workflow_runs_work_dir" in constraint_names
+
+
+@pytest.mark.parametrize(
+    "seqera_final_status,synced,expected",
+    [
+        (None, False, "syncing"),
+        ("RUNNING", False, "syncing"),
+        ("SUCCEEDED", False, "syncing"),
+        ("SUCCEEDED", True, "ready"),
+        ("FAILED", False, "cancelled"),
+        ("CANCELLED", False, "cancelled"),
+        ("UNKNOWN", False, "cancelled"),
+    ],
+)
+def test_workflow_run_results_sync_status(seqera_final_status, synced, expected):
+    """A run that finished without succeeding must not report "syncing" forever -
+    results will never sync for it, so it should read "cancelled" instead."""
+    run = WorkflowRun()
+    run.seqera_final_status = seqera_final_status
+    run.sync_completed_at = datetime.now(UTC) if synced else None
+
+    assert run.results_sync_status == expected
 
 
 def test_s3_object_model():

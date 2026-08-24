@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -30,6 +30,7 @@ def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
         provider="s3",
         source_location=f"/work/{object_key}",
         destination_location=f"s3://bucket/{object_key}",
+        recursive=False,
     )
     return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
@@ -365,7 +366,7 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
 
     snapshot_key = f"{run_id}/bindcraft/sampleA_0_output/sampleA_preview.png"
 
-    def _list_side_effect(prefix: str, file_extension=None):
+    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
         if prefix == f"{run_id}/bindcraft/sampleA_0_output/":
             return [
                 {
@@ -440,7 +441,7 @@ async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ) as mocked_presign,
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)
@@ -469,7 +470,7 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
 
     snapshot_key = f"{run.id}/bindcraft/sampleC_0_output/sampleC_preview.png"
 
-    def _list_side_effect(prefix: str, file_extension=None):
+    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
         if prefix == f"{run.id}/bindcraft/sampleC_0_output/":
             return [
                 {
@@ -490,7 +491,7 @@ async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db)
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)
@@ -596,6 +597,7 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         report_key,
         response_content_type="text/html",
         response_content_disposition="inline",
+        settings=ANY,
     )
 
 
@@ -680,7 +682,7 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
 
     report_key = f"{run.id}/generate/sampleF_report.html"
 
-    def _list_side_effect(prefix: str, file_extension=None):
+    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
         if prefix == f"{run.id}/generate/":
             return [
                 {
@@ -730,7 +732,7 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
-            side_effect=lambda prefix: (
+            side_effect=lambda prefix, **_kwargs: (
                 [{"key": report_key}] if prefix.endswith("generate/") else []
             ),
         ),
@@ -763,14 +765,14 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
-            side_effect=lambda prefix: (
+            side_effect=lambda prefix, **_kwargs: (
                 [{"key": snapshot_key}] if prefix.endswith("sampleH_0_output/") else []
             ),
         ),
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
     ):
         result = await results_utils.get_result_snapshot_downloads(test_db, run)

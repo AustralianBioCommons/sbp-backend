@@ -10,7 +10,13 @@ from app.db.models.core import AppUser
 from app.routes.dependencies import get_current_user_id
 from app.scheduler import jobs as scheduler_jobs
 from app.services.seqera import WorkflowLaunchResult
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    DataTransferFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+)
 
 
 def _get_db_override(db):
@@ -49,11 +55,57 @@ def _create_queued_job(
     )
 
 
+def test_with_scheduler_db_session_closes_db_dependency(monkeypatch):
+    session = object()
+    closed = []
+    seen_sessions = []
+
+    def _get_db():
+        try:
+            yield session
+        finally:
+            closed.append(True)
+
+    @scheduler_jobs.with_scheduler_db_session
+    def _job(*, db_session):
+        seen_sessions.append(db_session)
+        return "done"
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db)
+
+    assert _job() == "done"
+    assert seen_sessions == [session]
+    assert closed == [True]
+
+
+def test_with_scheduler_db_session_closes_db_dependency_on_error(monkeypatch):
+    session = object()
+    closed = []
+
+    def _get_db():
+        try:
+            yield session
+        finally:
+            closed.append(True)
+
+    @scheduler_jobs.with_scheduler_db_session
+    def _job(*, db_session):
+        assert db_session is session
+        raise RuntimeError("job failed")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db)
+
+    with pytest.raises(RuntimeError, match="job failed"):
+        _job()
+
+    assert closed == [True]
+
+
 def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
-    async def _healthy_status(_db):
+    async def _healthy_status(_db, **_kwargs):
         return SimpleNamespace(overall_status="healthy")
 
-    async def _unhealthy_status(_db):
+    async def _unhealthy_status(_db, **_kwargs):
         return SimpleNamespace(overall_status="degraded")
 
     monkeypatch.setattr(scheduler_jobs.health, "get_system_status", _healthy_status)
@@ -66,7 +118,7 @@ def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: False)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: False)
 
     scheduler_jobs.launch_job(queued_job.id)
 
@@ -78,7 +130,7 @@ def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, mo
 
 def test_launch_job_ignores_missing_job(test_db, monkeypatch):
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
 
     scheduler_jobs.launch_job(uuid4())
 
@@ -92,13 +144,16 @@ def test_launch_job_submits_successful_bindflow_job(test_db, persistent_models, 
         return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-123"
     assert queued_job.attempts == 1
     assert queued_job.status == "submitted"
@@ -117,13 +172,16 @@ def test_launch_job_dry_run_does_not_update_job(test_db, persistent_models, monk
         return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id, dry_run=True)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": True}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.attempts == 0
     assert queued_job.status == "pending"
@@ -146,14 +204,17 @@ def test_launch_job_dispatches_proteindj_for_rfdiffusion_tool(
         raise AssertionError("launch_bindflow_workflow should not be called for rfdiffusion")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _successful_launch)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _unexpected_bindflow_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-rfd"
     assert queued_job.status == "submitted"
 
@@ -170,14 +231,17 @@ def test_launch_job_dispatches_bindflow_for_bindcraft_tool(test_db, persistent_m
         raise AssertionError("launch_proteindj_workflow should not be called for bindcraft")
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
     monkeypatch.setattr(scheduler_jobs, "launch_proteindj_workflow", _unexpected_proteindj_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id == "seqera-run-bc"
     assert queued_job.status == "submitted"
 
@@ -191,13 +255,16 @@ def test_launch_job_dispatches_wisps_workflows(test_db, persistent_models, monke
         return None
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_wisps_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.status == "submitted"
 
@@ -211,13 +278,16 @@ def test_launch_job_dispatches_proteinfold_workflows(test_db, persistent_models,
         return None
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_proteinfold_workflow", _successful_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
 
     test_db.refresh(queued_job)
-    assert calls == [{"queued_job": queued_job, "dry_run": False}]
+    assert len(calls) == 1
+    assert calls[0]["queued_job"] is queued_job
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.status == "submitted"
 
@@ -225,7 +295,7 @@ def test_launch_job_dispatches_proteinfold_workflows(test_db, persistent_models,
 def test_launch_job_rejects_unsupported_workflow(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job(workflow_name="unsupported-workflow")
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
 
     with pytest.raises(ValueError, match="Unsupported workflow"):
         scheduler_jobs.launch_job(queued_job.id)
@@ -234,7 +304,7 @@ def test_launch_job_rejects_unsupported_workflow(test_db, persistent_models, mon
 def test_launch_job_dry_run_failure_does_not_update_job(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id, dry_run=True)
@@ -252,7 +322,7 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
 ):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -271,7 +341,7 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
 def test_launch_job_marks_failed_after_max_failed_attempts(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job(attempts=scheduler_jobs.LAUNCH_MAX_ATTEMPTS - 1)
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
-    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db: True)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
     monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _failing_launch)
 
     scheduler_jobs.launch_job(queued_job.id)
@@ -335,7 +405,7 @@ def test_refresh_user_credits_only_resets_approved_users(test_db, monkeypatch):
 
 
 def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
-    test_db, monkeypatch, mocker: MockerFixture
+    test_db, monkeypatch, mocker: MockerFixture, mock_settings
 ):
     """Once a user is approved and refreshed, a later refresh cycle must not
     stack another SBP_USER_CREDIT_ALLOWANCE on top of their current balance."""
@@ -359,7 +429,7 @@ def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
     mocker.patch("app.routes.dependencies.fetch_userinfo_claims", return_value={})
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="mock-token")
 
-    get_current_user_id(credentials, test_db)
+    get_current_user_id(credentials, test_db, mock_settings)
     test_db.refresh(user)
     assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
 
@@ -367,3 +437,41 @@ def test_refresh_user_credits_does_not_double_grant_across_refresh_cycles(
     scheduler_jobs.refresh_user_credits()
     test_db.refresh(user)
     assert user.credit == scheduler_jobs.SBP_USER_CREDIT_ALLOWANCE
+
+
+def test_sync_data_transfers_dry_run_does_not_call_globus_transfer(
+    test_db, persistent_models, monkeypatch, mocker: MockerFixture
+):
+    """dry_run only counts eligible rows - it must never touch Globus or the DB."""
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    workflow_run = WorkflowRunFactory.create_sync()
+    DataTransferFactory.create_sync(workflow_run=workflow_run, provider="globus", status="pending")
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run, provider="globus", status="completed"
+    )
+    DataTransferFactory.create_sync(workflow_run=workflow_run, provider="s3", status="pending")
+    mock_sync = mocker.patch.object(scheduler_jobs.globus_transfer, "sync_data_transfers")
+
+    scheduler_jobs.sync_data_transfers(dry_run=True)
+
+    mock_sync.assert_not_called()
+
+
+def test_sync_data_transfers_calls_globus_transfer_sync(
+    test_db, monkeypatch, mocker: MockerFixture
+):
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    mock_result = SimpleNamespace(
+        checked=2,
+        submitted=1,
+        completed=1,
+        failed=0,
+        errored=0,
+    )
+    mock_sync = mocker.patch.object(
+        scheduler_jobs.globus_transfer, "sync_data_transfers", return_value=mock_result
+    )
+
+    scheduler_jobs.sync_data_transfers(dry_run=False)
+
+    mock_sync.assert_called_once_with(test_db, limit=scheduler_jobs.DATA_TRANSFER_SYNC_BATCH_LIMIT)

@@ -18,16 +18,18 @@ from app.services import health
 
 
 @pytest.fixture(autouse=True)
-def _agent_healthcheck_disabled_by_default(monkeypatch):
+def _agent_healthcheck_disabled_by_default(monkeypatch, mock_settings):
     """Keep these tests hermetic regardless of a developer's local .env.
 
-    The Tower Agent probe is opt-in via ENABLE_AGENT_HEALTHCHECK, and app.main
-    loads .env at import time, so a developer with it set locally would
-    otherwise get an unmocked probe_tower_agent() running in every test here.
+    The Tower Agent probe is opt-in via settings. A developer with it enabled
+    locally would otherwise get an unmocked probe_tower_agent() running in every
+    test here.
     Tests that specifically exercise the agent probe re-enable it themselves
     (see _install_agent_mock).
     """
-    monkeypatch.delenv("ENABLE_AGENT_HEALTHCHECK", raising=False)
+    mock_settings.seqera.enable_agent_healthcheck = False
+    mock_settings.aws.log_group = None
+    monkeypatch.setattr(health, "get_settings", lambda: mock_settings)
 
 
 def _component(status: health.SystemStatus, name: str) -> health.ProbeResult:
@@ -432,17 +434,17 @@ def test_overall_status_aggregation():
     assert health._worst(["degraded", "unhealthy"]) == "unhealthy"
 
 
-def test_cloudwatch_url_built_when_configured(monkeypatch):
-    monkeypatch.setenv("SBP_BACKEND_LOG_GROUP", "/ecs/sbp-backend")
-    monkeypatch.setenv("AWS_REGION", "ap-southeast-2")
+def test_cloudwatch_url_built_when_configured(mock_settings):
+    mock_settings.aws.log_group = "/ecs/sbp-backend"
+    mock_settings.aws.region = "ap-southeast-2"
     url = health._cloudwatch_log_group_url()
     assert url is not None
     assert "ap-southeast-2" in url
     assert "log-group" in url
 
 
-def test_cloudwatch_url_none_when_unset(monkeypatch):
-    monkeypatch.delenv("SBP_BACKEND_LOG_GROUP", raising=False)
+def test_cloudwatch_url_none_when_unset(mock_settings):
+    mock_settings.aws.log_group = None
     assert health._cloudwatch_log_group_url() is None
 
 
@@ -484,7 +486,7 @@ def _install_agent_mock(
     src_env=None,
 ):
     """Patch get/post/delete to simulate the clone->create->poll->delete cycle."""
-    monkeypatch.setenv("ENABLE_AGENT_HEALTHCHECK", "true")
+    health.get_settings().seqera.enable_agent_healthcheck = True
     monkeypatch.setattr(health, "_AGENT_PROBE_POLL_INTERVAL_SECONDS", 0)
     source = src_env if src_env is not None else _SOURCE_ENV
     state = {"poll_i": 0}
@@ -580,7 +582,7 @@ async def test_agent_probe_create_rejected_is_unhealthy(monkeypatch):
 
 
 async def test_agent_probe_timeout_is_degraded(monkeypatch):
-    monkeypatch.setattr(health, "_AGENT_PROBE_TIMEOUT_SECONDS", 0)
+    health.get_settings().seqera.healthcheck_agent_timeout_seconds = 0
     calls = _install_agent_mock(monkeypatch, poll_states=["CREATING"])
     status = await health.get_system_status(force_refresh=True)
 

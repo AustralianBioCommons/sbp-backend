@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, validat
 from .. import Base
 from . import Workflow, WorkflowRun
 
-JobStatus = Literal["pending", "submitted", "failed", "cancelled"]
+JobStatus = Literal["staging", "pending", "submitted", "failed", "cancelled"]
 
 
 class QueuedJob(Base):

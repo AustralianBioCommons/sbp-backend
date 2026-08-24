@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ...config import Settings, get_settings
 from ...schemas.workflows.shared import (
     JobSettingParamsResponse,
     ResultDownloadsResponse,
@@ -32,13 +33,14 @@ from ...services.results_utils import (
 )
 from ...services.s3 import S3ConfigurationError, S3ServiceError
 from ...services.seqera_client import get_workflow_logs_raw
-from ...services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from ...services.seqera_errors import SeqeraAPIError
 from ..dependencies import get_current_user_id, get_db
 
 router = APIRouter(tags=["results"], dependencies=[Depends(get_current_user_id)])
 
 # Result artifacts the portal reads as text; anything else is left as a download.
 _TEXT_RESULT_SUFFIXES = {".pdb", ".cif", ".mmcif", ".ent", ".tsv", ".csv", ".a3m", ".txt"}
+_RESULTS_SYNCING_DETAIL = "Results are still syncing"
 
 
 def _guess_result_media_type(label: str) -> str:
@@ -48,11 +50,20 @@ def _guess_result_media_type(label: str) -> str:
     return mimetypes.guess_type(label)[0] or "application/octet-stream"
 
 
+def raise_if_results_syncing_for_download(run) -> None:
+    if run.is_syncing_results():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_RESULTS_SYNCING_DETAIL,
+        )
+
+
 @router.get("/{run_id}/settingParams", response_model=JobSettingParamsResponse)
 async def get_result_setting_params(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> JobSettingParamsResponse:
     """Return the submitted form settings for a workflow result view.
 
@@ -64,7 +75,7 @@ async def get_result_setting_params(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    form_data: dict[str, Any] = await resolve_run_form_data(owned_run) or {}
+    form_data: dict[str, Any] = await resolve_run_form_data(owned_run, settings=settings) or {}
 
     queued_job = owned_run.get_queued_job(session=db)
     if queued_job:
@@ -89,6 +100,7 @@ async def get_result_logs(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultLogsResponse:
     """Return Seqera workflow logs for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
@@ -100,11 +112,7 @@ async def get_result_logs(
         )
 
     try:
-        payload = await get_workflow_logs_raw(owned_run.seqera_run_id)
-    except SeqeraConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
+        payload = await get_workflow_logs_raw(owned_run.seqera_run_id, settings=settings)
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -152,14 +160,21 @@ async def get_result_downloads(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultDownloadsResponse:
     """Return pre-signed output download links for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultDownloadsResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            downloads=[],
+        )
 
     try:
-        downloads = await get_result_output_downloads(db, owned_run)
+        downloads = await get_result_output_downloads(db, owned_run, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -169,6 +184,7 @@ async def get_result_downloads(
 
     return ResultDownloadsResponse(
         runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
         downloads=downloads,
     )
 
@@ -179,6 +195,7 @@ async def get_result_file(
     key: str = Query(..., description="S3 object key of one of this run's outputs"),
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """Serve one result artifact through the API.
 
@@ -189,9 +206,10 @@ async def get_result_file(
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
 
     try:
-        content, label = await read_result_output_file(db, owned_run, key)
+        content, label = await read_result_output_file(db, owned_run, key, settings=settings)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found for this run"
@@ -215,15 +233,17 @@ async def get_result_download_all(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
 
     filename = f"results-{owned_run.run_name or run_id}.zip"
     content_disposition = _format_attachment_content_disposition(filename)
     try:
-        zipped_downloads = await get_all_downloads_zipped(db, owned_run)
+        zipped_downloads = await get_all_downloads_zipped(db, owned_run, settings=settings)
         return StreamingResponse(
             zipped_downloads,
             media_type="application/zip",
@@ -242,14 +262,21 @@ async def get_result_snapshots(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultSnapshotsResponse:
     """Return pre-signed snapshot download links for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultSnapshotsResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            snapshots=[],
+        )
 
     try:
-        snapshots = await get_result_snapshot_downloads(db, owned_run)
+        snapshots = await get_result_snapshot_downloads(db, owned_run, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -259,6 +286,7 @@ async def get_result_snapshots(
 
     return ResultSnapshotsResponse(
         runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
         snapshots=snapshots,
     )
 
@@ -268,14 +296,21 @@ async def get_result_report(
     run_id: str,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ResultReportResponse:
     """Return one pre-signed HTML report link for a workflow result view."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if owned_run.is_syncing_results():
+        return ResultReportResponse(
+            runId=run_id,
+            resultsSyncStatus="syncing",
+            report=None,
+        )
 
     try:
-        report = await get_result_report_download(db, owned_run)
+        report = await get_result_report_download(db, owned_run, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except S3ConfigurationError as exc:
@@ -285,4 +320,8 @@ async def get_result_report(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return ResultReportResponse(runId=run_id, report=report)
+    return ResultReportResponse(
+        runId=run_id,
+        resultsSyncStatus=owned_run.results_sync_status,
+        report=report,
+    )

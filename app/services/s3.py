@@ -5,13 +5,14 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, BinaryIO, cast
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+
+from ..config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +36,27 @@ class S3UploadResult:
     error: str | None = None
 
 
-def get_s3_client():
+def _get_bucket_name(settings: Settings) -> str:
+    bucket_name = settings.aws.s3_bucket.strip()
+    if not bucket_name:
+        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+    return bucket_name
+
+
+def get_s3_client(settings: Settings | None = None):
     """Get configured S3 client."""
-    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.getenv("AWS_REGION", "ap-southeast-2")
+    if settings is None:
+        settings = get_settings()
+    aws_access_key = settings.aws.access_key_id
+    aws_secret_key = settings.aws.secret_access_key
+    aws_region = settings.aws.region
 
     if (aws_access_key and not aws_secret_key) or (aws_secret_key and not aws_access_key):
         raise S3ConfigurationError(
             "AWS credentials are incomplete. Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY or neither."
         )
 
-    client_kwargs = {}
+    client_kwargs: dict[str, Any] = {}
     if aws_region:
         client_kwargs["region_name"] = aws_region
     if aws_access_key and aws_secret_key:
@@ -61,6 +71,7 @@ async def upload_file_to_s3(
     filename: str,
     content_type: str = "application/octet-stream",
     folder: str = "input",
+    settings: Settings | None = None,
 ) -> S3UploadResult:
     """
     Upload a file to S3 private bucket.
@@ -78,12 +89,12 @@ async def upload_file_to_s3(
         S3ConfigurationError: If S3 is not properly configured
         S3ServiceError: If upload fails
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+    if settings is None:
+        settings = get_settings()
+    bucket_name = _get_bucket_name(settings)
 
     try:
-        s3_client = get_s3_client()
+        s3_client = get_s3_client(settings=settings)
 
         # Generate unique file key with timestamp
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
@@ -127,6 +138,7 @@ async def generate_presigned_url(
     expiration: int = 3600,
     response_content_type: str | None = None,
     response_content_disposition: str | None = None,
+    settings: Settings | None = None,
 ) -> str:
     """
     Generate a pre-signed URL for private S3 object access.
@@ -144,12 +156,12 @@ async def generate_presigned_url(
         S3ConfigurationError: If S3 is not properly configured
         S3ServiceError: If URL generation fails
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set in env file!")
+    if settings is None:
+        settings = get_settings()
+    bucket_name = _get_bucket_name(settings)
 
     try:
-        s3_client = get_s3_client()
+        s3_client = get_s3_client(settings=settings)
         params: dict[str, str] = {"Bucket": bucket_name, "Key": file_key}
         if response_content_type is not None:
             params["ResponseContentType"] = response_content_type
@@ -178,6 +190,7 @@ async def generate_presigned_url(
 async def list_s3_files(
     prefix: str = "",
     file_extension: str | None = None,
+    settings: Settings | None = None,
 ) -> list[dict[str, Any]]:
     """
     List files in S3 bucket with optional filtering.
@@ -193,12 +206,12 @@ async def list_s3_files(
         S3ConfigurationError: If S3 is not properly configured
         S3ServiceError: If listing fails
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+    if settings is None:
+        settings = get_settings()
+    bucket_name = _get_bucket_name(settings)
 
     try:
-        s3_client = get_s3_client()
+        s3_client = get_s3_client(settings=settings)
 
         files = []
         paginator = s3_client.get_paginator("list_objects_v2")
@@ -240,6 +253,7 @@ async def list_s3_files(
 async def read_csv_from_s3(
     file_key: str,
     columns: list[str] | None = None,
+    settings: Settings | None = None,
 ) -> list[dict[str, Any]]:
     """
     Read a CSV file from S3 and return selected columns.
@@ -256,7 +270,7 @@ async def read_csv_from_s3(
         S3ServiceError: If read fails
     """
     try:
-        content = await read_s3_file(file_key)
+        content = await read_s3_file(file_key, settings=settings)
 
         # Parse CSV
         csv_reader = csv.DictReader(io.StringIO(content))
@@ -289,16 +303,16 @@ async def read_csv_from_s3(
         raise S3ServiceError(error_msg) from exc
 
 
-async def read_s3_file(file_key: str) -> str:
+async def read_s3_file(file_key: str, settings: Settings | None = None) -> str:
     """
     Read a text file from S3 and return its content.
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+    if settings is None:
+        settings = get_settings()
+    bucket_name = _get_bucket_name(settings)
 
     try:
-        s3_client = get_s3_client()
+        s3_client = get_s3_client(settings=settings)
 
         # Download file content
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
@@ -310,16 +324,16 @@ async def read_s3_file(file_key: str) -> str:
         raise S3ServiceError(error_msg) from exc
 
 
-async def read_s3_bytes(file_key: str) -> bytes:
+async def read_s3_bytes(file_key: str, settings: Settings | None = None) -> bytes:
     """
     Read a binary file from S3 and return its content as bytes.
     """
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-    if not bucket_name:
-        raise S3ConfigurationError("AWS_S3_BUCKET environment variable not set")
+    if settings is None:
+        settings = get_settings()
+    bucket_name = _get_bucket_name(settings)
 
     try:
-        s3_client = get_s3_client()
+        s3_client = get_s3_client(settings=settings)
 
         # Download file content
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
@@ -334,6 +348,7 @@ async def read_s3_bytes(file_key: str) -> bytes:
 async def calculate_csv_column_max(
     file_key: str,
     column_name: str,
+    settings: Settings | None = None,
 ) -> float:
     """
     Calculate the maximum value of a numeric column in a CSV file.
@@ -351,7 +366,7 @@ async def calculate_csv_column_max(
         ValueError: If column contains non-numeric values
     """
     try:
-        content = await read_s3_file(file_key)
+        content = await read_s3_file(file_key, settings=settings)
 
         # Parse CSV
         csv_reader = csv.DictReader(io.StringIO(content))

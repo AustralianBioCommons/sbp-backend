@@ -6,6 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# git is required by app/services/workflow_repo_staging.py, which clones
+# workflow pipeline repos (with real .git metadata, not just extracted source)
+# to stage them onto Gadi via S3 + Globus - Gadi compute nodes have no network
+# access, so Nextflow can't fetch/clone them itself at run time.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install UV
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

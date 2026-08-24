@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
-import os
+from ..config import Settings
 
-GADI_PROJECT: str = os.getenv("GADI_PROJECT", "yz52")
+
+def get_gadi_project(settings: Settings) -> str:
+    return settings.seqera.gadi_project

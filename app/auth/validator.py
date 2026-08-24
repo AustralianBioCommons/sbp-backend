@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
@@ -12,45 +10,9 @@ from fastapi import HTTPException, status
 from jose import jwk, jwt
 from jose.exceptions import JWTError
 
+from ..config import AuthSettings, Settings, get_settings
+
 KEY_CACHE = TTLCache(maxsize=10, ttl=30 * 60)
-
-
-@dataclass(frozen=True)
-class Auth0Settings:
-    domain: str
-    audience: str
-    algorithms: tuple[str, ...]
-    issuer: str | None = None
-
-
-def _get_auth0_settings() -> Auth0Settings:
-    domain = os.getenv("AUTH_DOMAIN", "").strip()
-    audience = os.getenv("AUTH_AUDIENCE", "").strip()
-    issuer = os.getenv("AUTH0_ISSUER")
-    algorithms_raw = os.getenv("AUTH0_ALGORITHMS", "RS256")
-    algorithms = tuple(alg.strip() for alg in algorithms_raw.split(",") if alg.strip())
-
-    missing = [
-        name for name, val in [("AUTH_DOMAIN", domain), ("AUTH_AUDIENCE", audience)] if not val
-    ]
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Auth configuration error: {', '.join(missing)} must be set",
-        )
-
-    if not algorithms:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Auth configuration error: AUTH0_ALGORITHMS must not be empty",
-        )
-
-    return Auth0Settings(
-        domain=domain,
-        audience=audience,
-        algorithms=algorithms,
-        issuer=issuer,
-    )
 
 
 def _fetch_rsa_keys(auth0_domain: str) -> dict[str, Any]:
@@ -68,11 +30,11 @@ def _fetch_rsa_keys(auth0_domain: str) -> dict[str, Any]:
 
 def _get_rsa_key(
     token: str,
-    settings: Auth0Settings,
+    auth_settings: AuthSettings,
     *,
     retry_on_failure: bool = True,
 ) -> jwk.Key | None:
-    jwks = _fetch_rsa_keys(settings.domain)
+    jwks = _fetch_rsa_keys(auth_settings.domain)
     unverified_header = jwt.get_unverified_header(token)
 
     for key in jwks.get("keys", []):
@@ -82,22 +44,21 @@ def _get_rsa_key(
     # Retry once with a cold cache to handle key rotation.
     if retry_on_failure:
         KEY_CACHE.clear()
-        return _get_rsa_key(token, settings, retry_on_failure=False)
+        return _get_rsa_key(token, auth_settings, retry_on_failure=False)
 
     return None
 
 
-def verify_access_token_sub(token: str) -> str:
+def verify_access_token_sub(token: str, settings: Settings) -> str:
     """Verify Auth0 JWT and return subject claim used as app_users.auth0_user_id."""
-    payload = verify_access_token_claims(token)
+    payload = verify_access_token_claims(token, settings)
     return cast(str, payload["sub"])
 
 
-def verify_access_token_claims(token: str) -> dict[str, Any]:
+def verify_access_token_claims(token: str, settings: Settings) -> dict[str, Any]:
     """Verify Auth0 JWT and return decoded claims payload."""
-    settings = _get_auth0_settings()
     try:
-        rsa_key = _get_rsa_key(token, settings=settings)
+        rsa_key = _get_rsa_key(token, auth_settings=settings.auth)
     except (JWTError, httpx.HTTPError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -110,16 +71,16 @@ def verify_access_token_claims(token: str) -> dict[str, Any]:
             detail="Couldn't find a matching signing key.",
         )
 
-    issuers = [f"https://{settings.domain}/"]
-    if settings.issuer:
-        issuers.append(settings.issuer)
+    issuers = [f"https://{settings.auth.domain}/"]
+    if settings.auth.issuer:
+        issuers.append(settings.auth.issuer)
 
     try:
         decoded = jwt.decode(
             token,
             rsa_key,
-            algorithms=list(settings.algorithms),
-            audience=settings.audience,
+            algorithms=list(settings.auth.algorithms),
+            audience=settings.auth.audience,
             issuer=issuers,
         )
     except JWTError as exc:
@@ -144,10 +105,11 @@ def verify_access_token_claims(token: str) -> dict[str, Any]:
     return payload
 
 
-def fetch_userinfo_claims(token: str) -> dict[str, Any]:
+def fetch_userinfo_claims(token: str, settings: Settings | None = None) -> dict[str, Any]:
     """Fetch Auth0 /userinfo claims for the provided access token."""
-    settings = _get_auth0_settings()
-    userinfo_url = f"https://{settings.domain}/userinfo"
+    if settings is None:
+        settings = get_settings()
+    userinfo_url = f"https://{settings.auth.domain}/userinfo"
     try:
         response = httpx.get(
             userinfo_url,

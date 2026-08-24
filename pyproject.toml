@@ -26,6 +26,9 @@ dependencies = [
     "loguru>=0.7.3",
     "typer>=0.26.8",
     "rdkit~=2026.3",
+    "pydantic-settings~=2.15",
+    "globus-sdk>=4.9.0",
+    "pygithub>=2.10.0",
 ]
 
 [tool.setuptools]
@@ -41,6 +44,7 @@ dev = [
     "pytest-asyncio~=0.23",
     "pytest-cov~=4.1",
     "pytest-mock~=3.12",
+    "pytest-sugar~=1.1",
     "httpx~=0.28",
     "httpx2~=2.9",
     "coverage[toml]~=7.4",
@@ -138,6 +142,7 @@ extend-exclude = '''
 # MyPy configuration
 [tool.mypy]
 python_version = "3.14"
+plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

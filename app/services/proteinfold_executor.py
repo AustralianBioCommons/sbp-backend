@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_output_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -24,11 +25,10 @@ from .proteinfold_config import (
 )
 from .seqera import (
     WorkflowLaunchResult,
-    _get_required_env,
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,8 @@ def _build_params_text(
 
 async def prepare_proteinfold_workflow(
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
+    settings: Settings,
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
@@ -79,22 +79,26 @@ async def prepare_proteinfold_workflow(
     mode: str = "alphafold2",
     form_data: WorkflowFormData | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteinfold launch payload."""
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    work_dir = _get_required_env("WORK_DIR")
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    workspace_id = settings.seqera.work_space
+    compute_env_id = settings.seqera.compute_id
+    work_dir = settings.seqera.work_dir
 
     if not output_id or not output_id.strip():
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
+    out_dir = build_gadi_output_path(
+        output_id.strip(),
+        "single-prediction",
+        globus_settings=settings.globus,
+    )
 
     if not form.runName or not form.runName.strip():
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
 
-    sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
+    sheet_url = staged_input_location
     params_text = _build_params_text(
         out_dir,
         sheet_url,
@@ -115,6 +119,7 @@ async def prepare_proteinfold_workflow(
         "configText": get_proteinfold_config_text(
             config_path,
             user_details=user_details,
+            gadi_project=settings.seqera.gadi_project,
         ),
         "resume": False,
     }
@@ -137,9 +142,11 @@ async def prepare_proteinfold_workflow(
 async def launch_proteinfold_workflow(
     *,
     queued_job: QueuedJob,
+    settings: Settings | None = None,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch a proteinfold workflow on the Seqera Platform."""
+    settings = settings or get_settings()
     launch_payload = queued_job.launch_payload
     logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
     logger.info(
@@ -155,11 +162,6 @@ async def launch_proteinfold_workflow(
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-        },
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload,
@@ -169,4 +171,6 @@ async def launch_proteinfold_workflow(
     if dry_run:
         logger.info("Dry run - not launching proteinfold workflow")
         return None
-    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="Proteinfold")
+    return await post_seqera_launch(
+        {"launch": runtime_payload}, workflow_label="Proteinfold", settings=settings
+    )

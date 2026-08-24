@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 
 def test_create_app_success():
@@ -21,13 +22,19 @@ def test_create_app_success():
     assert app.version == "1.0.0"
 
 
-def test_create_app_missing_allowed_origins():
+def test_create_app_missing_allowed_origins(monkeypatch, mocker, test_get_settings):
     """Test that create_app raises error when ALLOWED_ORIGINS is missing."""
     from app.main import create_app
 
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(RuntimeError, match="ALLOWED_ORIGINS environment variable is required"):
-            create_app()
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    mocker.patch("app.main.get_settings", test_get_settings)
+
+    with pytest.raises(ValidationError) as exc:
+        create_app()
+
+    field_error = exc.value.errors()[0]
+    assert field_error["loc"] == ("allowed_origins",)
+    assert field_error["type"] == "missing"
 
 
 def test_health_endpoint(client: TestClient):
@@ -59,23 +66,13 @@ def test_workflow_router_included(app: FastAPI):
     assert app.url_path_for("get_my_credit") == "/api/users/me/credit"
 
 
-def test_admin_debug_router_included_when_enabled():
+def test_admin_debug_router_included_when_enabled(mocker, mock_settings):
     """Test that debug admin endpoints are mounted when ENABLE_DB_ADMIN=true."""
     from app.main import create_app
 
-    with patch.dict(
-        os.environ,
-        {
-            "ALLOWED_ORIGINS": "http://localhost:3000",
-            "ENABLE_DB_ADMIN": "true",
-            "AUTH_DOMAIN": "example.auth.test",
-            "AUTH_CLIENT_ID": "test-client-id",
-            "AUTH_AUDIENCE": "https://example.api.test",
-            "DB_ADMIN_AUTH_REDIRECT_URI": "http://localhost:3000/admin/login",
-            "DB_ADMIN_SESSION_SECRET": "test-session-secret",
-        },
-    ):
-        app = create_app()
+    mock_settings.enable_db_admin = True
+    mocker.patch("app.main.get_settings", return_value=mock_settings)
+    app = create_app()
 
     paths = app.openapi()["paths"]
     assert "/admin/debug/s3-objects" in paths

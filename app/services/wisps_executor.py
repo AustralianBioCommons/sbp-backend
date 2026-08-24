@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .globus_transfer import build_gadi_input_path, build_gadi_output_path
 from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .results_utils import s3_uri_to_key
 from .seqera import (
     WorkflowLaunchResult,
-    _get_required_env,
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
     WISPS_WORKFLOW_MODES,
     get_wisps_config_profiles,
@@ -31,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 async def prepare_wisps_workflow(
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
+    settings: Settings,
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
@@ -41,25 +44,29 @@ async def prepare_wisps_workflow(
     revision: str | None = None,
     output_id: str | None = None,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
     commit: bool = False,
 ) -> QueuedJob:
     tool: str | None = form_data.tool or None
 
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    work_dir = _get_required_env("WORK_DIR")
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    workspace_id = settings.seqera.work_space
+    compute_env_id = settings.seqera.compute_id
+    work_dir = settings.seqera.work_dir
 
     if not output_id or not output_id.strip():
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{s3_bucket}/{output_id.strip()}"
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
+    out_dir = build_gadi_output_path(
+        output_id.strip(),
+        form_data.workflow,
+        globus_settings=settings.globus,
+    )
 
     job_id = (form.runName or "").strip()
     if not job_id:
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
 
     mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
-    sheet_url = f"s3://{s3_bucket}/{s3_input_key}"
+    sheet_url = staged_input_location
     params_text = params_to_yaml_text(
         get_wisps_default_params(
             out_dir=out_dir,
@@ -72,6 +79,7 @@ async def prepare_wisps_workflow(
     config_text = get_wisps_config_text(
         config_path,
         user_details=user_details,
+        gadi_project=settings.seqera.gadi_project,
     )
 
     launch_payload: dict[str, Any] = {
@@ -105,24 +113,43 @@ async def prepare_wisps_workflow(
 async def launch_wisps_workflow(
     *,
     queued_job: QueuedJob,
+    settings: Settings | None = None,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
+    settings = settings or get_settings()
     if not queued_job.workflow_run.submitted_form_data:
         raise ValueError("No submitted form data found for queued job")
     form_data = WorkflowFormData.model_validate(queued_job.workflow_run.submitted_form_data)
+    fasta_uri = (form_data.extra_fields.get("fastaS3Uri") or "").strip()
+    split_output_dir = (form_data.extra_fields.get("splitOutputDir") or "").strip()
+    if not fasta_uri or not split_output_dir:
+        raise ValueError("Missing fastaS3Uri/splitOutputDir in submitted form data")
 
-    fasta_s3_uri = form_data.extra_fields.get("fastaS3Uri", "").strip()
-    split_output_dir = form_data.extra_fields.get("splitOutputDir", "").strip()
+    fasta_key = s3_uri_to_key(fasta_uri)
+    if not fasta_key:
+        raise ValueError(f"Invalid S3 URI for fastaS3Uri: {fasta_uri}")
+    if queued_job.workflow_run.workflow is None:
+        raise ValueError("Queued job's workflow run has no associated workflow")
+    # Matches the destination_location computed by _stage_wisps_fasta at queue
+    # time (app/routes/workflows.py) - the aggregated FASTA Globus stages to.
+    staged_fasta_location = build_gadi_input_path(
+        queued_job.workflow_run.id,
+        queued_job.workflow_run.workflow.name.lower(),
+        os.path.basename(fasta_key),
+        globus_settings=settings.globus,
+    )
+
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-            "S3_PATH": fasta_s3_uri.replace("s3://", "", 1),
-            "D": split_output_dir,
-        },
+    )
+    # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
+    # files the samplesheet references, reading F (input) and D (output dir) as
+    # shell vars - get_executor_script no longer injects per-run env, so prepend
+    # them here instead.
+    prerun_script = (
+        f"F={shlex.quote(staged_fasta_location)}\n"
+        f"D={shlex.quote(split_output_dir)}\n" + prerun_script
     )
     runtime_payload = inject_prerun_script(
         launch_payload=queued_job.launch_payload, prerun_script=prerun_script
@@ -131,4 +158,6 @@ async def launch_wisps_workflow(
     if dry_run:
         logger.info("Dry run - not launching WISPS workflow")
         return None
-    return await post_seqera_launch(payload={"launch": runtime_payload}, workflow_label="WISPS")
+    return await post_seqera_launch(
+        payload={"launch": runtime_payload}, workflow_label="WISPS", settings=settings
+    )

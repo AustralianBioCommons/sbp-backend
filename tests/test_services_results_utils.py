@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
+from sqlalchemy import select
 
 from app.db.models.core import AppUser, DataTransfer, RunOutput, S3Object, Workflow, WorkflowRun
 from app.services.results_utils import (
     WORKFLOW_OUTPUT_SPECS,
     ClassifiedOutput,
+    OutputTransferItem,
     WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,
@@ -66,6 +68,7 @@ def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
         provider="s3",
         source_location=f"/work/{object_key}",
         destination_location=f"s3://bucket/{object_key}",
+        recursive=False,
     )
     return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
@@ -202,7 +205,7 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
     assert get_sample_id_for_result(run_empty) is None
 
 
-def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
+def test_bindcraft_helpers_classify_keys_and_build_prefixes(mock_settings):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
     assert classify_bindcraft_output_key(" ") is None
@@ -248,10 +251,154 @@ def test_bindcraft_helpers_classify_keys_and_build_prefixes(monkeypatch):
         f"{run.id}/generate/",
     ]
 
-    monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
-    assert _build_s3_uri("path/to/file.txt") == "s3://test-bucket/path/to/file.txt"
-    monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-    assert _build_s3_uri("path/to/file.txt") == "path/to/file.txt"
+    mock_settings.aws.s3_bucket = "test-bucket"
+    assert (
+        _build_s3_uri("path/to/file.txt", settings=mock_settings)
+        == "s3://test-bucket/path/to/file.txt"
+    )
+    mock_settings.aws.s3_bucket = ""
+    assert _build_s3_uri("path/to/file.txt", settings=mock_settings) == "path/to/file.txt"
+
+
+def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_settings):
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+
+    spec = WorkflowResultsSpec(
+        kind="de-novo-design",
+        tool="bindcraft",
+        required_categories=set(),
+        get_prefixes=lambda _run: [
+            f"{run.id}/",
+            f"{run.id}/ranker/",
+            f"{run.id}/ranker/",
+            f"{run.id}/generate/report.html",
+            "other-run/ranker/",
+        ],
+        classifier=lambda _key, _sample_id: None,
+        get_score_file=lambda _keys, _sample_id: None,
+        extract_max_score=AsyncMock(return_value=None),
+    )
+
+    assert spec.get_transfer_items(run, settings=mock_settings) == [
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/ranker/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/ranker/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/generate/report.html",
+            destination_location=f"s3://test-s3-bucket/{run.id}/generate/report.html",
+            recursive=False,
+        ),
+    ]
+
+
+def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
+    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+
+    bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
+    boltz_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
+    alphafold2_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["alphafold2"]
+    colabfold_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["colabfold"]
+    wisps_spec = WORKFLOW_OUTPUT_SPECS["interaction-screening"]["boltz"]
+    rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
+
+    assert bindcraft_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/ranker/",
+        f"{run.id}/generate/",
+        f"{run.id}/bindcraft/T1024_0_output/",
+    ]
+    assert boltz_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/boltz/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/boltz/T1024/",
+    ]
+    assert alphafold2_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
+        f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+    ]
+    assert colabfold_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/reports/",
+        f"{run.id}/colabfold/top_ranked_structures/",
+        f"{run.id}/mmseqs/",
+        f"{run.id}/colabfold/T1024/",
+    ]
+    assert wisps_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/multiqc/",
+        f"{run.id}/collect/",
+        f"{run.id}/ipsae/",
+    ]
+    assert rfdiffusion_spec.get_transfer_prefixes(run) == [
+        f"{run.id}/results/",
+    ]
+
+    assert boltz_spec.get_transfer_items(run, settings=mock_settings) == [
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/reports/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=(
+                f"/test/output/single-prediction/{run.id}/boltz/top_ranked_structures/"
+            ),
+            destination_location=f"s3://test-s3-bucket/{run.id}/boltz/top_ranked_structures/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/mmseqs/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/mmseqs/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/boltz/T1024/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/boltz/T1024/",
+            recursive=True,
+        ),
+    ]
+
+
+def test_workflow_results_spec_create_output_transfers_is_idempotent(
+    test_db, persistent_models, mock_settings
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(owner=user, sample_id="T1024")
+    spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
+    existing_transfer = DataTransfer(
+        workflow_run_id=run.id,
+        direction="output",
+        provider="globus",
+        source_location=f"/test/output/single-prediction/{run.id}/reports/",
+        destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+        recursive=False,
+        status="in_progress",
+        transfer_id="task-existing",
+    )
+    test_db.add(existing_transfer)
+    test_db.commit()
+
+    first_result = spec.create_output_transfers(test_db, run, settings=mock_settings)
+    second_result = spec.create_output_transfers(test_db, run, settings=mock_settings)
+
+    output_transfers = test_db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+        )
+    ).all()
+    assert len(first_result) == 4
+    assert len(second_result) == 4
+    assert len(output_transfers) == 4
+    assert first_result[0].id == existing_transfer.id
+    assert first_result[0].status == "in_progress"
+    assert first_result[0].transfer_id == "task-existing"
+    assert first_result[0].recursive is True
+    assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
+    assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
+    assert [transfer.recursive for transfer in first_result] == [True, True, True, True]
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
@@ -308,7 +455,7 @@ async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
         score = await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv")
 
     assert score == pytest.approx(0.913)
-    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv")
+    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv", settings=ANY)
 
 
 @pytest.mark.asyncio
@@ -357,7 +504,7 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
-    async def read_bytes(key: str) -> bytes:
+    async def read_bytes(key: str, **_kwargs) -> bytes:
         return output_contents[key]
 
     with patch(
@@ -411,7 +558,7 @@ async def test_extract_bindcraft_max_score_reads_average_i_ptm():
         score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
 
     assert score == 0.91
-    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv")
+    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv", settings=ANY)
 
 
 @pytest.mark.parametrize(
@@ -444,7 +591,7 @@ async def test_extract_proteinfold_max_score_reads_ranked_tsv():
         score = await extract_proteinfold_max_score("run-1/boltz/T1024/T1024_ptm.tsv")
 
     assert score == 0.91
-    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+    read_file.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv", settings=ANY)
 
 
 def test_all_workflow_output_specs_have_score_hooks():
@@ -573,7 +720,7 @@ async def test_workflow_results_spec_get_max_score_extracts_selected_run_output(
     )
 
     assert await spec.get_max_score(test_db, run) == 0.91
-    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv")
+    extractor.assert_awaited_once_with("run-1/boltz/T1024/T1024_ptm.tsv", settings=ANY)
 
 
 @pytest.mark.asyncio
@@ -622,7 +769,7 @@ async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
         service_units = await spec.get_service_units(test_db, run)
 
     assert service_units == 3.45
-    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv")
+    get_run_service_usage_mock.assert_awaited_once_with("run-1/UsageReport.csv", settings=ANY)
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
@@ -1057,7 +1204,7 @@ async def test_extract_wisps_max_score_returns_max_iptm():
         score = await extract_wisps_max_score("run/collect/boltz_confidence_scores_full.csv")
 
     assert score == 0.91
-    mock_read.assert_awaited_once_with("run/collect/boltz_confidence_scores_full.csv")
+    mock_read.assert_awaited_once_with("run/collect/boltz_confidence_scores_full.csv", settings=ANY)
 
 
 @pytest.mark.asyncio
@@ -1110,7 +1257,7 @@ async def test_get_run_service_usage():
         service_usage = await get_run_service_usage("run-1/UsageReport.csv")
 
     assert service_usage == 3.45
-    mock_read.assert_awaited_once_with("run-1/UsageReport.csv")
+    mock_read.assert_awaited_once_with("run-1/UsageReport.csv", settings=ANY)
 
 
 # ---------------------------------------------------------------------------

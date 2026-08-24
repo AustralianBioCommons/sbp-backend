@@ -8,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -23,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES
+from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
 
 _InetType = Text().with_variant(INET(), "postgresql")
@@ -51,6 +52,11 @@ class AppUser(Base):
     )
 
     workflow_runs: Mapped[list[WorkflowRun]] = relationship(back_populates="owner")
+
+
+# Mirrors DataTransferStatus (defined further below) - kept as its own alias
+# since a workflow's repo staging is a distinct cache concept, not a DataTransfer.
+RepoStagingStatus = Literal["pending", "in_progress", "completed", "failed"]
 
 
 class Workflow(Base):
@@ -81,6 +87,20 @@ class Workflow(Base):
     config_path: Mapped[str] = mapped_column(Text, nullable=False)
     prerun_script_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Cache of the most recently staged (repo_url, default_revision) commit on
+    # Gadi, shared across every run of this workflow
+    repo_staged_commit_sha: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_status: Mapped[RepoStagingStatus | None] = mapped_column(
+        String(length=20), nullable=True
+    )
+    repo_gadi_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Holds Globus's submission id until submission succeeds, then the real
+    # Globus task id thereafter - same reuse trick as DataTransfer.transfer_id.
+    repo_staging_transfer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_staging_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")
 
@@ -139,6 +159,27 @@ class WorkflowRun(Base):
         if self.seqera_final_status is None:
             return False
         return self.seqera_final_status.upper() in TERMINAL_SEQERA_STATUSES
+
+    def is_syncing_results(self) -> bool:
+        if self.seqera_final_status is None:
+            return False
+        return (
+            self.seqera_final_status == PipelineStatus.SUCCEEDED.value
+            and self.sync_completed_at is None
+        )
+
+    @property
+    def results_sync_status(self):
+        """
+        Simple sync status to report to frontend
+        """
+        if self.seqera_final_status == PipelineStatus.SUCCEEDED.value:
+            return "ready" if self.sync_completed_at is not None else "syncing"
+        if self.is_seqera_finalized():
+            # Run finished without succeeding (failed/cancelled/unknown) - results will
+            # never sync, so don't report "syncing" forever.
+            return "cancelled"
+        return "syncing"
 
 
 class S3Object(Base):
@@ -201,8 +242,7 @@ class RunMetric(Base):
 
 
 DataTransferDirection = Literal["input", "output"]
-# Placeholder values - nothing transitions these yet, so revisit this set once
-# the actual transfer/execution mechanism (provider, retries, etc.) is settled.
+# Driven by app/services/globus_transfer.py for provider="globus" rows.
 DataTransferStatus = Literal["pending", "in_progress", "completed", "failed"]
 
 
@@ -211,8 +251,7 @@ class DataTransfer(Base):
     Records a single data transfer (upload/download) performed as part of a
     workflow run. ``provider`` identifies which backend performed the
     transfer (e.g. "s3", "globus"), so new providers can be supported without
-    schema changes; provider-specific details that don't fit the common
-    columns can be stored in ``provider_metadata``.
+    schema changes.
     """
 
     __tablename__ = "data_transfers"
@@ -223,11 +262,15 @@ class DataTransfer(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     source_location: Mapped[str] = mapped_column(Text, nullable=False)
     destination_location: Mapped[str] = mapped_column(Text, nullable=False)
+    recursive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Before submission succeeds, holds Globus's submission id (an idempotency
+    # key generated up front so a crash-and-retry doesn't double-submit);
+    # overwritten with the real Globus task id once submission succeeds, which
+    # is what's used to poll status thereafter.
     transfer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[DataTransferStatus] = mapped_column(
         String(length=20), nullable=False, default="pending"
     )
-    provider_metadata: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -240,3 +283,16 @@ class DataTransfer(Base):
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
     run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
     run_output: Mapped[RunOutput | None] = relationship(back_populates="data_transfer")
+
+    def reset_to_pending(self, session: Session, commit: bool = True):
+        """
+        Reset a transfer to pending so it gets attempted again
+        """
+        now = datetime.now(UTC)
+        self.status = "pending"
+        self.transfer_id = None
+        self.error_message = None
+        self.updated_at = now
+        session.add(self)
+        if commit:
+            session.commit()

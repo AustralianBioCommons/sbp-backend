@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
@@ -15,12 +14,15 @@ from sqlalchemy import select
 from app.db.models import QueuedJob
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.bindflow_executor import (
-    _get_required_env,
     launch_bindflow_workflow,
     prepare_bindflow_workflow,
 )
-from app.services.seqera import WorkflowExecutorError, WorkflowLaunchResult, count_active_workflows
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera import (
+    WorkflowExecutorError,
+    WorkflowLaunchResult,
+    count_active_workflows,
+)
+from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 _CONFIG_PATH = "/some/bindflow.config"
@@ -91,18 +93,6 @@ def mock_bindflow_config_text():
         yield
 
 
-def test_get_existing_env_variable():
-    """Test getting an existing environment variable."""
-    result = _get_required_env("SEQERA_API_URL")
-    assert result == "https://api.seqera.test"
-
-
-def test_get_missing_env_variable():
-    """Test that missing env variable raises error."""
-    with pytest.raises(SeqeraConfigurationError, match="MISSING_VAR"):
-        _get_required_env("MISSING_VAR")
-
-
 @pytest.mark.asyncio
 @respx.mock
 async def test_launch_success_minimal(persistent_models):
@@ -125,21 +115,16 @@ async def test_launch_success_minimal(persistent_models):
     payload = json.loads(request.content)
     assert "module load singularity" in payload["launch"]["preRunScript"]
     assert "module load nextflow" in payload["launch"]["preRunScript"]
-    assert "export AWS_ACCESS_KEY_ID" in payload["launch"]["preRunScript"]
 
 
 @pytest.mark.asyncio
 async def test_prepare_bindflow_workflow_writes_expected_queued_job(
-    test_db, persistent_models, monkeypatch
+    test_db, persistent_models, mock_settings
 ):
-    monkeypatch.setenv("SEQERA_API_URL", "https://api.seqera.test")
-    monkeypatch.setenv("WORK_SPACE", "ws_123")
-    monkeypatch.setenv("COMPUTE_ID", "ce_456")
-    monkeypatch.setenv("WORK_DIR", "/work/dir")
-    monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test_key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test_secret")
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    mock_settings.seqera.work_space = "ws_123"
+    mock_settings.seqera.compute_id = "ce_456"
+    mock_settings.seqera.work_dir = "/work/dir"
+    mock_settings.aws.s3_bucket = "my-bucket"
 
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync()
@@ -160,14 +145,17 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     ):
         prepared_job = await prepare_bindflow_workflow(
             form=form,
-            s3_input_key="inputs/samplesheets/test.csv",
+            settings=mock_settings,
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/test/repo",
             config_path=_CONFIG_PATH,
             revision="main",
             output_id="run-output-id",
+            form_data=_empty_form_data(),
             user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/test/workflow_repos/test-repo/abc123",
         )
 
     queued_job = test_db.scalar(
@@ -189,13 +177,115 @@ async def test_prepare_bindflow_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["configText"] == "config_text"
     assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
-    assert "outdir: s3://my-bucket/run-output-id" in queued_job.launch_payload["paramsText"]
     assert (
-        "input: s3://my-bucket/inputs/samplesheets/test.csv"
+        "outdir: /test/output/de-novo-design/run-output-id"
+        in queued_job.launch_payload["paramsText"]
+    )
+    assert (
+        "input: /test/input/de-novo-design/run-id/test.csv"
         in queued_job.launch_payload["paramsText"]
     )
     assert "mode:" not in queued_job.launch_payload["paramsText"]
     assert "custom_param: value" in queued_job.launch_payload["paramsText"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_bindflow_workflow_fills_in_default_when_settings_unset(
+    test_db, persistent_models, mock_settings
+):
+    """The frontend no longer sends any value for settings_filters/
+    settings_advanced (see sbp-portal's de-novo-design.ts) - an empty/missing
+    value must still resolve to the bindflow repo's bundled default file,
+    not be left blank."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="run-1")
+
+    with (
+        patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
+        patch(
+            "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
+        ),
+    ):
+        await prepare_bindflow_workflow(
+            form=form,
+            settings=mock_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="file:/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+            config_path=_CONFIG_PATH,
+            revision="dev",
+            output_id="run-output-id",
+            form_data=_empty_form_data(),
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    params_text = queued_job.launch_payload["paramsText"]
+    assert (
+        "settings_filters: /g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git/"
+        "assets/bindcraft/default_filters.json" in params_text
+    )
+    assert (
+        "settings_advanced: /g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git/"
+        "assets/bindcraft/default_4stage_multimer.json" in params_text
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepare_bindflow_workflow_passes_through_custom_settings_value(
+    test_db, persistent_models, mock_settings
+):
+    """A value that doesn't match the known default bindflow-repo URL is left
+    unchanged - there's no support for staging arbitrary user-supplied
+    settings files yet, so it's passed through as-is rather than guessed at."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = WorkflowLaunchForm(workflow="de-novo-design", tool="bindcraft", runName="run-1")
+    form_data = WorkflowFormData(
+        workflow="de-novo-design",
+        tool="bindcraft",
+        settings_filters="https://example.com/my-custom-filters.json",
+        settings_advanced="https://example.com/my-custom-advanced.json",
+    )
+
+    with (
+        patch("app.services.bindflow_executor.get_bindflow_config_profiles", return_value=["gadi"]),
+        patch(
+            "app.services.bindflow_executor.get_bindflow_config_text", return_value="config_text"
+        ),
+    ):
+        await prepare_bindflow_workflow(
+            form=form,
+            settings=mock_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="file:/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+            config_path=_CONFIG_PATH,
+            revision="dev",
+            output_id="run-output-id",
+            form_data=form_data,
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/de-novo-design/run-id/test.csv",
+            repo_assets_path="/g/data/yz52/sbp_data/workflow_repos/x-bindflow/abc123.git",
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert queued_job is not None
+    params_text = queued_job.launch_payload["paramsText"]
+    assert "settings_filters: https://example.com/my-custom-filters.json" in params_text
+    assert "settings_advanced: https://example.com/my-custom-advanced.json" in params_text
 
 
 @pytest.mark.asyncio
@@ -295,17 +385,6 @@ async def test_launch_missing_workflow_id_in_response(persistent_models):
 
     with pytest.raises(WorkflowExecutorError, match="workflowId"):
         await launch_bindflow_workflow(queued_job=_queued_bindflow_job())
-
-
-def test_launch_missing_env_vars(persistent_models):
-    """Test that missing environment variables raise error."""
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.delenv("SEQERA_API_URL", raising=False)
-        monkeypatch.delenv("SEQERA_ACCESS_TOKEN", raising=False)
-        monkeypatch.delenv("WORK_SPACE", raising=False)
-
-        with pytest.raises(SeqeraConfigurationError):
-            asyncio.run(launch_bindflow_workflow(queued_job=_queued_bindflow_job()))
 
 
 @pytest.mark.asyncio

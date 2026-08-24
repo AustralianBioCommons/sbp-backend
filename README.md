@@ -168,25 +168,46 @@ pre-commit run --all-files
 
 Required entries in `.env`:
 
-- `SEQERA_API_URL` — Seqera Platform API endpoint (e.g., `https://api.seqera.io`)
-- `SEQERA_ACCESS_TOKEN` — API access token
-- `COMPUTE_ID` — Default compute environment ID
-- `WORK_DIR` — Default work directory
-- `WORK_SPACE` — Seqera workspace identifier
-- `ALLOWED_ORIGINS` — (Optional) comma-separated list of origins allowed via CORS (defaults to `https://dev.sbp.test.biocommons.org.au`)
-- `AUTH_DOMAIN` — Auth tenant domain used for JWKS lookup and token issuer validation. Required.
-- `AUTH_CLIENT_ID` — OAuth client ID. Required when `ENABLE_DB_ADMIN=true`.
-- `AUTH_AUDIENCE` — Expected audience claim in incoming bearer tokens. Required.
-- `AUTH0_ISSUER` — (Optional) custom issuer URL to accept in addition to `https://{AUTH_DOMAIN}/`
-- `AUTH0_ALGORITHMS` — (Optional) comma-separated JWT algorithms (defaults to `RS256`)
-- `PORT` — (Optional) uvicorn port when running `python -m app.main`
-- `UVICORN_RELOAD` — (Optional) set to `true` to enable reload when running via `python -m app.main`
-- `ENABLE_DB_ADMIN` — (Optional) set to `true` to enable Starlette Admin at `/admin`
-- `DB_ADMIN_TITLE` — (Optional) admin UI title (default: `SBP Backend Admin`)
-- `DB_ADMIN_SESSION_SECRET` — Required when `ENABLE_DB_ADMIN=true`
-- `DB_ADMIN_AUTH_REDIRECT_URI` — Required when `ENABLE_DB_ADMIN=true`
-- `HEALTH_CACHE_TTL_SECONDS` — (Optional) cache TTL for system status probes (default `30`)
-- `SBP_BACKEND_LOG_GROUP` — (Optional) backend CloudWatch log group name for the admin System Status link
+- `DATABASE_URL` — SQLAlchemy database URL.
+- `PORT` — Uvicorn port when running `python -m app.main`.
+- `ALLOWED_ORIGINS` — Comma-separated list of origins allowed via CORS.
+- `SEQERA_API_URL` — Seqera Platform API endpoint (e.g., `https://api.seqera.io`).
+- `SEQERA_ACCESS_TOKEN` — Seqera API access token.
+- `SEQERA_COMPUTE_ID` — Default Seqera compute environment ID.
+- `SEQERA_WORK_DIR` — Default Seqera work directory.
+- `SEQERA_WORK_SPACE` — Seqera workspace identifier.
+- `AWS_ACCESS_KEY_ID` — AWS access key for S3 access.
+- `AWS_SECRET_ACCESS_KEY` — AWS secret key for S3 access.
+- `AWS_REGION` — AWS region.
+- `AWS_S3_BUCKET` — Private bucket used for workflow inputs and outputs.
+- `AUTH_DOMAIN` — Auth tenant domain used for JWKS lookup and token issuer validation.
+- `AUTH_CLIENT_ID` — OAuth client ID.
+- `AUTH_AUDIENCE` — Expected audience claim in incoming bearer tokens.
+- `AUTH_REDIRECT_URI` — Auth callback URI.
+- `AUTH_REQUIRED_ROLE` — Admin role required for Starlette Admin access.
+- `AUTH_WORKFLOW_EXECUTION_ROLE` — Role required to launch workflows.
+- `DB_ADMIN_AUTH_REDIRECT_URI` — Admin auth callback URI.
+- `DB_ADMIN_COOKIE_SECURE` — Whether admin cookies are marked secure.
+- `DB_ADMIN_FORBIDDEN_HOME_URL` — URL shown/used when admin access is denied.
+- `DB_ADMIN_ROLES_CLAIM` — Token claim that contains role strings.
+- `DB_ADMIN_SESSION_SECRET` — Secret used to sign admin sessions. Set a strong random value.
+
+Optional entries:
+
+- `UVICORN_RELOAD` — Set to `true` to enable reload when running via `python -m app.main` (default `false`).
+- `ENABLE_DB_ADMIN` — Set to `true` to enable Starlette Admin at `/admin` (default `false`).
+- `ENABLE_CREDITS` — Set to `true` to enforce workflow credit checks (default `false`).
+- `DB_ADMIN_TITLE` — Admin UI title (default `SBP Backend Admin`). This is still read directly by the admin package setup.
+- `AUTH_CLIENT_SECRET` — OAuth client secret for admin login, if the auth provider requires it.
+- `AUTH_ISSUER` — Custom issuer URL to accept in addition to `https://{AUTH_DOMAIN}/`.
+- `AUTH_ALGORITHMS` — Comma-separated JWT algorithms (default `RS256`).
+- `SEQERA_GADI_PROJECT` — NCI Gadi project code used for PBS submissions (default `yz52`).
+- `SEQERA_MAX_CONCURRENT_WORKFLOWS` — Scheduler submission cap based on active Seqera workflows (default `25`).
+- `SEQERA_WORKFLOW_SYNC_BATCH_LIMIT` — Workflow sync batch size for the scheduler (default `50`).
+- `SEQERA_HEALTH_CACHE_TTL_SECONDS` — Cache TTL for system status probes in seconds (default `30`).
+- `SEQERA_ENABLE_AGENT_HEALTHCHECK` — Set to `true` to enable the active Tower Agent liveness probe (default `false`).
+- `SEQERA_HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — Max seconds to wait for throwaway env validation (default `20`).
+- `AWS_LOG_GROUP` — Backend CloudWatch log group name for the admin System Status link.
 
 ## DB Debug UI (Starlette Admin)
 
@@ -196,7 +217,12 @@ Enable local DB debugging UI:
 export AUTH_DOMAIN="your-auth-domain.example.com"
 export AUTH_CLIENT_ID="your-auth-client-id"
 export AUTH_AUDIENCE="https://your-auth-audience.example.com"
+export AUTH_REDIRECT_URI="http://localhost:3000/auth/callback"
+export AUTH_REQUIRED_ROLE="biocommons/role/sbp/admin"
 export DB_ADMIN_AUTH_REDIRECT_URI="http://localhost:3000/admin/login"
+export DB_ADMIN_COOKIE_SECURE="false"
+export DB_ADMIN_FORBIDDEN_HOME_URL="http://localhost:3000/"
+export DB_ADMIN_ROLES_CLAIM="https://biocommons.org.au/roles"
 export DB_ADMIN_SESSION_SECRET="replace-with-long-random-secret"
 ENABLE_DB_ADMIN=true uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
 ```
@@ -213,18 +239,18 @@ submission depends on:
 - **Seqera API reachability + credentials** — authenticated `GET {SEQERA_API_URL}/user-info`.
   A 2xx confirms the platform is reachable *and* `SEQERA_ACCESS_TOKEN` is valid;
   401/403 is reported as a credential problem.
-- **Compute environment status** — reads `GET /compute-envs/{COMPUTE_ID}?workspaceId={WORK_SPACE}`
+- **Compute environment status** — reads `GET /compute-envs/{SEQERA_COMPUTE_ID}?workspaceId={SEQERA_WORK_SPACE}`
   and maps the `computeEnv.status` field (the Seqera Tower agent connection state,
   our proxy for Gadi-side health): `AVAILABLE` → healthy, `CREATING` → degraded,
   `ERRORED`/`OFFLINE`/`INVALID` → unhealthy, anything else → degraded. This call is
-  workspace-scoped, so it also validates `WORK_SPACE`/`COMPUTE_ID` access (a 403/404
-  is surfaced as a config hint).
-- **Tower Agent liveness** (opt-in via `ENABLE_AGENT_HEALTHCHECK=true`) — actively
-  verifies the agent: clones `COMPUTE_ID` (reusing its platform/config/tw-agent
+  workspace-scoped, so it also validates `SEQERA_WORK_SPACE`/`SEQERA_COMPUTE_ID`
+  access (a 403/404 is surfaced as a config hint).
+- **Tower Agent liveness** (opt-in via `SEQERA_ENABLE_AGENT_HEALTHCHECK=true`) — actively
+  verifies the agent: clones `SEQERA_COMPUTE_ID` (reusing its platform/config/tw-agent
   credential) into a throwaway env named `sbp-agent-healthcheck-*`, which forces
   Seqera to validate the agent connection, reads the resulting status
   (`AVAILABLE` → healthy, `ERRORED`/`INVALID` → unhealthy, still `CREATING` after
-  `HEALTHCHECK_AGENT_TIMEOUT_SECONDS` → degraded), then deletes the throwaway env.
+  `SEQERA_HEALTHCHECK_AGENT_TIMEOUT_SECONDS` → degraded), then deletes the throwaway env.
   ⚠️ This **mutates Seqera state** (creates + deletes a compute env on every probe,
   i.e. roughly once per cache TTL), which is why it is off by default.
 
@@ -233,7 +259,7 @@ Surfaces:
 - `GET /admin/api/system-status` — admin-only JSON with per-component status,
   latency, last-error body, and the full Seqera compute-env JSON. Pass
   `?refresh=true` to bypass the short-lived cache. Results are cached for
-  `HEALTH_CACHE_TTL_SECONDS` (default 30s) with stampede protection. This endpoint
+  `SEQERA_HEALTH_CACHE_TTL_SECONDS` (default 30s) with stampede protection. This endpoint
   is always mounted (independent of `ENABLE_DB_ADMIN`) and only requires an admin
   token, so it is also suitable for healthchecks / external monitoring.
 - `/admin/system-status` — the **System Status** dashboard view (requires
@@ -251,12 +277,12 @@ Surfaces:
 
 Relevant environment variables:
 
-- `HEALTH_CACHE_TTL_SECONDS` — (Optional) probe cache TTL in seconds (default `30`).
-- `ENABLE_AGENT_HEALTHCHECK` — (Optional) set `true` to enable the active Tower Agent
+- `SEQERA_HEALTH_CACHE_TTL_SECONDS` — (Optional) probe cache TTL in seconds (default `30`).
+- `SEQERA_ENABLE_AGENT_HEALTHCHECK` — (Optional) set `true` to enable the active Tower Agent
   clone-create-delete liveness probe (default `false`; mutates Seqera state).
-- `HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — (Optional) max wait for the throwaway env to
+- `SEQERA_HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — (Optional) max wait for the throwaway env to
   validate before reporting degraded (default `20`).
-- `SBP_BACKEND_LOG_GROUP` — (Optional) backend CloudWatch log group name; when set,
+- `AWS_LOG_GROUP` — (Optional) backend CloudWatch log group name; when set,
   the dashboard shows a one-click link to it. Uses `AWS_REGION` for the console URL.
 
 ## Containerization

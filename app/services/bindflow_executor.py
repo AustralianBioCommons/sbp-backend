@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
+from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .bindflow_config import (
     get_bindflow_config_profiles,
     get_bindflow_config_text,
     get_bindflow_default_params,
 )
+from .globus_transfer import build_gadi_output_path
 from .launch_payloads import (
     DEFAULT_MODULE_LOADS,
     get_executor_script,
@@ -24,45 +25,86 @@ from .launch_payloads import (
 )
 from .seqera import (
     WorkflowLaunchResult,
-    _get_required_env,
     params_to_yaml_text,
     post_seqera_launch,
 )
-from .seqera_errors import SeqeraConfigurationError
+from .seqera_errors import WorkflowLaunchError
 
 logger = logging.getLogger(__name__)
+
+# settings_filters/settings_advanced reference default JSON files bundled in
+# the bindflow repo itself. The frontend leaves these fields unset (see
+# sbp-portal's de-novo-design.ts) and relies on the backend to fill in the
+# local Gadi path: resolve_bindflow_asset_path below fills in the known
+# default for an empty value; anything else (a genuinely custom value) is
+# passed through unchanged rather than guessed at, since staging arbitrary
+# user-supplied settings files isn't supported yet.
+_BINDFLOW_DEFAULT_ASSET_RELATIVE_PATHS = {
+    "settings_filters": "assets/bindcraft/default_filters.json",
+    "settings_advanced": "assets/bindcraft/default_4stage_multimer.json",
+}
+
+
+def resolve_bindflow_asset_path(
+    field_name: str, value: object, *, repo_assets_path: str
+) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    default_relative_path = _BINDFLOW_DEFAULT_ASSET_RELATIVE_PATHS.get(field_name)
+    if default_relative_path is None:
+        return None
+    return f"{repo_assets_path}/{default_relative_path}"
 
 
 async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     form: WorkflowLaunchForm,
-    s3_input_key: str,
     *,
+    settings: Settings,
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
     config_path: str,
     revision: str | None = None,
     output_id: str | None = None,
+    form_data: WorkflowFormData,
     user_details: WorkflowUserDetails,
+    staged_input_location: str,
+    repo_assets_path: str,
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a bindflow launch payload."""
-    workspace_id = _get_required_env("WORK_SPACE")
-    compute_env_id = _get_required_env("COMPUTE_ID")
-    work_dir = _get_required_env("WORK_DIR")
-    s3_bucket = _get_required_env("AWS_S3_BUCKET")
+    workspace_id = settings.seqera.work_space
+    compute_env_id = settings.seqera.compute_id
+    work_dir = settings.seqera.work_dir
 
     run_name = (form.runName or "").strip()
     if not run_name:
-        raise SeqeraConfigurationError("Missing run name for workflow launch")
+        raise WorkflowLaunchError("Missing run name for workflow launch")
     # Always use a unique backend-generated ID for outputs to avoid S3 prefix collisions.
     output_key = (output_id or "").strip()
     if not output_key:
-        raise SeqeraConfigurationError("Missing output identifier for workflow launch")
-    out_dir = f"s3://{s3_bucket}/{output_key}"
+        raise WorkflowLaunchError("Missing output identifier for workflow launch")
+    out_dir = build_gadi_output_path(
+        output_key,
+        "de-novo-design",
+        globus_settings=settings.globus,
+    )
 
-    dataset_url = f"s3://{s3_bucket}/{s3_input_key}"
-    default_params = get_bindflow_default_params(out_dir, dataset_url)
+    default_params = get_bindflow_default_params(out_dir, staged_input_location)
+    settings_filters = resolve_bindflow_asset_path(
+        "settings_filters",
+        form_data.extra_fields.get("settings_filters"),
+        repo_assets_path=repo_assets_path,
+    )
+    settings_advanced = resolve_bindflow_asset_path(
+        "settings_advanced",
+        form_data.extra_fields.get("settings_advanced"),
+        repo_assets_path=repo_assets_path,
+    )
+    if settings_filters:
+        default_params["settings_filters"] = settings_filters
+    if settings_advanced:
+        default_params["settings_advanced"] = settings_advanced
 
     # Serialize to YAML
     params_text = params_to_yaml_text(default_params)
@@ -105,9 +147,11 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
 async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     *,
     queued_job: QueuedJob,
+    settings: Settings | None = None,
     dry_run: bool = False,
 ) -> WorkflowLaunchResult | None:
     """Launch a bindflow workflow on the Seqera Platform."""
+    settings = settings or get_settings()
     launch_payload = queued_job.launch_payload
 
     # Log the complete params being sent
@@ -126,11 +170,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         module_loads=DEFAULT_MODULE_LOADS,
-        env={
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.getenv("AWS_REGION", "ap-southeast-2"),
-        },
     )
     runtime_payload = inject_prerun_script(
         launch_payload=launch_payload, prerun_script=prerun_script
@@ -139,4 +178,6 @@ async def launch_bindflow_workflow(  # pylint: disable=too-many-locals
     if dry_run:
         logger.info("Dry run - not launching bindflow workflow")
         return None
-    return await post_seqera_launch({"launch": runtime_payload}, workflow_label="Bindflow")
+    return await post_seqera_launch(
+        {"launch": runtime_payload}, workflow_label="Bindflow", settings=settings
+    )

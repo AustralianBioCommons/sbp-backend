@@ -6,13 +6,11 @@ import logging
 import os
 from datetime import UTC, datetime
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Load .env before importing modules that may initialize DB settings.
-load_dotenv()
+from .config import get_settings
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -36,19 +34,12 @@ def create_app() -> FastAPI:
     from .routes.workflow.results import router as results_router
     from .routes.workflows import router as workflow_router
 
+    settings = get_settings()
     app = FastAPI(title="SBP Portal Backend", version="1.0.0")
-
-    for required_var in ("ALLOWED_ORIGINS", "DB_ADMIN_ROLES_CLAIM", "WORKFLOW_EXECUTION_ROLE"):
-        if not os.getenv(required_var, "").strip():
-            raise RuntimeError(f"{required_var} environment variable is required but not set")
-
-    allowed_origins = [
-        origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
-    ]
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allowed_origins,
+        allow_origins=settings.allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -73,7 +64,7 @@ def create_app() -> FastAPI:
     # is safe to expose independently of the optional dashboard (ENABLE_DB_ADMIN)
     # and usable for healthchecks / monitoring.
     app.include_router(system_status_router, prefix="/admin/api")
-    mount_db_admin(app)
+    mount_db_admin(app, settings=settings)
 
     @app.exception_handler(Exception)
     async def handle_exception(request: Request, exc: Exception):  # type: ignore[override]
@@ -95,12 +86,11 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("PORT", "3000"))
-    reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
+    settings = get_settings()
 
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=port,
-        reload=reload_enabled,
+        port=settings.port,
+        reload=settings.uvicorn_reload,
     )

@@ -28,7 +28,7 @@ from app.routes.workflow.results import (
     get_result_snapshots,
 )
 from app.services.s3 import S3ConfigurationError, S3ServiceError
-from app.services.seqera_errors import SeqeraAPIError, SeqeraConfigurationError
+from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
 
 
@@ -50,12 +50,13 @@ def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
         provider="s3",
         source_location=f"/work/{object_key}",
         destination_location=f"s3://bucket/{object_key}",
+        recursive=False,
     )
     return RunOutput(run_id=run.id, s3_object_id=object_key, data_transfer=transfer)
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_uses_stored_form_data(test_db):
+async def test_get_result_setting_params_uses_stored_form_data(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user",
         name="Results User",
@@ -77,7 +78,7 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
     test_db.add(RunMetric(run=run, final_design_count=100))
     test_db.commit()
 
-    result = await get_result_setting_params(str(run.id), user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.settingParams == {
@@ -88,7 +89,7 @@ async def test_get_result_setting_params_uses_stored_form_data(test_db):
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
+async def test_get_result_setting_params_falls_back_to_local_fields(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-2",
         name="Results User 2",
@@ -106,7 +107,7 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
     test_db.add(RunMetric(run=run, final_design_count=25))
     test_db.commit()
 
-    result = await get_result_setting_params(str(run.id), user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.settingParams == {
@@ -119,7 +120,7 @@ async def test_get_result_setting_params_falls_back_to_local_fields(test_db):
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-setting-missing",
         name="Results User Missing",
@@ -129,14 +130,16 @@ async def test_get_result_setting_params_returns_404_for_missing_owned_run(test_
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_setting_params("wf-setting-missing", user.id, test_db)
+        await get_result_setting_params("wf-setting-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(test_db):
+async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-pdb-user",
         name="PDB User",
@@ -159,14 +162,14 @@ async def test_get_result_setting_params_resolves_pdb_s3_uri_to_presigned_url(te
         "app.services.results_utils.generate_presigned_url",
         new=AsyncMock(return_value=presigned),
     ):
-        result = await get_result_setting_params(str(run.id), user.id, test_db)
+        result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.settingParams["binder_name"] == "PDL1"
     assert result.settingParams["starting_pdb"] == presigned
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
+async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-pdb-err-user",
         name="PDB Err User",
@@ -187,13 +190,13 @@ async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db):
         "app.services.results_utils.generate_presigned_url",
         new=AsyncMock(side_effect=S3ServiceError("presign failed")),
     ):
-        result = await get_result_setting_params(str(run.id), user.id, test_db)
+        result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.settingParams["starting_pdb"] == "s3://my-bucket/uploads/target.pdb"
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_returns_formatted_entries(test_db):
+async def test_get_result_logs_returns_formatted_entries(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-3",
         name="Results User 3",
@@ -226,7 +229,7 @@ async def test_get_result_logs_returns_formatted_entries(test_db):
         "app.routes.workflow.results.get_workflow_logs_raw",
         new=AsyncMock(return_value=payload),
     ):
-        result = await get_result_logs(str(run.id), user.id, test_db)
+        result = await get_result_logs(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.entries == payload["log"]["entries"]
@@ -242,7 +245,7 @@ async def test_get_result_logs_returns_formatted_entries(test_db):
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_logs_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-4",
         name="Results User 4",
@@ -252,14 +255,16 @@ async def test_get_result_logs_returns_404_for_missing_owned_run(test_db):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_logs("wf-logs-missing", user.id, test_db)
+        await get_result_logs("wf-logs-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(test_db):
+async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-logs-top-level",
         name="Results User Logs",
@@ -287,7 +292,7 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(tes
         "app.routes.workflow.results.get_workflow_logs_raw",
         new=AsyncMock(return_value=payload),
     ):
-        result = await get_result_logs(str(run.id), user.id, test_db)
+        result = await get_result_logs(str(run.id), user.id, test_db, mock_settings)
 
     assert result.truncated is True
     assert result.pending is False
@@ -300,33 +305,7 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(tes
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_maps_seqera_configuration_error_to_500(test_db):
-    user = AppUser(
-        auth0_user_id="auth0|results-user-logs-config-error",
-        name="Results User Logs Config",
-        email="results-logs-config@example.com",
-    )
-    run = WorkflowRun(
-        owner=user,
-        seqera_run_id="wf-logs-config-error",
-        work_dir="/tmp/wf-logs-config-error",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    with patch(
-        "app.routes.workflow.results.get_workflow_logs_raw",
-        new=AsyncMock(side_effect=SeqeraConfigurationError("missing seqera config")),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await get_result_logs(str(run.id), user.id, test_db)
-
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "missing seqera config"
-
-
-@pytest.mark.asyncio
-async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
+async def test_get_result_logs_maps_seqera_api_error_to_502(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-logs-api-error",
         name="Results User Logs API",
@@ -345,14 +324,16 @@ async def test_get_result_logs_maps_seqera_api_error_to_502(test_db):
         new=AsyncMock(side_effect=SeqeraAPIError("seqera upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_logs(str(run.id), user.id, test_db)
+            await get_result_logs(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "seqera upstream failed"
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(test_db):
+async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-5",
         name="Results User 5",
@@ -399,7 +380,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ) as mock_presign,
         patch(
             "app.services.results_utils.list_s3_files",
@@ -407,7 +388,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
             return_value=[],
         ),
     ):
-        result = await get_result_downloads(str(run.id), user.id, test_db)
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
@@ -425,7 +406,70 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_all_returns_valid_zip_file(test_db, persistent_models):
+async def test_get_result_downloads_returns_syncing_status_without_s3_lookup(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|results-downloads-syncing",
+        name="Downloads Syncing",
+        email="results-downloads-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-downloads-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-downloads-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(),
+    ) as get_downloads:
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
+
+    get_downloads.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.downloads == []
+
+
+@pytest.mark.asyncio
+async def test_get_result_downloads_returns_cancelled_status_for_failed_run(test_db, mock_settings):
+    """A run that finished without succeeding must not report "syncing" forever -
+    its results will never sync, so the frontend should see "cancelled" instead."""
+    user = AppUser(
+        auth0_user_id="auth0|results-downloads-failed",
+        name="Downloads Failed",
+        email="results-downloads-failed@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-downloads-failed",
+        seqera_final_status="FAILED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-downloads-failed",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_output_downloads",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
+
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "cancelled"
+    assert result.downloads == []
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_returns_valid_zip_file(
+    test_db, persistent_models, mock_settings
+):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design")
     run = WorkflowRunFactory.create_sync(
@@ -449,11 +493,11 @@ async def test_get_result_download_all_returns_valid_zip_file(test_db, persisten
     test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
 
-    async def read_bytes(key: str) -> bytes:
+    async def read_bytes(key: str, **_kwargs) -> bytes:
         return output_contents[key]
 
     with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
-        response = await get_result_download_all(str(run.id), user.id, test_db)
+        response = await get_result_download_all(str(run.id), user.id, test_db, mock_settings)
 
     body = b"".join([chunk async for chunk in response.body_iterator])
     returned_zip = BytesIO(body)
@@ -516,7 +560,7 @@ async def test_get_result_download_all_returns_valid_zip_file(test_db, persisten
     ],
 )
 async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outputs(
-    test_db, tool, expected_outputs
+    test_db, tool, expected_outputs, mock_settings
 ):
     user = AppUser(
         auth0_user_id=f"auth0|results-proteinfold-downloads-{tool}",
@@ -557,7 +601,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ) as mock_presign,
         patch(
             "app.services.results_utils.list_s3_files",
@@ -565,7 +609,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
             return_value=[],
         ) as mock_list_s3_files,
     ):
-        result = await get_result_downloads(str(run.id), user.id, test_db)
+        result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert [item.category for item in result.downloads] == [
@@ -583,7 +627,7 @@ async def test_get_result_downloads_returns_presigned_links_for_proteinfold_outp
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-downloads-missing",
         name="Results User Downloads Missing",
@@ -593,14 +637,14 @@ async def test_get_result_downloads_returns_404_for_missing_owned_run(test_db):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_downloads("wf-downloads-missing", user.id, test_db)
+        await get_result_downloads("wf-downloads-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
+async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-downloads-config-error",
         name="Results User Downloads Config",
@@ -619,14 +663,14 @@ async def test_get_result_downloads_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_downloads(str(run.id), user.id, test_db)
+            await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
 
 
 @pytest.mark.asyncio
-async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
+async def test_get_result_downloads_maps_s3_service_error_to_502(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-downloads-service-error",
         name="Results User Downloads Service",
@@ -645,14 +689,16 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_downloads(str(run.id), user.id, test_db)
+            await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(test_db):
+async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-1",
         name="Results User Snapshots 1",
@@ -691,7 +737,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
-            side_effect=lambda key: f"https://signed.example/{key}",
+            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
         patch(
             "app.services.results_utils.list_s3_files",
@@ -699,7 +745,7 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
             return_value=[],
         ),
     ):
-        result = await get_result_snapshots(str(run.id), user.id, test_db)
+        result = await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert [item.category for item in result.snapshots] == ["snapshot", "snapshot"]
@@ -707,7 +753,38 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_snapshots_returns_syncing_status_without_s3_lookup(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|results-snapshots-syncing",
+        name="Snapshots Syncing",
+        email="results-snapshots-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-snapshots-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-snapshots-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_snapshot_downloads",
+        new=AsyncMock(),
+    ) as get_snapshots:
+        result = await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
+
+    get_snapshots.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-missing",
         name="Results User Snapshots Missing",
@@ -717,14 +794,14 @@ async def test_get_result_snapshots_returns_404_for_missing_owned_run(test_db):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_snapshots("wf-snapshots-missing", user.id, test_db)
+        await get_result_snapshots("wf-snapshots-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
+async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-config-error",
         name="Results User Snapshots Config",
@@ -743,14 +820,14 @@ async def test_get_result_snapshots_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_snapshots(str(run.id), user.id, test_db)
+            await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
+async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-service-error",
         name="Results User Snapshots Service",
@@ -769,14 +846,16 @@ async def test_get_result_snapshots_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_snapshots(str(run.id), user.id, test_db)
+            await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_returns_single_presigned_html_for_tracked_output(test_db):
+async def test_get_result_report_returns_single_presigned_html_for_tracked_output(
+    test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-7",
         name="Results User 7",
@@ -811,7 +890,7 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
             return_value=[],
         ),
     ):
-        result = await get_result_report(str(run.id), user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.report is not None
@@ -822,11 +901,41 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         report_key,
         response_content_type="text/html",
         response_content_disposition="inline",
+        settings=mock_settings,
     )
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_db):
+async def test_get_result_report_returns_syncing_status_without_s3_lookup(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|results-report-syncing",
+        name="Report Syncing",
+        email="results-report-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-report-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-report-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_result_report_download",
+        new=AsyncMock(),
+    ) as get_report:
+        result = await get_result_report(str(run.id), user.id, test_db, mock_settings)
+
+    get_report.assert_not_awaited()
+    assert result.runId == str(run.id)
+    assert result.resultsSyncStatus == "syncing"
+    assert result.report is None
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-9",
         name="Results User 9",
@@ -845,7 +954,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 
     real_key = f"{run_id}/generate/PDL1_l79_s800698.html"
 
-    def _list_side_effect(prefix: str, file_extension=None):
+    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
         if prefix == f"{run_id}/generate/":
             return [
                 {
@@ -869,7 +978,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
             side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
         ),
     ):
-        result = await get_result_report(str(run.id), user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert result.report is not None
     assert result.report.key == real_key
@@ -885,7 +994,7 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_report_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-missing",
         name="Results User Report Missing",
@@ -895,14 +1004,14 @@ async def test_get_result_report_returns_404_for_missing_owned_run(test_db):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_report("wf-report-missing", user.id, test_db)
+        await get_result_report("wf-report-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_maps_multiple_reports_to_409(test_db):
+async def test_get_result_report_maps_multiple_reports_to_409(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-conflict",
         name="Results User Report Conflict",
@@ -921,14 +1030,14 @@ async def test_get_result_report_maps_multiple_reports_to_409(test_db):
         new=AsyncMock(side_effect=ValueError("Multiple report outputs found")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report(str(run.id), user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "Multiple report outputs found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
+async def test_get_result_report_maps_s3_configuration_error_to_500(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-config-error",
         name="Results User Report Config",
@@ -947,14 +1056,14 @@ async def test_get_result_report_maps_s3_configuration_error_to_500(test_db):
         new=AsyncMock(side_effect=S3ConfigurationError("missing s3 config")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report(str(run.id), user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "missing s3 config"
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_maps_s3_service_error_to_502(test_db):
+async def test_get_result_report_maps_s3_service_error_to_502(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-service-error",
         name="Results User Report Service",
@@ -973,14 +1082,14 @@ async def test_get_result_report_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream failed")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_report(str(run.id), user.id, test_db)
+            await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream failed"
 
 
 @pytest.mark.asyncio
-async def test_get_result_report_allows_missing_report_payload(test_db):
+async def test_get_result_report_allows_missing_report_payload(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-report-none",
         name="Results User Report None",
@@ -998,14 +1107,14 @@ async def test_get_result_report_allows_missing_report_payload(test_db):
         "app.routes.workflow.results.get_result_report_download",
         new=AsyncMock(return_value=None),
     ):
-        result = await get_result_report(str(run.id), user.id, test_db)
+        result = await get_result_report(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.report is None
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
+async def test_get_result_setting_params_overlays_queued_job_payload(test_db, mock_settings):
     from app.db.models.core import Workflow
     from app.db.models.job_queue import QueuedJob
 
@@ -1040,7 +1149,7 @@ async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
     test_db.add(job)
     test_db.commit()
 
-    result = await get_result_setting_params(str(run.id), user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
     assert result.settingParams["paramsText"] == {"binder_name": "PDL1", "num_designs": 5}
@@ -1048,7 +1157,9 @@ async def test_get_result_setting_params_overlays_queued_job_payload(test_db):
 
 
 @pytest.mark.asyncio
-async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(test_db):
+async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(
+    test_db, mock_settings
+):
     from app.db.models.core import Workflow
     from app.db.models.job_queue import QueuedJob
 
@@ -1080,13 +1191,13 @@ async def test_get_result_setting_params_queued_job_invalid_yaml_kept_as_string(
     test_db.add(job)
     test_db.commit()
 
-    result = await get_result_setting_params(str(run.id), user.id, test_db)
+    result = await get_result_setting_params(str(run.id), user.id, test_db, mock_settings)
 
     assert result.settingParams["paramsText"] == "{\x00invalid yaml"
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_all_returns_404_for_missing_owned_run(test_db):
+async def test_get_result_download_all_returns_404_for_missing_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|download-all-missing",
         name="Download All Missing",
@@ -1096,14 +1207,43 @@ async def test_get_result_download_all_returns_404_for_missing_owned_run(test_db
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_download_all("wf-download-all-missing", user.id, test_db)
+        await get_result_download_all("wf-download-all-missing", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_db):
+async def test_get_result_download_all_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-all-syncing",
+        name="Download All Syncing",
+        email="download-all-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-all-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-download-all-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_all_downloads_zipped",
+        new=AsyncMock(),
+    ) as get_zip:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_all(str(run.id), user.id, test_db, mock_settings)
+
+    get_zip.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|download-all-config-err",
         name="Download All Config Err",
@@ -1122,14 +1262,14 @@ async def test_get_result_download_all_maps_s3_configuration_error_to_500(test_d
         new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_all(str(run.id), user.id, test_db)
+            await get_result_download_all(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "s3 config missing"
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_all_maps_s3_service_error_to_502(test_db):
+async def test_get_result_download_all_maps_s3_service_error_to_502(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|download-all-service-err",
         name="Download All Service Err",
@@ -1148,7 +1288,7 @@ async def test_get_result_download_all_maps_s3_service_error_to_502(test_db):
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_all(str(run.id), user.id, test_db)
+            await get_result_download_all(str(run.id), user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
@@ -1185,14 +1325,16 @@ def _make_boltz_prediction_run(test_db, suffix: str) -> tuple[AppUser, WorkflowR
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_returns_structure_as_text(test_db, persistent_models):
+async def test_get_result_file_returns_structure_as_text(test_db, persistent_models, mock_settings):
     user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "structure")
 
     with patch(
         "app.services.results_utils.read_s3_bytes",
         new=AsyncMock(return_value=b"data_T1024\n"),
     ):
-        response = await get_result_file(str(run.id), structure_key, user.id, test_db)
+        response = await get_result_file(
+            str(run.id), structure_key, user.id, test_db, mock_settings
+        )
 
     assert response.body == b"data_T1024\n"
     assert response.media_type == "text/plain; charset=utf-8"
@@ -1200,21 +1342,54 @@ async def test_get_result_file_returns_structure_as_text(test_db, persistent_mod
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_returns_pae_matrix_as_text(test_db, persistent_models):
+async def test_get_result_file_returns_pae_matrix_as_text(
+    test_db, persistent_models, mock_settings
+):
     user, run, _, pae_key = _make_boltz_prediction_run(test_db, "pae")
 
     with patch(
         "app.services.results_utils.read_s3_bytes",
         new=AsyncMock(return_value=b"0\t1\n1\t0\n"),
     ):
-        response = await get_result_file(str(run.id), pae_key, user.id, test_db)
+        response = await get_result_file(str(run.id), pae_key, user.id, test_db, mock_settings)
 
     assert response.body == b"0\t1\n1\t0\n"
     assert response.media_type == "text/plain; charset=utf-8"
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_rejects_a_key_the_run_does_not_own(test_db, persistent_models):
+async def test_get_result_file_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|file-syncing",
+        name="File Syncing",
+        email="file-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-file-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-file-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.read_result_output_file",
+        new=AsyncMock(),
+    ) as read_file:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(str(run.id), "run/output.cif", user.id, test_db, mock_settings)
+
+    read_file.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_rejects_a_key_the_run_does_not_own(
+    test_db, persistent_models, mock_settings
+):
     user, run, _, _ = _make_boltz_prediction_run(test_db, "foreign-key")
 
     with patch(
@@ -1222,14 +1397,16 @@ async def test_get_result_file_rejects_a_key_the_run_does_not_own(test_db, persi
         new=AsyncMock(return_value={}),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_file(str(run.id), "other-run/secrets.env", user.id, test_db)
+            await get_result_file(
+                str(run.id), "other-run/secrets.env", user.id, test_db, mock_settings
+            )
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "File not found for this run"
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_requires_an_owned_run(test_db):
+async def test_get_result_file_requires_an_owned_run(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|file-not-owner",
         name="File Not Owner",
@@ -1239,29 +1416,37 @@ async def test_get_result_file_requires_an_owned_run(test_db):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_file("00000000-0000-0000-0000-000000000000", "any/key", user.id, test_db)
+        await get_result_file(
+            "00000000-0000-0000-0000-000000000000", "any/key", user.id, test_db, mock_settings
+        )
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Job not found"
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_maps_s3_service_error_to_502(test_db, persistent_models):
+async def test_get_result_file_maps_s3_service_error_to_502(
+    test_db, persistent_models, mock_settings
+):
     user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "s3-error")
 
+    mock_read = AsyncMock(side_effect=S3ServiceError("s3 upstream error"))
     with patch(
         "app.routes.workflow.results.read_result_output_file",
-        new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
+        new=mock_read,
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_file(str(run.id), structure_key, user.id, test_db)
+            await get_result_file(str(run.id), structure_key, user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
+    mock_read.assert_awaited_once_with(test_db, run, structure_key, settings=mock_settings)
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_maps_s3_configuration_error_to_500(test_db, persistent_models):
+async def test_get_result_file_maps_s3_configuration_error_to_500(
+    test_db, persistent_models, mock_settings
+):
     user, run, structure_key, _ = _make_boltz_prediction_run(test_db, "s3-config")
 
     with patch(
@@ -1269,7 +1454,7 @@ async def test_get_result_file_maps_s3_configuration_error_to_500(test_db, persi
         new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_file(str(run.id), structure_key, user.id, test_db)
+            await get_result_file(str(run.id), structure_key, user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "s3 config missing"

@@ -13,18 +13,20 @@ module as the one place to edit them.
 
 from __future__ import annotations
 
-import os
 from enum import StrEnum
 from typing import cast
 
 from pydantic import BaseModel, Field
 
+from ..config import Settings, get_settings
 from ..schemas.workflows.shared import WorkflowName, WorkflowTool
 
 
-def is_credits_enabled() -> bool:
+def is_credits_enabled(settings: Settings | None = None) -> bool:
     """Whether credit checking/deduction is active (env ``ENABLE_CREDITS``)."""
-    return os.getenv("ENABLE_CREDITS", "false").strip().lower() in {"1", "true", "yes"}
+    if settings is None:
+        settings = get_settings()
+    return settings.enable_credits
 
 
 # Standard SBP user credit allowance: the one-time bundle grant applied when a
@@ -83,25 +85,25 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="de-novo-design",
         displayName="De novo Design",
         basis=CreditBasis.FINAL_DESIGN_COUNT,
-        toolMultipliers={"bindcraft": 20, "rfdiffusion": 10},
+        toolMultipliers={"bindcraft": 10, "rfdiffusion": 4},
     ),
     WorkflowCreditConfig(
         category="single-prediction",
         displayName="Single Prediction",
         basis=CreditBasis.CONSTANT,
-        toolMultipliers={"boltz": 1, "colabfold": 5, "alphafold2": 5},
+        toolMultipliers={"boltz": 50, "colabfold": 50, "alphafold2": 200},
     ),
     WorkflowCreditConfig(
         category="bulk-prediction",
         displayName="Bulk Prediction",
         basis=CreditBasis.FASTA_ENTRY_COUNT,
-        toolMultipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 3},
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
         displayName="Interaction Screening",
         basis=CreditBasis.FASTA_PAIR_PRODUCT,
-        toolMultipliers={"boltz": 1, "colabfold": 1},
+        toolMultipliers={"boltz": 1, "colabfold": 5},
     ),
 )
 

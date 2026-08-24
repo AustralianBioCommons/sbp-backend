@@ -200,6 +200,46 @@ async def test_list_jobs_pending_queued_job_skips_seqera_lookup(test_db, persist
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_staging_queued_job_skips_seqera_lookup(test_db, persistent_models):
+    """Staging queued jobs (Globus input data transfer still in flight) are
+    rendered as "Staging", not "Pending" or a Seqera lookup that has no run yet."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    owned_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        binder_name=None,
+        run_name="Staging Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        tool="colabfold",
+    )
+    QueuedJobFactory.create_sync(
+        workflow_run=owned_run,
+        workflow=workflow,
+        launch_payload={},
+        status="staging",
+    )
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].id == str(owned_run.id)
+    assert response.jobs[0].jobName == "Staging Job"
+    assert response.jobs[0].status == "Staging"
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_failed_queued_job_skips_seqera_lookup(test_db, persistent_models):
     """Failed queued jobs are rendered from local DB state without querying Seqera."""
     user = AppUserFactory.create_sync()
@@ -303,14 +343,6 @@ async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db
     with (
         patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
         patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-        ) as ensure_score,
-        patch(
-            "app.routes.workflow.jobs.sync_service_usage",
-            new_callable=AsyncMock,
-        ) as sync_usage,
     ):
         response = await list_jobs(
             search=None,
@@ -322,8 +354,6 @@ async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db
         )
 
     describe.assert_not_awaited()
-    ensure_score.assert_not_awaited()
-    sync_usage.assert_not_awaited()
     assert len(response.jobs) == 1
     assert response.jobs[0].status == "Completed"
     assert response.jobs[0].score is None
@@ -393,36 +423,6 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
     assert len(response.jobs) == 5
     assert response.limit == 5
     assert response.offset == 3
-
-
-@pytest.mark.asyncio
-async def test_list_jobs_seqera_configuration_error(mock_db, mock_user_id):
-    """When Seqera is misconfigured the job list falls back to DB data and flags seqeraUnavailable."""
-    from app.services.seqera_errors import SeqeraConfigurationError
-
-    with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
-        ),
-        patch(
-            "app.routes.workflow.jobs.describe_workflow",
-            new_callable=AsyncMock,
-            side_effect=SeqeraConfigurationError("Missing config"),
-        ),
-    ):
-        result = await list_jobs(
-            search=None,
-            status_filter=None,
-            limit=50,
-            offset=0,
-            current_user_id=mock_user_id,
-            db=mock_db,
-        )
-
-    assert result.seqeraUnavailable is True
-    assert len(result.jobs) == 1
-    assert result.jobs[0].status == "N/A"
 
 
 @pytest.mark.asyncio
@@ -518,12 +518,6 @@ async def test_get_job_details_success(mock_db, mock_user_id):
                 }
             },
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.95,
-        ),
-        patch("app.routes.workflow.jobs.sync_service_usage", new_callable=AsyncMock),
     ):
         response = await get_job_details(
             run_id=run_id,
@@ -535,7 +529,7 @@ async def test_get_job_details_success(mock_db, mock_user_id):
     assert response.jobName == "Test Job Details"
     assert response.status == "Completed"
     assert response.workflow == "Bindcraft"
-    assert response.score == 0.95
+    assert response.score is None
 
 
 @pytest.mark.asyncio
@@ -560,14 +554,6 @@ async def test_get_job_details_uses_stored_terminal_status_without_seqera(mock_d
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
         patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-        ) as ensure_score,
-        patch(
-            "app.routes.workflow.jobs.sync_service_usage",
-            new_callable=AsyncMock,
-        ) as sync_usage,
     ):
         response = await get_job_details(
             run_id=run_id,
@@ -576,8 +562,6 @@ async def test_get_job_details_uses_stored_terminal_status_without_seqera(mock_d
         )
 
     describe.assert_not_awaited()
-    ensure_score.assert_not_awaited()
-    sync_usage.assert_not_awaited()
     assert response.id == run_id
     assert response.jobName == "Cached Job Details"
     assert response.status == "Completed"
@@ -624,11 +608,6 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "RUNNING"}},
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.95,
-        ) as ensure_score,
     ):
         response = await get_job_details(
             run_id="wf-456",
@@ -638,7 +617,6 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
 
     assert response.status == "In progress"
     assert response.score is None
-    ensure_score.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -670,8 +648,10 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
-    """Test that completed jobs trigger score calculation."""
+async def test_list_jobs_does_not_calculate_score_before_result_sync(
+    mock_db, mock_user_id, mock_settings
+):
+    """Completed compute does not trigger request-time S3 result discovery."""
     run_id = "run-score-test"
     run = WorkflowRunFactory.build(
         seqera_run_id="wf-score-test",
@@ -693,11 +673,6 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
             new_callable=AsyncMock,
             return_value={"workflow": {"status": "SUCCEEDED"}},
         ),
-        patch(
-            "app.routes.workflow.jobs.ensure_completed_run_score",
-            new_callable=AsyncMock,
-            return_value=0.88,
-        ) as mock_ensure_score,
     ):
         response = await list_jobs(
             search=None,
@@ -706,7 +681,7 @@ async def test_list_jobs_with_score_calculation(mock_db, mock_user_id):
             offset=0,
             current_user_id=mock_user_id,
             db=mock_db,
+            settings=mock_settings,
         )
 
-    mock_ensure_score.assert_called_once_with(mock_db, user_run.run, "Completed")
-    assert response.jobs[0].score == 0.88
+    assert response.jobs[0].score is None
