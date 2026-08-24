@@ -45,10 +45,32 @@ def print_db_schema() -> None:
     default=True,
     help="Use --no-autogenerate to create a blank migration.",
 )
+@click.option(
+    "--merge",
+    is_flag=True,
+    help=(
+        "Generate a merge revision reconciling divergent Alembic heads. "
+        "No database is spun up: 'alembic merge' only reconciles version files "
+        "and never runs migrations against a DB."
+    ),
+)
 def generate_migrations(
-    revision_message: str | None, check: bool, print_schema: bool, autogenerate: bool
+    revision_message: str | None,
+    check: bool,
+    print_schema: bool,
+    autogenerate: bool,
+    merge: bool,
 ) -> None:
     """Spin up a temp Postgres DB, apply migrations or run alembic check, optionally print schema."""
+    if merge:
+        if not revision_message:
+            raise click.UsageError(
+                "Missing option '-m' / '--revision-message'. Required with --merge."
+            )
+        print("Generating Alembic merge revision for divergent heads...")
+        run(f'alembic merge -m "{revision_message}" heads')
+        return
+
     if not check and not revision_message:
         raise click.UsageError(
             "Missing option '-m' / '--revision-message'. Required unless using --check."
