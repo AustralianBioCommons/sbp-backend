@@ -161,6 +161,7 @@ def test_get_executor_script_fetches_from_url():
     ) as mock_fetch:
         script = get_executor_script(
             prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
+            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
             module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_called_once_with(
@@ -168,17 +169,25 @@ def test_get_executor_script_fetches_from_url():
     )
     assert fetched_body in script
     assert "module load singularity" in script
+    assert "export NXF_OFFLINE=true" in script
+    assert "export NXF_ASSETS=/test/workflow_repos/owner-repo/" in script
 
 
 def test_get_executor_script_no_path_returns_header_only():
-    """When prerun_script_path is None, only the module-load header is returned."""
+    """When prerun_script_path is None, only the env/module-load header is returned."""
     with patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch:
         script = get_executor_script(
             prerun_script_path=None,
+            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
             module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_not_called()
-    assert script == "module load singularity\nmodule load nextflow\n"
+    assert script == (
+        "export NXF_OFFLINE=true\n"
+        "export NXF_ASSETS=/test/workflow_repos/owner-repo/\n"
+        "module load singularity\n"
+        "module load nextflow\n"
+    )
 
 
 def test_get_wisps_config_profiles_returns_list():

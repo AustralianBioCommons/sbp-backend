@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from .workflow_config_fetcher import fetch_workflow_config
@@ -29,10 +30,24 @@ def inject_prerun_script(
 def get_executor_script(
     *,
     prerun_script_path: str | None,
+    repo_gadi_path: str | None,
     module_loads: list[str] | None = None,
 ) -> str:
-    """Build a pre-run script from module loads and a script body."""
-    lines = [f"module load {module}" for module in module_loads or []]
+    """Build a pre-run script from Nextflow env vars, module loads, and a script body.
+
+    NXF_OFFLINE=true stops Nextflow reaching out to plugin/registry endpoints
+    Gadi compute nodes can't route to. Nextflow still resolves the `file:`
+    bare-repo pipeline (see build_repo_gadi_path) by cloning it into
+    $NXF_ASSETS/local/<name> - pointing NXF_ASSETS at that repo's own
+    owner-repo directory (repo_gadi_path's parent, one level up from the
+    `<commit_sha>.git` bare repo) keeps that clone alongside the repo it
+    came from instead of Nextflow's global default (~/.nextflow/assets).
+    """
+    lines = ["export NXF_OFFLINE=true"]
+    if repo_gadi_path:
+        nxf_assets_path = f"{PurePosixPath(repo_gadi_path).parent}/"
+        lines.append(f"export NXF_ASSETS={nxf_assets_path}")
+    lines.extend(f"module load {module}" for module in module_loads or [])
 
     header = "\n".join(lines) + "\n"
     body = fetch_workflow_config(prerun_script_path) if prerun_script_path else ""

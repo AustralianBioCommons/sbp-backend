@@ -125,11 +125,12 @@ def build_repo_gadi_path(
 def build_repo_assets_gadi_path(
     owner: str, repo: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
-    """Path to a plain (non-bare) checkout of the same commit, staged next to
-    the bare repo build_repo_gadi_path points at - the bare repo has no
-    working-tree files, so pipeline-bundled assets (e.g. bindcraft's default
-    settings JSON) need a real checkout to be read as plain files."""
-    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/{commit_sha}"
+    """Path to a plain (non-bare) checkout of the same commit, staged under a
+    local/ subdirectory next to the bare repo build_repo_gadi_path points at -
+    the bare repo has no working-tree files, so pipeline-bundled assets (e.g.
+    bindcraft's default settings JSON) need a real checkout to be read as
+    plain files."""
+    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/local/{commit_sha}"
 
 
 @dataclass(frozen=True)
@@ -351,7 +352,8 @@ def stage_pending_repo(
         # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
         destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
         transfer_data.add_item(f"/{s3_prefix}", destination_path, recursive=True)
-        # Second item: the plain checkout, landing as a sibling directory.
+        # Second item: the plain checkout, landing under a local/ subdirectory
+        # alongside the bare repo (see build_repo_assets_gadi_path).
         assets_destination_path = _gadi_relative_path(
             assets_gadi_path, globus_settings=settings.globus
         )
