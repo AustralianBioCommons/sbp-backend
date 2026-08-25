@@ -201,7 +201,7 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == workflow.repo_gadi_path
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/newsha"
+    assert locations.assets_gadi_path == "/test/workflow_repos_assets/test-repo/newsha"
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
 
@@ -248,7 +248,7 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == "/test/workflow_repos/test-repo/samesha.git"
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/samesha"
+    assert locations.assets_gadi_path == "/test/workflow_repos_assets/test-repo/samesha"
     assert workflow.repo_staging_status == "completed"
 
 
@@ -313,8 +313,10 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     assert submitted["DATA"][0]["source_path"] == "/workflow-repos/test-repo/abc123"
     assert submitted["DATA"][0]["recursive"] is True
     # Second item: the plain-checkout companion for pipeline-bundled assets
-    # (see build_repo_assets_gadi_path) - a sibling directory, no ".git" suffix.
-    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/abc123"
+    # (see build_repo_assets_gadi_path) - a separate top-level prefix, not
+    # nested under the bare repo's own directory (that's NXF_ASSETS's root,
+    # and Nextflow reserves "local/<sha>" under it for its own checkout).
+    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos_assets/test-repo/abc123"
     assert submitted["DATA"][1]["source_path"] == "/workflow-repos-assets/test-repo/abc123"
     assert submitted["DATA"][1]["recursive"] is True
 

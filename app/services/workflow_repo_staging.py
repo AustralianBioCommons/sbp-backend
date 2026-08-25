@@ -125,18 +125,28 @@ def build_repo_gadi_path(
 def build_repo_assets_gadi_path(
     owner: str, repo: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
-    """Path to a plain (non-bare) checkout of the same commit, staged under a
-    local/ subdirectory next to the bare repo build_repo_gadi_path points at -
-    the bare repo has no working-tree files, so pipeline-bundled assets (e.g.
-    bindcraft's default settings JSON) need a real checkout to be read as
-    plain files."""
-    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/local/{commit_sha}"
+    """Path to a plain (non-bare) checkout of the same commit, for reading
+    pipeline-bundled assets (e.g. bindcraft's default settings JSON) as plain
+    files - the bare repo build_repo_gadi_path points at has no working-tree
+    files of its own.
+
+    Deliberately a sibling top-level prefix (mirroring build_repo_assets_s3_prefix),
+    not nested under build_repo_gadi_path's parent: that parent directory is
+    also where get_executor_script points NXF_ASSETS, and Nextflow resolves a
+    `file:` bare-repo `pipeline` by checking out into
+    ``$NXF_ASSETS/local/<commit_sha>`` itself. Staging our own checkout at that
+    exact path used to collide with Nextflow's own checkout slot - Nextflow
+    would find the directory already populated (by our `git archive` extract,
+    which has no `.git/`) and fail with "Repository may be corrupted" instead
+    of completing its own checkout there.
+    """
+    return f"{globus_settings.gadi_collection_root}/workflow_repos_assets/{owner}-{repo}/{commit_sha}"
 
 
 @dataclass(frozen=True)
 class RepoStagingLocations:
     """Where a workflow's staged repo lives on Gadi: the bare repo for
-    Seqera's `pipeline` field, and the plain checkout alongside it for
+    Seqera's `pipeline` field, and a separate plain checkout for
     pipeline-bundled assets (see build_repo_assets_gadi_path)."""
 
     gadi_path: str
@@ -352,8 +362,8 @@ def stage_pending_repo(
         # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
         destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
         transfer_data.add_item(f"/{s3_prefix}", destination_path, recursive=True)
-        # Second item: the plain checkout, landing under a local/ subdirectory
-        # alongside the bare repo (see build_repo_assets_gadi_path).
+        # Second item: the plain checkout, landing under its own sibling prefix
+        # rather than alongside the bare repo (see build_repo_assets_gadi_path).
         assets_destination_path = _gadi_relative_path(
             assets_gadi_path, globus_settings=settings.globus
         )
