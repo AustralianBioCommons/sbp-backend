@@ -115,6 +115,28 @@ def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
     assert scheduler_jobs.is_seqera_available(test_db) is False
 
 
+def test_is_seqera_available_uses_cached_status_without_probing(test_db, monkeypatch):
+    """A warm cache short-circuits before any live probe runs."""
+
+    async def _boom(_db, **_kwargs):
+        raise AssertionError("get_system_status should not be called when the cache is warm")
+
+    monkeypatch.setattr(scheduler_jobs.health, "get_system_status", _boom)
+    monkeypatch.setattr(
+        scheduler_jobs.health,
+        "get_cached_system_status",
+        lambda _db: SimpleNamespace(overall_status="healthy"),
+    )
+    assert scheduler_jobs.is_seqera_available(test_db) is True
+
+    monkeypatch.setattr(
+        scheduler_jobs.health,
+        "get_cached_system_status",
+        lambda _db: SimpleNamespace(overall_status="degraded"),
+    )
+    assert scheduler_jobs.is_seqera_available(test_db) is False
+
+
 def test_is_seqera_available_skip_health_gate_bypasses_probes(test_db, mock_settings, monkeypatch):
     """SEQERA_SKIP_HEALTH_GATE short-circuits before any Seqera probe runs -
     for local testing when Seqera/the compute env can't be reached at all."""
@@ -126,6 +148,29 @@ def test_is_seqera_available_skip_health_gate_bypasses_probes(test_db, mock_sett
     mock_settings.seqera.skip_health_gate = True
 
     assert scheduler_jobs.is_seqera_available(test_db, settings=mock_settings) is True
+
+
+def test_refresh_seqera_health_status_dry_run_does_not_probe(test_db, monkeypatch):
+    async def _boom(_db, **_kwargs):
+        raise AssertionError("refresh_db_cache should not run during a dry run")
+
+    monkeypatch.setattr(scheduler_jobs.health, "refresh_db_cache", _boom)
+
+    scheduler_jobs.refresh_seqera_health_status(dry_run=True, db_session=test_db)
+
+
+def test_refresh_seqera_health_status_refreshes_the_cache(test_db, monkeypatch):
+    calls = []
+
+    async def _fake_refresh_db_cache(_db, **kwargs):
+        calls.append(kwargs.get("settings"))
+        return SimpleNamespace(overall_status="healthy")
+
+    monkeypatch.setattr(scheduler_jobs.health, "refresh_db_cache", _fake_refresh_db_cache)
+
+    scheduler_jobs.refresh_seqera_health_status(db_session=test_db)
+
+    assert len(calls) == 1
 
 
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
