@@ -30,7 +30,7 @@ REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 # sync_completed_workflow_runs only read the cache this job refreshes (see
 # is_seqera_available). Matched against SEQERA_HEALTH_CACHE_TTL_SECONDS so the
 # cache stays fresh for other readers (admin dashboard, portal banner) too.
-HEALTH_CHECK_INTERVAL = IntervalTrigger(minutes=2)
+HEALTH_CHECK_INTERVAL = IntervalTrigger(minutes=5)
 # Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
 # miscalculates day=1 across Sydney's October DST switch and skips November entirely.
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
