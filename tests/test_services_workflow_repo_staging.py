@@ -201,7 +201,7 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == workflow.repo_gadi_path
-    assert locations.assets_gadi_path == "/test/workflow_repos_assets/test-repo/newsha"
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/local/newsha"
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
 
@@ -248,7 +248,7 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == "/test/workflow_repos/test-repo/samesha.git"
-    assert locations.assets_gadi_path == "/test/workflow_repos_assets/test-repo/samesha"
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/local/samesha"
     assert workflow.repo_staging_status == "completed"
 
 
@@ -312,11 +312,10 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     assert submitted["DATA"][0]["destination_path"] == "/workflow_repos/test-repo/abc123"
     assert submitted["DATA"][0]["source_path"] == "/workflow-repos/test-repo/abc123"
     assert submitted["DATA"][0]["recursive"] is True
-    # Second item: the plain-checkout companion for pipeline-bundled assets
-    # (see build_repo_assets_gadi_path) - a separate top-level prefix, not
-    # nested under the bare repo's own directory (that's NXF_ASSETS's root,
-    # and Nextflow reserves "local/<sha>" under it for its own checkout).
-    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos_assets/test-repo/abc123"
+    # Second item: the working-checkout companion for pipeline-bundled assets
+    # (see build_repo_assets_gadi_path) - landing at Nextflow's own NXF_ASSETS
+    # local-checkout slot ("local/<sha>" under the bare repo's own directory).
+    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/local/abc123"
     assert submitted["DATA"][1]["source_path"] == "/workflow-repos-assets/test-repo/abc123"
     assert submitted["DATA"][1]["recursive"] is True
 
@@ -448,7 +447,12 @@ def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settin
             settings=mock_settings,
         )
 
-    uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
+    all_uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
+    # Scoped to the bare repo's own prefix - _clone_and_upload_repo also
+    # uploads a separate working-checkout companion under a different prefix
+    # (see test_clone_and_upload_repo_uploads_plain_checkout_assets), which
+    # does have its own .git/, and isn't what this test is checking.
+    uploaded_keys = {key for key in all_uploaded_keys if key.startswith(f"{prefix}/")}
     assert f"{prefix}/HEAD" in uploaded_keys
     assert f"{prefix}/config" in uploaded_keys
     assert any(key.startswith(f"{prefix}/objects/") for key in uploaded_keys)
@@ -473,11 +477,15 @@ def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settin
 
 
 def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_settings):
-    """Alongside the bare repo, a plain checkout of the same commit must be
-    uploaded under build_repo_assets_s3_prefix's prefix - this is what makes
-    pipeline-bundled asset files (e.g. bindcraft's default settings JSON,
-    see bindflow_executor.py) readable as plain files on Gadi, since the bare
-    repo has no working tree at all."""
+    """Alongside the bare repo, a real (non-bare) checkout of the same commit
+    must be uploaded under build_repo_assets_s3_prefix's prefix - this is what
+    makes pipeline-bundled asset files (e.g. bindcraft's default settings
+    JSON, see bindflow_executor.py) readable as plain files on Gadi, since the
+    bare repo has no working tree at all. It must include a real `.git/`
+    (a `git clone`, not a `git archive` extract) so what lands at
+    build_repo_assets_gadi_path - Nextflow's own NXF_ASSETS local-checkout
+    slot - looks exactly like a checkout Nextflow would have produced itself;
+    anything less makes Nextflow fail with "Repository may be corrupted"."""
     from app.services.workflow_repo_staging import (
         _clone_and_upload_repo,
         build_repo_assets_s3_prefix,
@@ -522,9 +530,12 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
         uploaded_content[f"{assets_prefix}/assets/bindcraft/default_filters.json"]
         == b'{"filter": true}'
     )
-    # No .git internals in the plain checkout - that's what the bare repo
-    # (uploaded separately, under `prefix`) is for.
-    assert not any(key.startswith(f"{assets_prefix}/.git") for key in uploaded_content)
+    # A real .git/ must be present - a plain `git archive` extract (no
+    # .git/) is exactly what made Nextflow fail with "Repository may be
+    # corrupted" when it found this checkout already sitting at its own
+    # NXF_ASSETS local-checkout slot.
+    assert f"{assets_prefix}/.git/config" in uploaded_content
+    assert f"{assets_prefix}/.git/HEAD" in uploaded_content
 
 
 def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):
