@@ -1,11 +1,12 @@
-"""Stage a workflow's GitHub repo onto Gadi via S3 + Globus, cached by commit.
+"""Stage a workflow's GitHub repo onto Gadi via S3 + Globus, cached by
+(revision, commit) pair.
 
 Gadi compute nodes have no network access, so Nextflow can't fetch pipeline
 code from GitHub itself - the repo must already be on Gadi's filesystem, the
 same way input files are staged there via Globus. A repo checkout is shared
-across every run of a workflow, so it's cached on the Workflow row (keyed by
-commit sha) instead of per run: if default_revision still resolves to the
-commit already staged/staging, launches reuse it for free.
+across every run of a workflow, so it's cached on the Workflow row instead of
+per run: if default_revision still resolves to the commit already
+staged/staging under that same revision, launches reuse it for free.
 """
 
 from __future__ import annotations
@@ -102,26 +103,36 @@ def resolve_latest_commit_sha(
     return cast(str, commit.sha)
 
 
-def build_repo_s3_prefix(owner: str, repo: str, commit_sha: str) -> str:
-    return f"workflow-repos/{owner}-{repo}/{commit_sha}"
+def build_repo_s3_prefix(owner: str, repo: str, revision: str, commit_sha: str) -> str:
+    return f"workflow-repos/{owner}-{repo}/{revision}/{commit_sha}"
 
 
-def build_repo_assets_s3_prefix(owner: str, repo: str, commit_sha: str) -> str:
-    return f"workflow-repos-assets/{owner}-{repo}/{commit_sha}"
+def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha: str) -> str:
+    return f"workflow-repos-assets/{owner}-{repo}/{revision}/{commit_sha}"
 
 
 def build_repo_gadi_path(
-    owner: str, repo: str, commit_sha: str, *, globus_settings: GlobusSettings
+    owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
+    # revision is part of the path (not just commit_sha) because the bare repo
+    # only gets a ref named after `revision` (see stage_pending_repo's
+    # refspec) - two different revisions can resolve to the same commit_sha
+    # (e.g. a freshly-cut branch), and without revision in the path they'd
+    # collide on one bare repo that only has a ref for whichever was staged
+    # first, breaking checkout of the other's name.
+    #
     # ".git" suffix required: Seqera's launch API rejects a `pipeline`
     # "file:<path>" URL without it, and Nextflow then resolves that path as a
     # git-dir directly (`--git-dir=<path>`) - so this must be a real bare
     # repo, not a checkout with a nested .git/ one level down.
-    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/{commit_sha}.git"
+    return (
+        f"{globus_settings.gadi_collection_root}/workflow_repos/"
+        f"{owner}-{repo}/{revision}/{commit_sha}.git"
+    )
 
 
 def build_repo_assets_gadi_path(
-    owner: str, repo: str, commit_sha: str, *, globus_settings: GlobusSettings
+    owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
     """Path to a real (non-bare) clone of the same commit, for reading
     pipeline-bundled assets (e.g. bindcraft's default settings JSON) as plain
@@ -136,8 +147,15 @@ def build_repo_assets_gadi_path(
     checkout already done and skips redoing it; staging anything less than a
     real git checkout there (e.g. a `git archive` extract with no `.git/`)
     makes Nextflow fail with "Repository may be corrupted" instead.
+
+    revision is part of the path for the same reason as build_repo_gadi_path:
+    two different revisions can resolve to the same commit_sha, and without
+    revision here they'd collide on one local checkout directory.
     """
-    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/local/{commit_sha}"
+    return (
+        f"{globus_settings.gadi_collection_root}/workflow_repos/"
+        f"{owner}-{repo}/{revision}/local/{commit_sha}"
+    )
 
 
 @dataclass(frozen=True)
@@ -164,15 +182,20 @@ def ensure_repo_staging_requested(
     """
     settings = settings or get_settings()
     owner, repo = parse_github_repo(workflow.repo_url)
-    commit_sha = resolve_latest_commit_sha(
-        workflow.repo_url, workflow.default_revision, settings=settings
+    revision = workflow.default_revision
+    commit_sha = resolve_latest_commit_sha(workflow.repo_url, revision, settings=settings)
+    gadi_path = build_repo_gadi_path(
+        owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
-    gadi_path = build_repo_gadi_path(owner, repo, commit_sha, globus_settings=settings.globus)
     assets_gadi_path = build_repo_assets_gadi_path(
-        owner, repo, commit_sha, globus_settings=settings.globus
+        owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
 
-    up_to_date = workflow.repo_staged_commit_sha == commit_sha and workflow.repo_staging_status in (
+    # Comparing the full gadi_path (not just commit_sha) means a revision
+    # change is always detected, even when the new revision happens to
+    # resolve to the same commit_sha as before - gadi_path bakes revision in,
+    # so a stale value here means either the commit or the revision moved.
+    up_to_date = workflow.repo_gadi_path == gadi_path and workflow.repo_staging_status in (
         "pending",
         "in_progress",
         "completed",
@@ -275,7 +298,7 @@ def _clone_and_upload_repo(
             s3_prefix,
         )
 
-        assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, commit_sha)
+        assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
         with tempfile.TemporaryDirectory() as assets_tmp_dir:
             try:
                 _clone_working_checkout(tmp_dir, assets_tmp_dir)
@@ -309,17 +332,18 @@ def stage_pending_repo(
     """Submit the S3 upload + Globus transfer for a "pending" workflow repo."""
     settings = settings or get_settings()
     owner, repo = parse_github_repo(workflow.repo_url)
+    revision = workflow.default_revision
     commit_sha = workflow.repo_staged_commit_sha
     if not commit_sha:
         raise RepoStagingError(f"Workflow {workflow.id} has no commit sha to stage")
 
-    s3_prefix = build_repo_s3_prefix(owner, repo, commit_sha)
+    s3_prefix = build_repo_s3_prefix(owner, repo, revision, commit_sha)
     gadi_path = workflow.repo_gadi_path or build_repo_gadi_path(
-        owner, repo, commit_sha, globus_settings=settings.globus
+        owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
-    assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, commit_sha)
+    assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
     assets_gadi_path = build_repo_assets_gadi_path(
-        owner, repo, commit_sha, globus_settings=settings.globus
+        owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
 
     try:
