@@ -84,12 +84,17 @@ def get_retry_delay(job: QueuedJob) -> timedelta:
 
 
 def is_seqera_available(db_session: Session, settings: Settings | None = None) -> bool:
-    """Gate job submission on the last known Seqera health status.
+    """Gate job submission on the Seqera health status.
 
-    Reads the shared cache only - never runs a live probe itself. Keeping the
-    cache fresh is the dedicated refresh_seqera_health_status scheduler job's
-    responsibility, so a slow/hung Seqera probe can no longer stall every
-    submit_pending_jobs/launch_job tick the way an inline check would.
+    Normally reads the shared cache only - never runs a live probe itself.
+    Keeping the cache fresh is the dedicated refresh_seqera_health_status
+    scheduler job's responsibility, so a slow/hung Seqera probe can no longer
+    stall every submit_pending_jobs/launch_job tick the way an inline check
+    would. The only exception is a cold cache (e.g. right after a fresh
+    deploy, before that job's first run): assuming healthy there would let
+    submission proceed with zero actual signal on Seqera's state, so this
+    falls back to a one-off live probe (which also populates the cache for
+    the next call) rather than guessing.
     """
     settings = settings or get_settings()
     if settings.seqera.skip_health_gate:
@@ -99,15 +104,20 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
         )
         return True
     cached_status = health.get_cached_system_status(db_session)
-    if cached_status is None:
-        logger.info("No cached Seqera health status yet; assuming healthy.")
-        return True
-    logger.info(f"System status is {cached_status.overall_status} (cached).")
-    return cached_status.overall_status == "healthy"
+    if cached_status is not None:
+        logger.info(f"System status is {cached_status.overall_status} (cached).")
+        return cached_status.overall_status == "healthy"
+
+    logger.info("No cached Seqera health status yet; running a live probe.")
+    system_status = asyncio.run(health.get_system_status(db_session, settings=settings))
+    logger.info(f"System status is {system_status.overall_status}.")
+    return system_status.overall_status == "healthy"
 
 
 @with_scheduler_db_session
-def refresh_seqera_health_status(dry_run: bool = False, *, db_session: Session | None = None) -> None:
+def refresh_seqera_health_status(
+    dry_run: bool = False, *, db_session: Session | None = None
+) -> None:
     """Actively refresh the shared Seqera health cache on its own schedule.
 
     This is the only place that runs the live health probes - is_seqera_available

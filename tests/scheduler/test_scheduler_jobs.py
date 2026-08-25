@@ -115,9 +115,7 @@ def test_is_seqera_available_returns_health_status(test_db, monkeypatch):
     assert scheduler_jobs.is_seqera_available(test_db) is False
 
 
-def test_is_seqera_available_skip_health_gate_bypasses_probes(
-    test_db, mock_settings, monkeypatch
-):
+def test_is_seqera_available_skip_health_gate_bypasses_probes(test_db, mock_settings, monkeypatch):
     """SEQERA_SKIP_HEALTH_GATE short-circuits before any Seqera probe runs -
     for local testing when Seqera/the compute env can't be reached at all."""
 
