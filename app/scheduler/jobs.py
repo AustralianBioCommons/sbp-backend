@@ -84,10 +84,54 @@ def get_retry_delay(job: QueuedJob) -> timedelta:
 
 
 def is_seqera_available(db_session: Session, settings: Settings | None = None) -> bool:
+    """Gate job submission on the Seqera health status.
+
+    Normally reads the shared cache only - never runs a live probe itself.
+    Keeping the cache fresh is the dedicated refresh_seqera_health_status
+    scheduler job's responsibility, so a slow/hung Seqera probe can no longer
+    stall every submit_pending_jobs/launch_job tick the way an inline check
+    would. The only exception is a cold cache (e.g. right after a fresh
+    deploy, before that job's first run): assuming healthy there would let
+    submission proceed with zero actual signal on Seqera's state, so this
+    falls back to a one-off live probe (which also populates the cache for
+    the next call) rather than guessing.
+    """
     settings = settings or get_settings()
+    if settings.seqera.skip_health_gate:
+        logger.warning(
+            "Skipping Seqera health gate (SEQERA_SKIP_HEALTH_GATE=true) - "
+            "local testing only, do not enable in a real environment."
+        )
+        return True
+    cached_status = health.get_cached_system_status(db_session)
+    if cached_status is not None:
+        logger.info(f"System status is {cached_status.overall_status} (cached).")
+        return cached_status.overall_status == "healthy"
+
+    logger.info("No cached Seqera health status yet; running a live probe.")
     system_status = asyncio.run(health.get_system_status(db_session, settings=settings))
     logger.info(f"System status is {system_status.overall_status}.")
     return system_status.overall_status == "healthy"
+
+
+@with_scheduler_db_session
+def refresh_seqera_health_status(
+    dry_run: bool = False, *, db_session: Session | None = None
+) -> None:
+    """Actively refresh the shared Seqera health cache on its own schedule.
+
+    This is the only place that runs the live health probes - is_seqera_available
+    (used by submit_pending_jobs/launch_job/sync_completed_workflow_runs) only
+    ever reads the cache it writes, decoupling job-submission ticks from Seqera
+    probe latency entirely.
+    """
+    db_session = require_scheduler_db_session(db_session)
+    if dry_run:
+        logger.info("Dry run - not probing Seqera or refreshing the health cache")
+        return
+    settings = get_settings()
+    status = asyncio.run(health.refresh_db_cache(db_session, settings=settings))
+    logger.info(f"Refreshed Seqera health status: {status.overall_status}.")
 
 
 @with_scheduler_db_session

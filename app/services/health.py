@@ -592,6 +592,20 @@ async def get_system_status(
         raise
 
 
+def get_cached_system_status(db: Session) -> SystemStatus | None:
+    """Read-only: return the last cached status without ever running probes.
+
+    Job-submission gates (``is_seqera_available`` in the scheduler) use this
+    instead of ``get_system_status`` so a slow/hung Seqera probe can't stall a
+    submit_pending_jobs/launch_job tick - refreshing the cache is solely the
+    job of the dedicated ``refresh_seqera_health_status`` scheduler job now.
+    Returns None if the cache has never been populated yet (e.g. right after a
+    fresh deploy, before that job's first run).
+    """
+    row = db.get(SystemStatusCache, _CACHE_KEY)
+    return row.get_status() if row is not None else None
+
+
 def _cloudwatch_log_group_url(settings: Settings | None = None) -> str | None:
     """Build a console link to the backend log group, if configured."""
     settings = settings or get_settings()
