@@ -60,14 +60,35 @@ INTERACTION_SCREENING_BASE_PATH = "/g/data/yz52/sbp-service/input/interaction_sc
 BULK_PREDICTION_BASE_PATH = "/g/data/yz52/sbp-service/input/bulk_prediction"
 
 
+def _apply_bindcraft_design_target(form_data: dict[str, Any], workflow: str | None) -> None:
+    """BindCraft's bindflow samplesheet requires number_of_final_designs, but
+    the de-novo-design form only collects max_trajectories ("Number of
+    Trajectories") — this derives the QC-pass target as 2x the trajectory
+    count so the run isn't QC-gated below what was requested, without ever
+    exposing it to the user. Scoped to the de-novo-design workflow so other
+    callers of this generic samplesheet builder (e.g. single-prediction)
+    are never affected, even if their own form data happened to contain a
+    field with this name.
+    """
+    if workflow != "de-novo-design" or "max_trajectories" not in form_data:
+        return
+    try:
+        max_trajectories = int(str(form_data["max_trajectories"]).strip())
+    except (TypeError, ValueError):
+        return
+    form_data["number_of_final_designs"] = max_trajectories * 2
+
+
 async def upload_csv_to_s3(
     form_data: dict[str, Any],
     settings: Settings | None = None,
+    workflow: str | None = None,
 ) -> S3UploadResult:
     """Generate a CSV from form_data and upload directly to S3."""
     if not form_data:
         raise ValueError("form_data cannot be empty")
 
+    _apply_bindcraft_design_target(form_data, workflow)
     csv_content = convert_form_data_to_csv(form_data)
     file_bytes = io.BytesIO(csv_content.encode("utf-8"))
 
