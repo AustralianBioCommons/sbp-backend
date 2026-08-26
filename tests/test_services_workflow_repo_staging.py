@@ -531,6 +531,7 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
     from app.services.workflow_repo_staging import (
         _clone_and_upload_repo,
         build_repo_assets_s3_prefix,
+        build_repo_gadi_path,
     )
 
     repo_path, commit_sha = _make_local_git_repo(
@@ -578,6 +579,17 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
     # NXF_ASSETS local-checkout slot.
     assert f"{assets_prefix}/.git/config" in uploaded_content
     assert f"{assets_prefix}/.git/HEAD" in uploaded_content
+    # Regression test: `git clone` records its source (an ephemeral local
+    # TemporaryDirectory) as `origin` by default - left as-is, Nextflow later
+    # finds this checkout's origin pointing at a since-deleted tmp path
+    # instead of its own bare repo and refuses to reuse it ("has already been
+    # downloaded from a different provider"). It must be rewritten to the
+    # real bare-repo Gadi path before upload (see _clone_working_checkout).
+    expected_origin = build_repo_gadi_path(
+        "test", "repo", "dev", commit_sha, globus_settings=mock_settings.globus
+    )
+    git_config = uploaded_content[f"{assets_prefix}/.git/config"].decode()
+    assert expected_origin in git_config
 
 
 def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):

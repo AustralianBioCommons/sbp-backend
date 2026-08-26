@@ -228,15 +228,26 @@ def _run_git(*args: str, cwd: str) -> None:
         )
 
 
-def _clone_working_checkout(bare_dir: str, dest_dir: str) -> None:
+def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) -> None:
     """Clone a real (non-bare) working checkout from the already-fetched bare
     repo - a local filesystem clone, not a second network fetch, checking out
     whatever the bare repo's HEAD points at (the branch set up in
     _clone_and_upload_repo). Unlike a `git archive` extract, this produces a
     real `.git/` directory, so what lands at build_repo_assets_gadi_path is
     indistinguishable from a checkout Nextflow would have produced itself
-    there - see that function for why that matters."""
+    there - see that function for why that matters.
+
+    `git clone` records the source path (bare_dir, an ephemeral local
+    TemporaryDirectory - see _clone_and_upload_repo) as `origin` in the new
+    checkout's config, so it must be rewritten to origin_url (the checkout's
+    eventual bare-repo path on Gadi, see build_repo_gadi_path) before
+    upload - otherwise Nextflow, resolving the `file:` bare-repo pipeline,
+    sees this pre-staged checkout's provenance point at a since-deleted tmp
+    path instead of its own bare repo and refuses to reuse it ("has already
+    been downloaded from a different provider"), silently defeating the
+    whole point of pre-staging."""
     _run_git("clone", bare_dir, dest_dir, cwd=bare_dir)
+    _run_git("remote", "set-url", "origin", origin_url, cwd=dest_dir)
 
 
 def _clone_and_upload_repo(
@@ -299,9 +310,12 @@ def _clone_and_upload_repo(
         )
 
         assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
+        gadi_bare_repo_path = build_repo_gadi_path(
+            owner, repo, revision, commit_sha, globus_settings=settings.globus
+        )
         with tempfile.TemporaryDirectory() as assets_tmp_dir:
             try:
-                _clone_working_checkout(tmp_dir, assets_tmp_dir)
+                _clone_working_checkout(tmp_dir, assets_tmp_dir, origin_url=gadi_bare_repo_path)
             except RepoStagingError as exc:
                 raise RepoStagingError(
                     f"Failed to clone working checkout for {owner}/{repo}@{commit_sha}: {exc}"
