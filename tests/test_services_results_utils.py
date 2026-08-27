@@ -39,12 +39,14 @@ from app.services.results_utils import (
     get_all_downloads_zipped,
     get_bindcraft_score_file,
     get_proteinfold_score_file,
+    get_result_report_download,
     get_rfdiffusion_score_file,
     get_run_service_usage,
     get_sample_id_for_result,
     get_tool_name,
     get_wisps_score_file,
     list_workflow_outputs_from_s3,
+    read_result_output_file,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
@@ -359,6 +361,31 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         ),
     ]
 
+    assert colabfold_spec.get_transfer_items(run, settings=mock_settings) == [
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/reports/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/reports/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=(
+                f"/test/output/single-prediction/{run.id}/colabfold/top_ranked_structures/"
+            ),
+            destination_location=f"s3://test-s3-bucket/{run.id}/colabfold/top_ranked_structures/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/mmseqs/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/mmseqs/",
+            recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
+            destination_location=f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
+            recursive=True,
+        ),
+    ]
+
 
 def test_workflow_results_spec_create_output_transfers_is_idempotent(
     test_db, persistent_models, mock_settings
@@ -399,6 +426,46 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
     assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
     assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
     assert [transfer.recursive for transfer in first_result] == [True, True, True, True]
+
+
+def test_colabfold_create_output_transfers_creates_expected_rows(
+    test_db, persistent_models, mock_settings
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(owner=user, sample_id="T1024")
+    spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["colabfold"]
+
+    result = spec.create_output_transfers(test_db, run, settings=mock_settings)
+
+    output_transfers = test_db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+        )
+    ).all()
+    assert len(result) == 4
+    assert len(output_transfers) == 4
+    assert [transfer.status for transfer in result] == ["pending"] * 4
+    assert [transfer.recursive for transfer in result] == [True] * 4
+    assert [(transfer.source_location, transfer.destination_location) for transfer in result] == [
+        (
+            f"/test/output/single-prediction/{run.id}/reports/",
+            f"s3://test-s3-bucket/{run.id}/reports/",
+        ),
+        (
+            f"/test/output/single-prediction/{run.id}/colabfold/top_ranked_structures/",
+            f"s3://test-s3-bucket/{run.id}/colabfold/top_ranked_structures/",
+        ),
+        (
+            f"/test/output/single-prediction/{run.id}/mmseqs/",
+            f"s3://test-s3-bucket/{run.id}/mmseqs/",
+        ),
+        (
+            f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
+            f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
+        ),
+    ]
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
@@ -525,6 +592,109 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
 
     assert mock_read_s3_bytes.await_count == len(output_contents)
     assert {call.args[0] for call in mock_read_s3_bytes.await_args_list} == set(output_contents)
+
+
+@pytest.mark.asyncio
+async def test_get_result_report_download_persists_result_found_only_on_retry(
+    test_db, persistent_models
+):
+    """A report missed by the quiet sync attempt but found by the un-suppressed
+    retry must still be persisted as a RunOutput/DataTransfer row, not just
+    handed back to the caller for this one response.
+    """
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="de-novo-design",
+            repo_url="https://github.com/test/de-novo-design",
+            default_revision="main",
+            config_path="/config/de-novo-design.config",
+        ),
+        tool="bindcraft",
+        seqera_run_id="wf-report-retry",
+    )
+    test_db.commit()
+
+    report_key = f"{run.id}/generate/result.html"
+    generate_prefix = f"{run.id}/generate/"
+    calls_per_prefix: dict[str, int] = {}
+
+    async def fake_list_s3_files(prefix: str, settings=None):
+        calls_per_prefix[prefix] = calls_per_prefix.get(prefix, 0) + 1
+        # Only found on the second (loud, suppress_s3_errors=False) listing pass.
+        if prefix == generate_prefix and calls_per_prefix[prefix] >= 2:
+            return [{"key": report_key}]
+        return []
+
+    with (
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new=AsyncMock(side_effect=fake_list_s3_files),
+        ),
+        patch(
+            "app.services.results_utils.generate_presigned_url",
+            new=AsyncMock(return_value="https://example.com/presigned"),
+        ),
+    ):
+        report = await get_result_report_download(test_db, run)
+
+    assert report is not None
+    assert report.key == report_key
+
+    run_output = test_db.scalars(select(RunOutput).where(RunOutput.run_id == run.id)).one()
+    assert run_output.s3_object_id == report_key
+    data_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
+    assert data_transfer is not None
+    assert data_transfer.provider == "s3"
+    assert data_transfer.destination_location.endswith(report_key)
+
+
+@pytest.mark.asyncio
+async def test_read_result_output_file_persists_newly_discovered_output(test_db, persistent_models):
+    """read_result_output_file used to fall back to a raw, non-persisting S3
+    listing for a key not yet in the DB. It must now persist what it finds,
+    same as the other result-serving functions.
+    """
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="de-novo-design",
+            repo_url="https://github.com/test/de-novo-design",
+            default_revision="main",
+            config_path="/config/de-novo-design.config",
+        ),
+        tool="bindcraft",
+        seqera_run_id="wf-file-persist",
+    )
+    test_db.commit()
+
+    stats_key = f"{run.id}/ranker/sampleZ_final_design_stats.csv"
+    ranker_prefix = f"{run.id}/ranker/"
+
+    async def fake_list_s3_files(prefix: str, settings=None):
+        if prefix == ranker_prefix:
+            return [{"key": stats_key}]
+        return []
+
+    with (
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new=AsyncMock(side_effect=fake_list_s3_files),
+        ),
+        patch(
+            "app.services.results_utils.read_s3_bytes",
+            new=AsyncMock(return_value=b"score\n0.9\n"),
+        ),
+    ):
+        content, label = await read_result_output_file(test_db, run, stats_key)
+
+    assert content == b"score\n0.9\n"
+    assert label == "sampleZ_final_design_stats.csv"
+
+    run_output = test_db.scalars(select(RunOutput).where(RunOutput.run_id == run.id)).one()
+    assert run_output.s3_object_id == stats_key
 
 
 def test_get_bindcraft_score_file_uses_final_design_stats():
