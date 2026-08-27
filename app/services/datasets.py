@@ -74,7 +74,7 @@ def _apply_bindcraft_design_target(form_data: dict[str, Any], workflow: str | No
         return
     try:
         max_trajectories = int(str(form_data["max_trajectories"]).strip())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return
     form_data["number_of_final_designs"] = max_trajectories * 2
 

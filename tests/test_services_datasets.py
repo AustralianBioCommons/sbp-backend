@@ -259,13 +259,11 @@ async def test_upload_csv_to_s3_derives_final_design_count(mock_upload):
     whatever (or nothing) the caller passed in — when workflow is de-novo-design."""
     mock_upload.return_value = _s3_result()
 
-    await upload_csv_to_s3(
-        {"sample": "s1", "max_trajectories": 3}, workflow="de-novo-design"
-    )
+    await upload_csv_to_s3({"sample": "s1", "max_trajectories": 3}, workflow="de-novo-design")
 
     file_content = mock_upload.call_args.kwargs["file_content"].read().decode()
     header, row = file_content.strip().split("\r\n")
-    values = dict(zip(header.split(","), row.split(",")))
+    values = dict(zip(header.split(","), row.split(","), strict=True))
     assert values["number_of_final_designs"] == "6"
 
 
