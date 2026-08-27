@@ -48,9 +48,7 @@ def get_executor_script(
         # S3/Globus staging drops unix mode bits, so the pre-staged working
         # checkout's bin/ scripts land non-executable - restore them here,
         # the only place this backend runs a command directly on Gadi.
-        working_checkout_bin = (
-            bare_repo_path.parent / "local" / bare_repo_path.stem / "bin"
-        )
+        working_checkout_bin = bare_repo_path.parent / "local" / bare_repo_path.stem / "bin"
         lines.append(
             f'[ -d "{working_checkout_bin}" ] && '
             f'find "{working_checkout_bin}" -type f -exec chmod +x {{}} +'
