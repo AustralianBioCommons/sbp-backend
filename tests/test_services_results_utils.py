@@ -651,9 +651,7 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
 
 
 @pytest.mark.asyncio
-async def test_read_result_output_file_persists_newly_discovered_output(
-    test_db, persistent_models
-):
+async def test_read_result_output_file_persists_newly_discovered_output(test_db, persistent_models):
     """read_result_output_file used to fall back to a raw, non-persisting S3
     listing for a key not yet in the DB. It must now persist what it finds,
     same as the other result-serving functions.
