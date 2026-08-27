@@ -209,6 +209,12 @@ class DatasetUploadRequest(BaseModel):
         "samplesheet derivations (see upload_csv_to_s3). Omitted by callers that don't "
         "need one.",
     )
+    tool: str | None = Field(
+        default=None,
+        description="Tool within the workflow, e.g. 'bindcraft' — some derivations "
+        "apply to one tool only within a shared workflow (e.g. de-novo-design covers "
+        "both bindcraft and rfdiffusion). Omitted by callers that don't need one.",
+    )
 
     @field_validator("formData")
     @classmethod

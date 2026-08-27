@@ -219,25 +219,25 @@ async def test_upload_csv_to_s3_returns_s3_result(mock_upload):
 
 def test_apply_bindcraft_design_target_derives_2x_trajectories():
     form_data = {"sample": "s1", "max_trajectories": 5}
-    _apply_bindcraft_design_target(form_data, "de-novo-design")
+    _apply_bindcraft_design_target(form_data, "de-novo-design", "bindcraft")
     assert form_data["number_of_final_designs"] == 10
 
 
 def test_apply_bindcraft_design_target_overrides_stray_value():
     form_data = {"max_trajectories": "5", "number_of_final_designs": 100}
-    _apply_bindcraft_design_target(form_data, "de-novo-design")
+    _apply_bindcraft_design_target(form_data, "de-novo-design", "bindcraft")
     assert form_data["number_of_final_designs"] == 10
 
 
 def test_apply_bindcraft_design_target_noop_without_max_trajectories():
     form_data = {"sample": "s1"}
-    _apply_bindcraft_design_target(form_data, "de-novo-design")
+    _apply_bindcraft_design_target(form_data, "de-novo-design", "bindcraft")
     assert "number_of_final_designs" not in form_data
 
 
 def test_apply_bindcraft_design_target_noop_on_invalid_value():
     form_data = {"max_trajectories": "not-a-number"}
-    _apply_bindcraft_design_target(form_data, "de-novo-design")
+    _apply_bindcraft_design_target(form_data, "de-novo-design", "bindcraft")
     assert "number_of_final_designs" not in form_data
 
 
@@ -245,10 +245,22 @@ def test_apply_bindcraft_design_target_noop_for_other_workflows():
     """A different workflow's form data that happens to contain a field
     named max_trajectories must not trigger the derivation."""
     form_data = {"max_trajectories": 5}
-    _apply_bindcraft_design_target(form_data, "single-prediction")
+    _apply_bindcraft_design_target(form_data, "single-prediction", "bindcraft")
     assert "number_of_final_designs" not in form_data
 
-    _apply_bindcraft_design_target(form_data, None)
+    _apply_bindcraft_design_target(form_data, None, "bindcraft")
+    assert "number_of_final_designs" not in form_data
+
+
+def test_apply_bindcraft_design_target_noop_for_rfdiffusion():
+    """de-novo-design also covers rfdiffusion, which has no bindflow
+    samplesheet or trajectory-retry concept — the derivation must never
+    apply to it, even though it shares the same workflow name as bindcraft."""
+    form_data = {"max_trajectories": 5}
+    _apply_bindcraft_design_target(form_data, "de-novo-design", "rfdiffusion")
+    assert "number_of_final_designs" not in form_data
+
+    _apply_bindcraft_design_target(form_data, "de-novo-design", None)
     assert "number_of_final_designs" not in form_data
 
 
@@ -256,10 +268,12 @@ def test_apply_bindcraft_design_target_noop_for_other_workflows():
 @patch("app.services.datasets.upload_file_to_s3")
 async def test_upload_csv_to_s3_derives_final_design_count(mock_upload):
     """The samplesheet CSV carries the derived number_of_final_designs, not
-    whatever (or nothing) the caller passed in — when workflow is de-novo-design."""
+    whatever (or nothing) the caller passed in — for de-novo-design/bindcraft."""
     mock_upload.return_value = _s3_result()
 
-    await upload_csv_to_s3({"sample": "s1", "max_trajectories": 3}, workflow="de-novo-design")
+    await upload_csv_to_s3(
+        {"sample": "s1", "max_trajectories": 3}, workflow="de-novo-design", tool="bindcraft"
+    )
 
     file_content = mock_upload.call_args.kwargs["file_content"].read().decode()
     header, row = file_content.strip().split("\r\n")
@@ -270,11 +284,27 @@ async def test_upload_csv_to_s3_derives_final_design_count(mock_upload):
 @pytest.mark.asyncio
 @patch("app.services.datasets.upload_file_to_s3")
 async def test_upload_csv_to_s3_leaves_other_workflows_untouched(mock_upload):
-    """Without workflow='de-novo-design', a max_trajectories field is passed
-    through unmodified rather than triggering the derivation."""
+    """Without workflow='de-novo-design' and tool='bindcraft', a
+    max_trajectories field is passed through unmodified rather than
+    triggering the derivation."""
     mock_upload.return_value = _s3_result()
 
     await upload_csv_to_s3({"sample": "s1", "max_trajectories": 3})
+
+    file_content = mock_upload.call_args.kwargs["file_content"].read().decode()
+    assert "number_of_final_designs" not in file_content
+
+
+@pytest.mark.asyncio
+@patch("app.services.datasets.upload_file_to_s3")
+async def test_upload_csv_to_s3_leaves_rfdiffusion_untouched(mock_upload):
+    """workflow='de-novo-design' alone isn't enough — rfdiffusion must not
+    get the derivation either."""
+    mock_upload.return_value = _s3_result()
+
+    await upload_csv_to_s3(
+        {"sample": "s1", "max_trajectories": 3}, workflow="de-novo-design", tool="rfdiffusion"
+    )
 
     file_content = mock_upload.call_args.kwargs["file_content"].read().decode()
     assert "number_of_final_designs" not in file_content

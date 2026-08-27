@@ -873,7 +873,7 @@ async def upload_dataset(
     """Generate a CSV from form data and upload directly to S3."""
     try:
         result = await upload_csv_to_s3(
-            payload.formData, settings=settings, workflow=payload.workflow
+            payload.formData, settings=settings, workflow=payload.workflow, tool=payload.tool
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
