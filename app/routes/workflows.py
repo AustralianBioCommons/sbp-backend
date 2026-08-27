@@ -146,9 +146,15 @@ def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
 
 
 def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
+    """Credit-cost quantity for a launch. Sourced from max_trajectories (the
+    "Number of Trajectories" form field) rather than number_of_final_designs,
+    since the latter is no longer user-facing for bindcraft — it's derived
+    server-side when the bindflow samplesheet is built (see
+    datasets.upload_csv_to_s3) and isn't present in the launch payload.
+    """
     if not isinstance(form_data, WorkflowFormData):
         return None
-    value = form_data.extra_fields.get("number_of_final_designs")
+    value = form_data.extra_fields.get("max_trajectories")
     if value is None:
         return None
     try:
@@ -866,7 +872,9 @@ async def upload_dataset(
 ) -> S3DatasetUploadResponse:
     """Generate a CSV from form data and upload directly to S3."""
     try:
-        result = await upload_csv_to_s3(payload.formData, settings=settings)
+        result = await upload_csv_to_s3(
+            payload.formData, settings=settings, workflow=payload.workflow, tool=payload.tool
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except S3ConfigurationError as exc:
