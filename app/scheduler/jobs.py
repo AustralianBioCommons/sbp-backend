@@ -29,9 +29,7 @@ from . import SCHEDULER
 
 LAUNCH_MAX_ATTEMPTS = 5
 RETRY_DELAY_BASE = 5 * 60
-# Added on top of every retry delay so retries drift out of step with other
-# 5-minute-cadence scheduler jobs (e.g. refresh_seqera_health_status) that
-# could otherwise collide with the same retry slot on every attempt.
+# Keeps retries from colliding with other 5-min-cadence scheduler jobs.
 RETRY_DELAY_JITTER_SECONDS = 120
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
@@ -82,10 +80,7 @@ class LaunchFunction(Protocol):
 
 
 def get_retry_delay(job: QueuedJob) -> timedelta:
-    """
-    Apply exponential backoff to the retry delay, based on number of attempts,
-    plus a little random jitter (see RETRY_DELAY_JITTER_SECONDS).
-    """
+    """Exponential backoff plus jitter (see RETRY_DELAY_JITTER_SECONDS)."""
     base_delay = RETRY_DELAY_BASE * (2**job.attempts - 1)
     jitter = random.uniform(0, RETRY_DELAY_JITTER_SECONDS)
     return timedelta(seconds=base_delay + jitter)

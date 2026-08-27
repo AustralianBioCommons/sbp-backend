@@ -185,6 +185,8 @@ def test_get_executor_script_no_path_returns_header_only():
     assert script == (
         "export NXF_OFFLINE=true\n"
         "export NXF_ASSETS=/test/workflow_repos/owner-repo/\n"
+        '[ -d "/test/workflow_repos/owner-repo/local/abc123/bin" ] && '
+        'find "/test/workflow_repos/owner-repo/local/abc123/bin" -type f -exec chmod +x {} +\n'
         "module load singularity\n"
         "module load nextflow\n"
     )

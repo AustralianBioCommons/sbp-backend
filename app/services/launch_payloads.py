@@ -35,18 +35,26 @@ def get_executor_script(
 ) -> str:
     """Build a pre-run script from Nextflow env vars, module loads, and a script body.
 
-    NXF_OFFLINE=true stops Nextflow reaching out to plugin/registry endpoints
-    Gadi compute nodes can't route to. Nextflow still resolves the `file:`
-    bare-repo pipeline (see build_repo_gadi_path) by cloning it into
-    $NXF_ASSETS/local/<name> - pointing NXF_ASSETS at that repo's own
-    owner-repo directory (repo_gadi_path's parent, one level up from the
-    `<commit_sha>.git` bare repo) keeps that clone alongside the repo it
-    came from instead of Nextflow's global default (~/.nextflow/assets).
+    NXF_OFFLINE=true avoids network calls Gadi compute nodes can't make.
+    NXF_ASSETS points at the bare repo's parent dir (see build_repo_gadi_path)
+    so Nextflow's own `file:` pipeline checkout lands next to it instead of
+    ~/.nextflow/assets.
     """
     lines = ["export NXF_OFFLINE=true"]
     if repo_gadi_path:
-        nxf_assets_path = f"{PurePosixPath(repo_gadi_path).parent}/"
+        bare_repo_path = PurePosixPath(repo_gadi_path)
+        nxf_assets_path = f"{bare_repo_path.parent}/"
         lines.append(f"export NXF_ASSETS={nxf_assets_path}")
+        # S3/Globus staging drops unix mode bits, so the pre-staged working
+        # checkout's bin/ scripts land non-executable - restore them here,
+        # the only place this backend runs a command directly on Gadi.
+        working_checkout_bin = (
+            bare_repo_path.parent / "local" / bare_repo_path.stem / "bin"
+        )
+        lines.append(
+            f'[ -d "{working_checkout_bin}" ] && '
+            f'find "{working_checkout_bin}" -type f -exec chmod +x {{}} +'
+        )
     lines.extend(f"module load {module}" for module in module_loads or [])
 
     header = "\n".join(lines) + "\n"

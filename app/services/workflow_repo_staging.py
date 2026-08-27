@@ -135,22 +135,13 @@ def build_repo_assets_gadi_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
     """Path to a real (non-bare) clone of the same commit, for reading
-    pipeline-bundled assets (e.g. bindcraft's default settings JSON) as plain
-    files - the bare repo build_repo_gadi_path points at has no working-tree
-    files of its own.
+    pipeline-bundled assets as plain files (the bare repo has no working tree).
 
-    Deliberately at ``$NXF_ASSETS/local/<commit_sha>`` (get_executor_script
-    points NXF_ASSETS at build_repo_gadi_path's parent) - that's exactly where
-    Nextflow itself checks out a `file:` bare-repo `pipeline` when it doesn't
-    find one already there. Pre-staging a real clone (see
-    _clone_working_checkout) at that path means Nextflow finds its own
-    checkout already done and skips redoing it; staging anything less than a
-    real git checkout there (e.g. a `git archive` extract with no `.git/`)
-    makes Nextflow fail with "Repository may be corrupted" instead.
-
-    revision is part of the path for the same reason as build_repo_gadi_path:
-    two different revisions can resolve to the same commit_sha, and without
-    revision here they'd collide on one local checkout directory.
+    Lives at ``$NXF_ASSETS/local/<commit_sha>`` - Nextflow's own checkout slot
+    for a `file:` bare-repo pipeline - so a real clone there
+    (_clone_working_checkout) makes Nextflow skip its own checkout; anything
+    less (e.g. `git archive`) fails with "Repository may be corrupted".
+    revision is included for the same collision reason as build_repo_gadi_path.
     """
     return (
         f"{globus_settings.gadi_collection_root}/workflow_repos/"
@@ -161,9 +152,8 @@ def build_repo_assets_gadi_path(
 @dataclass(frozen=True)
 class RepoStagingLocations:
     """Where a workflow's staged repo lives on Gadi: the bare repo for
-    Seqera's `pipeline` field, and a real checkout at Nextflow's own
-    NXF_ASSETS local-checkout slot for pipeline-bundled assets (see
-    build_repo_assets_gadi_path)."""
+    Seqera's `pipeline`, and a real checkout at Nextflow's own local-checkout
+    slot for pipeline-bundled assets (see build_repo_assets_gadi_path)."""
 
     gadi_path: str
     assets_gadi_path: str
@@ -230,22 +220,15 @@ def _run_git(*args: str, cwd: str) -> None:
 
 def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) -> None:
     """Clone a real (non-bare) working checkout from the already-fetched bare
-    repo - a local filesystem clone, not a second network fetch, checking out
-    whatever the bare repo's HEAD points at (the branch set up in
-    _clone_and_upload_repo). Unlike a `git archive` extract, this produces a
-    real `.git/` directory, so what lands at build_repo_assets_gadi_path is
-    indistinguishable from a checkout Nextflow would have produced itself
-    there - see that function for why that matters.
+    repo (local filesystem clone, no second network fetch). A real `.git/`,
+    unlike a `git archive` extract, so it's indistinguishable from a checkout
+    Nextflow would produce itself (see build_repo_assets_gadi_path).
 
-    `git clone` records the source path (bare_dir, an ephemeral local
-    TemporaryDirectory - see _clone_and_upload_repo) as `origin` in the new
-    checkout's config, so it must be rewritten to origin_url (the checkout's
-    eventual bare-repo path on Gadi, see build_repo_gadi_path) before
-    upload - otherwise Nextflow, resolving the `file:` bare-repo pipeline,
-    sees this pre-staged checkout's provenance point at a since-deleted tmp
-    path instead of its own bare repo and refuses to reuse it ("has already
-    been downloaded from a different provider"), silently defeating the
-    whole point of pre-staging."""
+    `git clone` records bare_dir (an ephemeral tmp dir) as `origin`, so it
+    must be rewritten to origin_url (the eventual Gadi bare-repo path) -
+    otherwise Nextflow sees a since-deleted tmp path as this checkout's
+    provenance and refuses to reuse it ("has already been downloaded from a
+    different provider")."""
     _run_git("clone", bare_dir, dest_dir, cwd=bare_dir)
     _run_git("remote", "set-url", "origin", origin_url, cwd=dest_dir)
 
@@ -391,8 +374,7 @@ def stage_pending_repo(
         # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
         destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
         transfer_data.add_item(f"/{s3_prefix}", destination_path, recursive=True)
-        # Second item: the working checkout, landing at Nextflow's own
-        # NXF_ASSETS local-checkout slot (see build_repo_assets_gadi_path).
+        # Second item: the working checkout (see build_repo_assets_gadi_path).
         assets_destination_path = _gadi_relative_path(
             assets_gadi_path, globus_settings=settings.globus
         )
