@@ -11,10 +11,8 @@ staged/staging under that same revision, launches reuse it for free.
 
 from __future__ import annotations
 
-import io
 import logging
 import subprocess
-import tarfile
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -136,18 +134,26 @@ def build_repo_gadi_path(
 def build_repo_assets_gadi_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
-    """Path to a plain (non-bare) checkout of the same commit, staged next to
-    the bare repo build_repo_gadi_path points at - the bare repo has no
-    working-tree files, so pipeline-bundled assets (e.g. bindcraft's default
-    settings JSON) need a real checkout to be read as plain files."""
-    return f"{globus_settings.gadi_collection_root}/workflow_repos/{owner}-{repo}/{revision}/{commit_sha}"
+    """Path to a real (non-bare) clone of the same commit, for reading
+    pipeline-bundled assets as plain files (the bare repo has no working tree).
+
+    Lives at ``$NXF_ASSETS/local/<commit_sha>`` - Nextflow's own checkout slot
+    for a `file:` bare-repo pipeline - so a real clone there
+    (_clone_working_checkout) makes Nextflow skip its own checkout; anything
+    less (e.g. `git archive`) fails with "Repository may be corrupted".
+    revision is included for the same collision reason as build_repo_gadi_path.
+    """
+    return (
+        f"{globus_settings.gadi_collection_root}/workflow_repos/"
+        f"{owner}-{repo}/{revision}/local/{commit_sha}"
+    )
 
 
 @dataclass(frozen=True)
 class RepoStagingLocations:
     """Where a workflow's staged repo lives on Gadi: the bare repo for
-    Seqera's `pipeline` field, and the plain checkout alongside it for
-    pipeline-bundled assets (see build_repo_assets_gadi_path)."""
+    Seqera's `pipeline`, and a real checkout at Nextflow's own local-checkout
+    slot for pipeline-bundled assets (see build_repo_assets_gadi_path)."""
 
     gadi_path: str
     assets_gadi_path: str
@@ -212,22 +218,19 @@ def _run_git(*args: str, cwd: str) -> None:
         )
 
 
-def _extract_plain_checkout(bare_dir: str, revision: str, dest_dir: str) -> None:
-    """Materialize a plain checkout of revision from an already-fetched bare
-    repo via `git archive`, piped into Python's tarfile - avoids a second
-    network fetch just to get working-tree files."""
-    result = subprocess.run(  # noqa: S603 - fixed "git" executable, args are list-form (no shell)
-        ["git", f"--git-dir={bare_dir}", "archive", revision],
-        capture_output=True,
-        timeout=_DOWNLOAD_TIMEOUT,
-    )
-    if result.returncode != 0:
-        raise RepoStagingError(
-            f"git archive {revision} failed (exit {result.returncode}): "
-            f"{result.stderr.decode(errors='replace').strip()}"
-        )
-    with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r|") as tar:
-        tar.extractall(dest_dir, filter="data")
+def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) -> None:
+    """Clone a real (non-bare) working checkout from the already-fetched bare
+    repo (local filesystem clone, no second network fetch). A real `.git/`,
+    unlike a `git archive` extract, so it's indistinguishable from a checkout
+    Nextflow would produce itself (see build_repo_assets_gadi_path).
+
+    `git clone` records bare_dir (an ephemeral tmp dir) as `origin`, so it
+    must be rewritten to origin_url (the eventual Gadi bare-repo path) -
+    otherwise Nextflow sees a since-deleted tmp path as this checkout's
+    provenance and refuses to reuse it ("has already been downloaded from a
+    different provider")."""
+    _run_git("clone", bare_dir, dest_dir, cwd=bare_dir)
+    _run_git("remote", "set-url", "origin", origin_url, cwd=dest_dir)
 
 
 def _clone_and_upload_repo(
@@ -242,8 +245,8 @@ def _clone_and_upload_repo(
 ) -> None:
     """Fetch commit_sha into a bare repo and upload every file to S3 under
     s3_prefix (bare repo contents land directly at s3_prefix's root, not
-    nested under .git/), plus a plain checkout of the same commit under
-    build_repo_assets_s3_prefix for pipeline-bundled asset files.
+    nested under .git/), plus a real working checkout of the same commit
+    under build_repo_assets_s3_prefix for pipeline-bundled asset files.
 
     Fetches into a branch named after `revision` rather than leaving the
     commit as bare FETCH_HEAD, since a shallow-fetched bare repo has no other
@@ -290,12 +293,15 @@ def _clone_and_upload_repo(
         )
 
         assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
+        gadi_bare_repo_path = build_repo_gadi_path(
+            owner, repo, revision, commit_sha, globus_settings=settings.globus
+        )
         with tempfile.TemporaryDirectory() as assets_tmp_dir:
             try:
-                _extract_plain_checkout(tmp_dir, revision, assets_tmp_dir)
+                _clone_working_checkout(tmp_dir, assets_tmp_dir, origin_url=gadi_bare_repo_path)
             except RepoStagingError as exc:
                 raise RepoStagingError(
-                    f"Failed to extract plain checkout for {owner}/{repo}@{commit_sha}: {exc}"
+                    f"Failed to clone working checkout for {owner}/{repo}@{commit_sha}: {exc}"
                 ) from exc
 
             assets_path = Path(assets_tmp_dir)
@@ -307,7 +313,7 @@ def _clone_and_upload_repo(
                 s3_client.upload_file(str(file_path), bucket, f"{assets_s3_prefix}/{relative_path}")
                 assets_uploaded += 1
             logger.info(
-                "Uploaded %d plain-checkout file(s) for %s/%s@%s to s3://%s/%s",
+                "Uploaded %d working-checkout file(s) for %s/%s@%s to s3://%s/%s",
                 assets_uploaded,
                 owner,
                 repo,
@@ -368,7 +374,7 @@ def stage_pending_repo(
         # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
         destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
         transfer_data.add_item(f"/{s3_prefix}", destination_path, recursive=True)
-        # Second item: the plain checkout, landing as a sibling directory.
+        # Second item: the working checkout (see build_repo_assets_gadi_path).
         assets_destination_path = _gadi_relative_path(
             assets_gadi_path, globus_settings=settings.globus
         )

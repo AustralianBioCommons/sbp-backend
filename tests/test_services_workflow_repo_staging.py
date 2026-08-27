@@ -215,7 +215,7 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == workflow.repo_gadi_path
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/newsha"
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/local/newsha"
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
 
@@ -262,7 +262,7 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == "/test/workflow_repos/test-repo/dev/samesha.git"
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/samesha"
+    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/local/samesha"
     assert workflow.repo_staging_status == "completed"
 
 
@@ -353,9 +353,8 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     assert submitted["DATA"][0]["destination_path"] == "/workflow_repos/test-repo/dev/abc123"
     assert submitted["DATA"][0]["source_path"] == "/workflow-repos/test-repo/dev/abc123"
     assert submitted["DATA"][0]["recursive"] is True
-    # Second item: the plain-checkout companion for pipeline-bundled assets
-    # (see build_repo_assets_gadi_path) - a sibling directory, no ".git" suffix.
-    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/dev/abc123"
+    # Second item: the working-checkout companion (see build_repo_assets_gadi_path).
+    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/dev/local/abc123"
     assert submitted["DATA"][1]["source_path"] == "/workflow-repos-assets/test-repo/dev/abc123"
     assert submitted["DATA"][1]["recursive"] is True
 
@@ -487,7 +486,10 @@ def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settin
             settings=mock_settings,
         )
 
-    uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
+    all_uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
+    # Scoped to the bare repo's own prefix - the working-checkout companion
+    # (its own .git/, tested separately below) uploads under a different one.
+    uploaded_keys = {key for key in all_uploaded_keys if key.startswith(f"{prefix}/")}
     assert f"{prefix}/HEAD" in uploaded_keys
     assert f"{prefix}/config" in uploaded_keys
     assert any(key.startswith(f"{prefix}/objects/") for key in uploaded_keys)
@@ -512,14 +514,16 @@ def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settin
 
 
 def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_settings):
-    """Alongside the bare repo, a plain checkout of the same commit must be
-    uploaded under build_repo_assets_s3_prefix's prefix - this is what makes
-    pipeline-bundled asset files (e.g. bindcraft's default settings JSON,
-    see bindflow_executor.py) readable as plain files on Gadi, since the bare
-    repo has no working tree at all."""
+    """Alongside the bare repo, a real (non-bare) checkout must be uploaded
+    under build_repo_assets_s3_prefix - readable plain files for
+    pipeline-bundled assets (e.g. bindcraft's settings JSON), since the bare
+    repo has no working tree. Must include a real `.git/` (a `git clone`, not
+    a `git archive` extract) or Nextflow fails with "Repository may be
+    corrupted" when it finds this checkout at its own local-checkout slot."""
     from app.services.workflow_repo_staging import (
         _clone_and_upload_repo,
         build_repo_assets_s3_prefix,
+        build_repo_gadi_path,
     )
 
     repo_path, commit_sha = _make_local_git_repo(
@@ -561,9 +565,18 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
         uploaded_content[f"{assets_prefix}/assets/bindcraft/default_filters.json"]
         == b'{"filter": true}'
     )
-    # No .git internals in the plain checkout - that's what the bare repo
-    # (uploaded separately, under `prefix`) is for.
-    assert not any(key.startswith(f"{assets_prefix}/.git") for key in uploaded_content)
+    # A real .git/ must be present (see docstring above).
+    assert f"{assets_prefix}/.git/config" in uploaded_content
+    assert f"{assets_prefix}/.git/HEAD" in uploaded_content
+    # `git clone` records its source (an ephemeral tmp dir) as `origin` by
+    # default - must be rewritten to the real Gadi bare-repo path before
+    # upload, or Nextflow rejects the checkout's stale provenance (see
+    # _clone_working_checkout).
+    expected_origin = build_repo_gadi_path(
+        "test", "repo", "dev", commit_sha, globus_settings=mock_settings.globus
+    )
+    git_config = uploaded_content[f"{assets_prefix}/.git/config"].decode()
+    assert expected_origin in git_config
 
 
 def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):

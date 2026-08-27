@@ -161,6 +161,7 @@ async def launch_proteinfold_workflow(
 
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
+        repo_gadi_path=queued_job.workflow.repo_gadi_path,
         module_loads=DEFAULT_MODULE_LOADS,
     )
     runtime_payload = inject_prerun_script(

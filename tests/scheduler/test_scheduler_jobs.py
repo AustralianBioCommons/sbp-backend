@@ -391,8 +391,13 @@ def test_launch_job_counts_failed_attempt_and_schedules_retry(
     assert queued_job.error == "Seqera launch failed"
     assert queued_job.last_attempt_at is not None
     assert queued_job.next_attempt_at is not None
-    assert queued_job.next_attempt_at - queued_job.last_attempt_at == timedelta(
-        seconds=scheduler_jobs.RETRY_DELAY_BASE
+    delay = queued_job.next_attempt_at - queued_job.last_attempt_at
+    assert (
+        timedelta(seconds=scheduler_jobs.RETRY_DELAY_BASE)
+        <= delay
+        <= timedelta(
+            seconds=scheduler_jobs.RETRY_DELAY_BASE + scheduler_jobs.RETRY_DELAY_JITTER_SECONDS
+        )
     )
 
 

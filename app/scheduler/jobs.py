@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -26,8 +27,10 @@ from ..services.seqera_errors import SeqeraAPIError
 from ..services.wisps_executor import launch_wisps_workflow
 from . import SCHEDULER
 
-LAUNCH_MAX_ATTEMPTS = 3
+LAUNCH_MAX_ATTEMPTS = 5
 RETRY_DELAY_BASE = 5 * 60
+# Keeps retries from colliding with other 5-min-cadence scheduler jobs.
+RETRY_DELAY_JITTER_SECONDS = 120
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
@@ -77,10 +80,10 @@ class LaunchFunction(Protocol):
 
 
 def get_retry_delay(job: QueuedJob) -> timedelta:
-    """
-    Apply exponential backoff to the retry delay, based on number of attempts.
-    """
-    return timedelta(seconds=RETRY_DELAY_BASE * (2**job.attempts - 1))
+    """Exponential backoff plus jitter (see RETRY_DELAY_JITTER_SECONDS)."""
+    base_delay = RETRY_DELAY_BASE * (2**job.attempts - 1)
+    jitter = random.uniform(0, RETRY_DELAY_JITTER_SECONDS)
+    return timedelta(seconds=base_delay + jitter)
 
 
 def is_seqera_available(db_session: Session, settings: Settings | None = None) -> bool:

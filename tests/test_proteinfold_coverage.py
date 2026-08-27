@@ -502,10 +502,39 @@ def test_get_proteinfold_default_params_is_dict():
 def test_get_executor_script_loads_modules():
     script = get_executor_script(
         prerun_script_path=None,
+        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
         module_loads=["singularity", "nextflow"],
     )
     assert "module load singularity" in script
     assert "module load nextflow" in script
+    assert "export NXF_OFFLINE=true" in script
+    assert "export NXF_ASSETS=/test/workflow_repos/owner-repo/" in script
+
+
+def test_get_executor_script_omits_nxf_assets_without_repo_gadi_path():
+    script = get_executor_script(
+        prerun_script_path=None,
+        repo_gadi_path=None,
+        module_loads=["singularity"],
+    )
+    assert "export NXF_OFFLINE=true" in script
+    assert "NXF_ASSETS" not in script
+    assert "chmod" not in script
+
+
+def test_get_executor_script_chmods_working_checkout_bin():
+    """S3/Globus staging drops the execute bit, so bin/ scripts land
+    non-executable on Gadi - this line restores it before the run."""
+    script = get_executor_script(
+        prerun_script_path=None,
+        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+        module_loads=None,
+    )
+    assert (
+        '[ -d "/test/workflow_repos/owner-repo/local/abc123/bin" ] && '
+        'find "/test/workflow_repos/owner-repo/local/abc123/bin" -type f -exec chmod +x {} +'
+        in script
+    )
 
 
 def test_get_proteinfold_config_profiles_returns_list():
