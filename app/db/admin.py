@@ -153,10 +153,7 @@ class WorkflowAdmin(ModelView):
         "repo_staging_updated_at",
         "repo_staging_error_message",
     ]
-    exclude_fields_from_list = [
-        "repo_staging_transfer_id",
-        "repo_staging_error_message"
-    ]
+    exclude_fields_from_list = ["repo_staging_transfer_id", "repo_staging_error_message"]
 
     _NULLABLE_FIELDS = (
         "description",

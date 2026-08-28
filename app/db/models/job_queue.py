@@ -38,8 +38,8 @@ class QueuedJob(Base):
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    workflow: Mapped["Workflow"] = relationship()
-    workflow_run: Mapped["WorkflowRun"] = relationship(back_populates="queued_jobs")
+    workflow: Mapped[Workflow] = relationship()
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="queued_jobs")
 
     @validates("launch_payload")
     def ensure_no_prerun_script(self, key: str, value: dict) -> dict:

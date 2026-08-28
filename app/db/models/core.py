@@ -141,7 +141,7 @@ class WorkflowRun(Base):
     inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
     data_transfers: Mapped[list[DataTransfer]] = relationship(back_populates="workflow_run")
-    queued_jobs: Mapped[list["QueuedJob"]] = relationship(back_populates="workflow_run")
+    queued_jobs: Mapped[list[QueuedJob]] = relationship(back_populates="workflow_run")
 
     def get_queued_job(self, session: Session):
         """Get the latest queued job for this workflow run."""
