@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     PrimaryKeyConstraint,
     String,
@@ -174,7 +175,15 @@ class WorkflowRun(Base):
         Simple sync status to report to frontend
         """
         if self.seqera_final_status == PipelineStatus.SUCCEEDED.value:
-            return "ready" if self.sync_completed_at is not None else "syncing"
+            if self.sync_completed_at is None:
+                return "syncing"
+            has_permanently_failed_output = any(
+                transfer.provider == "globus"
+                and transfer.direction == "output"
+                and transfer.status == "failed"
+                for transfer in self.data_transfers
+            )
+            return "partial" if has_permanently_failed_output else "ready"
         if self.is_seqera_finalized():
             # Run finished without succeeding (failed/cancelled/unknown) - results will
             # never sync, so don't report "syncing" forever.
@@ -271,6 +280,7 @@ class DataTransfer(Base):
     status: Mapped[DataTransferStatus] = mapped_column(
         String(length=20), nullable=False, default="pending"
     )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -286,12 +296,14 @@ class DataTransfer(Base):
 
     def reset_to_pending(self, session: Session, commit: bool = True):
         """
-        Reset a transfer to pending so it gets attempted again
+        Reset a transfer to pending so it gets attempted again, with a fresh
+        retry budget.
         """
         now = datetime.now(UTC)
         self.status = "pending"
         self.transfer_id = None
         self.error_message = None
+        self.attempts = 0
         self.updated_at = now
         session.add(self)
         if commit:

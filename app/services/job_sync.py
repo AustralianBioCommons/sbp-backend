@@ -198,16 +198,6 @@ async def sync_workflow_run(
             run,
             settings=settings,
         )
-        if output_transfer_state.error is not None:
-            return WorkflowRunSyncResult(
-                run_id=run.id,
-                seqera_run_id=run.seqera_run_id,
-                seqera_status=status,
-                ui_status=_map_status_to_ui(status),
-                terminal=True,
-                sync_completed=False,
-                error=output_transfer_state.error,
-            )
         if not output_transfer_state.ready:
             return WorkflowRunSyncResult(
                 run_id=run.id,
@@ -241,7 +231,6 @@ async def sync_workflow_run(
 @dataclass(frozen=True)
 class OutputTransferState:
     ready: bool
-    error: str | None = None
 
 
 def _ensure_completed_run_output_transfers(
@@ -257,15 +246,20 @@ def _ensure_completed_run_output_transfers(
         return OutputTransferState(ready=True)
 
     output_transfers = spec.create_output_transfers(db, run, settings=settings)
-    failed_transfers = [transfer for transfer in output_transfers if transfer.status == "failed"]
-    if failed_transfers:
-        return OutputTransferState(
-            ready=False,
-            error=_format_output_transfer_failure(failed_transfers),
-        )
-
     if any(transfer.status in {"pending", "in_progress"} for transfer in output_transfers):
         return OutputTransferState(ready=False)
+
+    failed_transfers = [transfer for transfer in output_transfers if transfer.status == "failed"]
+    if failed_transfers:
+        # Retries (see globus_transfer.poll_transfer) are exhausted for these -
+        # proceed with whatever outputs did transfer rather than syncing forever.
+        logger.warning(
+            "Run %s proceeding to sync-completed with %d permanently failed "
+            "output transfer(s): %s",
+            run.id,
+            len(failed_transfers),
+            _format_output_transfer_failure(failed_transfers),
+        )
 
     return OutputTransferState(ready=True)
 
@@ -322,7 +316,9 @@ def check_all_output_transfers_completed(db: Session, run: WorkflowRun) -> bool:
     ).all()
     if not output_transfers:
         return True
-    return all(transfer.status == "completed" for transfer in output_transfers)
+    # "failed" here always means retries were exhausted (see globus_transfer.poll_transfer) -
+    # don't let a permanently failed transfer block completion forever.
+    return all(transfer.status in ("completed", "failed") for transfer in output_transfers)
 
 
 async def _sync_completed_run_results(
