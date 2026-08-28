@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from annotationlib import Format, get_annotations
 from datetime import UTC, datetime
 
 import pytest
@@ -269,26 +270,33 @@ def test_models_are_importable():
 
 
 def test_model_type_annotations():
-    """Test that models have proper type annotations for Mapped columns."""
+    """Test that models have proper type annotations for Mapped columns.
+
+    Uses annotationlib.get_annotations(format=Format.STRING) instead of
+    `cls.__annotations__` because PEP 649 (Python 3.14+) evaluates every
+    annotation lazily on first access, including forward refs that are only
+    importable under TYPE_CHECKING (e.g. QueuedJob on WorkflowRun), which
+    would otherwise raise NameError.
+    """
     # AppUser
-    assert hasattr(AppUser, "__annotations__")
-    assert "id" in AppUser.__annotations__
-    assert "auth0_user_id" in AppUser.__annotations__
+    assert "id" in get_annotations(AppUser, format=Format.STRING)
+    assert "auth0_user_id" in get_annotations(AppUser, format=Format.STRING)
 
     # Workflow
-    assert "name" in Workflow.__annotations__
-    assert "description" in Workflow.__annotations__
+    assert "name" in get_annotations(Workflow, format=Format.STRING)
+    assert "description" in get_annotations(Workflow, format=Format.STRING)
 
     # WorkflowRun
-    assert "seqera_run_id" in WorkflowRun.__annotations__
-    assert "binder_name" in WorkflowRun.__annotations__
-    assert "sample_id" in WorkflowRun.__annotations__
-    assert "work_dir" in WorkflowRun.__annotations__
+    workflow_run_annotations = get_annotations(WorkflowRun, format=Format.STRING)
+    assert "seqera_run_id" in workflow_run_annotations
+    assert "binder_name" in workflow_run_annotations
+    assert "sample_id" in workflow_run_annotations
+    assert "work_dir" in workflow_run_annotations
 
     # S3Object
-    assert "object_key" in S3Object.__annotations__
-    assert "uri" in S3Object.__annotations__
+    assert "object_key" in get_annotations(S3Object, format=Format.STRING)
+    assert "uri" in get_annotations(S3Object, format=Format.STRING)
 
     # RunMetric
-    assert "max_score" in RunMetric.__annotations__
-    assert "final_design_count" in RunMetric.__annotations__
+    assert "max_score" in get_annotations(RunMetric, format=Format.STRING)
+    assert "final_design_count" in get_annotations(RunMetric, format=Format.STRING)
