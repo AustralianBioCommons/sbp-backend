@@ -504,6 +504,7 @@ class DataTransferAdmin(ModelView):
         "recursive",
         "transfer_id",
         "status",
+        "attempts",
         "created_at",
         "updated_at",
         "error_message",
