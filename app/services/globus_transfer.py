@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 # consent needed, which won't resolve on its own) before it's given up on.
 STALE_TRANSFER_TIMEOUT = timedelta(minutes=30)
 
+# How many times a transfer that fails on Globus's side (e.g. "deadline expired")
+# gets automatically resubmitted before it's treated as terminal.
+MAX_TRANSFER_ATTEMPTS = 3
+
 _GLOBUS_TASK_STATUS_MAP: dict[str, DataTransferStatus] = {
     "SUCCEEDED": "completed",
     "FAILED": "failed",
@@ -226,14 +230,28 @@ def poll_transfer(
         return
 
     new_status = _GLOBUS_TASK_STATUS_MAP.get(globus_status, "in_progress")
+    if new_status == "failed":
+        fatal_error = task.get("fatal_error") or {}
+        error_message = fatal_error.get("description") or "Globus transfer failed"
+        data_transfer.attempts += 1
+        data_transfer.error_message = error_message
+        data_transfer.updated_at = datetime.now(UTC)
+        if data_transfer.attempts < MAX_TRANSFER_ATTEMPTS:
+            # Transient-looking failure (e.g. "deadline expired") - resubmit as a
+            # fresh Globus task rather than giving up after one attempt.
+            data_transfer.status = "pending"
+            data_transfer.transfer_id = None
+        else:
+            data_transfer.status = "failed"
+        db.add(data_transfer)
+        db.commit()
+        return
+
     if new_status == data_transfer.status:
         return
 
     data_transfer.status = new_status
     data_transfer.updated_at = datetime.now(UTC)
-    if new_status == "failed":
-        fatal_error = task.get("fatal_error") or {}
-        data_transfer.error_message = fatal_error.get("description") or "Globus transfer failed"
     db.add(data_transfer)
     db.commit()
 
