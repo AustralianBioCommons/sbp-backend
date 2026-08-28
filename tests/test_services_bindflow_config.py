@@ -84,10 +84,10 @@ def test_get_bindflow_config_profiles_returns_list():
     assert isinstance(get_bindflow_config_profiles(), list)
 
 
-def test_get_bindflow_config_profiles_contains_singularity_and_gadi():
+def test_get_bindflow_config_profiles_contains_singularity():
     profiles = get_bindflow_config_profiles()
     assert "singularity" in profiles
-    assert "gadi" in profiles
+    assert "gadi" not in profiles
 
 
 # =============================================================================
