@@ -232,8 +232,8 @@ class WorkflowRunAdmin(ModelView):
         "seqera_final_status",
         "sync_completed_at",
         "id",
-        HasMany("data_transfers", identity="data-transfers"),
-        HasMany("queued_jobs", identity="queued-jobs"),
+        HasMany("data_transfers", identity="data-transfer"),
+        HasMany("queued_jobs", identity="queued-job"),
     ]
     exclude_fields_from_list = ["submitted_form_data", "data_transfers", "queued_jobs"]
     exclude_fields_from_create = ["sbp_credit"]
