@@ -1,7 +1,7 @@
 """Core database models for workflows and run metadata."""
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID as PyUUID
 from uuid import uuid4
 
@@ -27,6 +27,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
+
+if TYPE_CHECKING:
+    from .job_queue import QueuedJob
 
 _InetType = Text().with_variant(INET(), "postgresql")
 
@@ -139,6 +142,7 @@ class WorkflowRun(Base):
     inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
     data_transfers: Mapped[list[DataTransfer]] = relationship(back_populates="workflow_run")
+    queued_jobs: Mapped[list[QueuedJob]] = relationship(back_populates="workflow_run")
 
     def get_queued_job(self, session: Session):
         """Get the latest queued job for this workflow run."""

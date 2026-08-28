@@ -1,12 +1,14 @@
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid7
 
 from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, event, func
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, validates
 
 from .. import Base
-from . import Workflow, WorkflowRun
+
+if TYPE_CHECKING:
+    from .core import Workflow, WorkflowRun
 
 JobStatus = Literal["staging", "pending", "submitted", "failed", "cancelled"]
 
@@ -37,7 +39,7 @@ class QueuedJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     workflow: Mapped[Workflow] = relationship()
-    workflow_run: Mapped[WorkflowRun] = relationship()
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="queued_jobs")
 
     @validates("launch_payload")
     def ensure_no_prerun_script(self, key: str, value: dict) -> dict:
