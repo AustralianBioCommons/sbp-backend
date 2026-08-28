@@ -39,6 +39,7 @@ from ..routes.dependencies import get_db
 from ..services.credits import launch_credit_cost
 from ..services.globus_transfer import reset_failed_output_transfers
 from . import engine
+from .models import job_queue
 from .models.core import (
     AppUser,
     DataTransfer,
@@ -49,7 +50,6 @@ from .models.core import (
     Workflow,
     WorkflowRun,
 )
-from .models.job_queue import QueuedJob
 
 _ADMIN_TEMPLATES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
@@ -153,7 +153,10 @@ class WorkflowAdmin(ModelView):
         "repo_staging_updated_at",
         "repo_staging_error_message",
     ]
-    exclude_fields_from_list = ["repo_staging_transfer_id", "repo_staging_error_message"]
+    exclude_fields_from_list = [
+        "repo_staging_transfer_id",
+        "repo_staging_error_message"
+    ]
 
     _NULLABLE_FIELDS = (
         "description",
@@ -232,8 +235,10 @@ class WorkflowRunAdmin(ModelView):
         "seqera_final_status",
         "sync_completed_at",
         "id",
+        HasMany("data_transfers", identity="data-transfers"),
+        HasMany("queued_jobs", identity="queued-jobs"),
     ]
-    exclude_fields_from_list = ["submitted_form_data"]
+    exclude_fields_from_list = ["submitted_form_data", "data_transfers", "queued_jobs"]
     exclude_fields_from_create = ["sbp_credit"]
     exclude_fields_from_edit = ["sbp_credit"]
     # sbp_credit has no backing column, so it can't be an ORDER BY target.
@@ -1030,7 +1035,7 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
     admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(DataTransferAdmin(DataTransfer))
     admin.add_view(S3ObjectAdmin(S3Object))
-    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(QueuedJob)]))
+    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(job_queue.QueuedJob)]))
     admin.add_view(
         CustomView(
             label="System Status",
