@@ -149,9 +149,12 @@ async def test_sync_workflow_run_succeeded_finalizes_after_output_transfers_comp
 
 
 @pytest.mark.asyncio
-async def test_sync_workflow_run_succeeded_reports_failed_output_transfer(
+async def test_sync_workflow_run_succeeded_finalizes_despite_permanently_failed_output_transfer(
     test_db, persistent_models, monkeypatch
 ):
+    """A failed output transfer that has exhausted its retries (see
+    globus_transfer.poll_transfer) must not block the run forever - it should
+    finalize with whatever outputs are available."""
     run = _create_run()
     failed_transfer = DataTransferFactory.create_sync(
         workflow_run=run,
@@ -159,25 +162,30 @@ async def test_sync_workflow_run_succeeded_reports_failed_output_transfer(
         provider="globus",
         status="failed",
         error_message="no such file",
+        attempts=3,
     )
     spec = MagicMock()
     spec.create_output_transfers.return_value = [failed_transfer]
     describe = AsyncMock(return_value={"workflow": {"status": "SUCCEEDED"}})
-    sync_outputs = AsyncMock()
+    sync_outputs = AsyncMock(return_value=["results/report.html"])
+    ensure_score = AsyncMock(return_value=0.9)
+    sync_usage = AsyncMock(return_value=1.25)
 
     monkeypatch.setattr(job_sync, "get_output_spec", lambda _run: spec)
     monkeypatch.setattr(job_sync, "sync_workflow_outputs", sync_outputs)
+    monkeypatch.setattr(job_sync, "ensure_completed_run_score", ensure_score)
+    monkeypatch.setattr(job_sync, "sync_service_usage", sync_usage)
 
     result = await job_sync.sync_workflow_run(test_db, run, describe_func=describe)
 
     test_db.refresh(run)
-    sync_outputs.assert_not_awaited()
+    sync_outputs.assert_awaited_once()
     assert result.terminal is True
-    assert result.sync_completed is False
-    assert "Output transfer failed" in result.error
-    assert "no such file" in result.error
+    assert result.sync_completed is True
+    assert result.outputs_synced == 1
     assert run.seqera_final_status == "SUCCEEDED"
-    assert run.sync_completed_at is None
+    assert run.sync_completed_at is not None
+    assert run.results_sync_status == "partial"
 
 
 @pytest.mark.asyncio
