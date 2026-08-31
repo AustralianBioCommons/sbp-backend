@@ -12,6 +12,7 @@ import requests
 from app.config import GlobusSettings
 from app.services.globus_errors import GlobusTransferError
 from app.services.globus_transfer import (
+    MAX_TRANSFER_ATTEMPTS,
     STALE_TRANSFER_TIMEOUT,
     _gadi_relative_path,
     _notify_launcher,
@@ -332,6 +333,7 @@ def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_mo
         status="failed",
         transfer_id="task-stale",
         error_message="no such file",
+        attempts=3,
     )
     failed_input = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
@@ -359,6 +361,7 @@ def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_mo
     assert failed_output.status == "pending"
     assert failed_output.transfer_id is None
     assert failed_output.error_message is None
+    assert failed_output.attempts == 0
     assert failed_output.updated_at is not None
 
     assert failed_input.status == "failed"
@@ -415,19 +418,47 @@ def test_poll_transfer_succeeded_marks_completed(test_db, persistent_models, moc
     assert data_transfer.status == "completed"
 
 
-def test_poll_transfer_failed_records_fatal_error(test_db, persistent_models, mock_transfer_client):
+def test_poll_transfer_failed_retries_before_giving_up(
+    test_db, persistent_models, mock_transfer_client
+):
     mock_transfer_client.get_task.return_value = {
         "status": "FAILED",
         "fatal_error": {"description": "no such file"},
     }
     workflow_run = _workflow_run_without_repo_staging()
     data_transfer = DataTransferFactory.create_sync(
-        workflow_run=workflow_run, status="in_progress", transfer_id="task-abc"
+        workflow_run=workflow_run, status="in_progress", transfer_id="task-abc", attempts=0
+    )
+
+    poll_transfer(test_db, data_transfer)
+
+    # First failure is retryable - reset to pending for resubmission, but the
+    # last error stays visible.
+    assert data_transfer.status == "pending"
+    assert data_transfer.transfer_id is None
+    assert data_transfer.attempts == 1
+    assert data_transfer.error_message == "no such file"
+
+
+def test_poll_transfer_failed_marks_terminal_once_retries_exhausted(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.return_value = {
+        "status": "FAILED",
+        "fatal_error": {"description": "no such file"},
+    }
+    workflow_run = _workflow_run_without_repo_staging()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        status="in_progress",
+        transfer_id="task-abc",
+        attempts=MAX_TRANSFER_ATTEMPTS - 1,
     )
 
     poll_transfer(test_db, data_transfer)
 
     assert data_transfer.status == "failed"
+    assert data_transfer.attempts == MAX_TRANSFER_ATTEMPTS
     assert data_transfer.error_message == "no such file"
 
 

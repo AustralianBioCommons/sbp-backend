@@ -1,7 +1,7 @@
 """Core database models for workflows and run metadata."""
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID as PyUUID
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     PrimaryKeyConstraint,
     String,
@@ -26,6 +27,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
+
+if TYPE_CHECKING:
+    from .job_queue import QueuedJob
 
 _InetType = Text().with_variant(INET(), "postgresql")
 
@@ -138,6 +142,7 @@ class WorkflowRun(Base):
     inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
     data_transfers: Mapped[list[DataTransfer]] = relationship(back_populates="workflow_run")
+    queued_jobs: Mapped[list[QueuedJob]] = relationship(back_populates="workflow_run")
 
     def get_queued_job(self, session: Session):
         """Get the latest queued job for this workflow run."""
@@ -174,7 +179,15 @@ class WorkflowRun(Base):
         Simple sync status to report to frontend
         """
         if self.seqera_final_status == PipelineStatus.SUCCEEDED.value:
-            return "ready" if self.sync_completed_at is not None else "syncing"
+            if self.sync_completed_at is None:
+                return "syncing"
+            has_permanently_failed_output = any(
+                transfer.provider == "globus"
+                and transfer.direction == "output"
+                and transfer.status == "failed"
+                for transfer in self.data_transfers
+            )
+            return "partial" if has_permanently_failed_output else "ready"
         if self.is_seqera_finalized():
             # Run finished without succeeding (failed/cancelled/unknown) - results will
             # never sync, so don't report "syncing" forever.
@@ -271,6 +284,7 @@ class DataTransfer(Base):
     status: Mapped[DataTransferStatus] = mapped_column(
         String(length=20), nullable=False, default="pending"
     )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -286,12 +300,14 @@ class DataTransfer(Base):
 
     def reset_to_pending(self, session: Session, commit: bool = True):
         """
-        Reset a transfer to pending so it gets attempted again
+        Reset a transfer to pending so it gets attempted again, with a fresh
+        retry budget.
         """
         now = datetime.now(UTC)
         self.status = "pending"
         self.transfer_id = None
         self.error_message = None
+        self.attempts = 0
         self.updated_at = now
         session.add(self)
         if commit:

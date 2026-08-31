@@ -135,7 +135,7 @@ def test_launch_success_without_dataset(
             "tool": "bindcraft",
             "id": "s1",
             "binder_name": "PDL1",
-            "number_of_final_designs": 20,
+            "max_trajectories": 20,
         },
     }
 
@@ -650,37 +650,37 @@ def test_extract_final_design_count_missing_key():
 def test_extract_final_design_count_invalid_string():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs="not_a_number")) is None
+    assert _extract_final_design_count(_form_data(max_trajectories="not_a_number")) is None
 
 
 def test_extract_final_design_count_negative():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs=-5)) is None
+    assert _extract_final_design_count(_form_data(max_trajectories=-5)) is None
 
 
 def test_extract_final_design_count_zero():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs=0)) is None
+    assert _extract_final_design_count(_form_data(max_trajectories=0)) is None
 
 
 def test_extract_final_design_count_valid():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs=10)) == 10
+    assert _extract_final_design_count(_form_data(max_trajectories=10)) == 10
 
 
 def test_extract_final_design_count_one():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs=1)) == 1
+    assert _extract_final_design_count(_form_data(max_trajectories=1)) == 1
 
 
 def test_extract_final_design_count_string_number():
     from app.routes.workflows import _extract_final_design_count
 
-    assert _extract_final_design_count(_form_data(number_of_final_designs="25")) == 25
+    assert _extract_final_design_count(_form_data(max_trajectories="25")) == 25
 
 
 # =============================================================================
@@ -1362,7 +1362,7 @@ def test_launch_deducts_credits_when_enabled(
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "id": "s1",
-            "number_of_final_designs": 3,
+            "max_trajectories": 3,
         },
     }
     response = client.post("/api/workflows/launch", json=payload)
@@ -1394,7 +1394,7 @@ def test_launch_rejected_when_insufficient_credits(
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "id": "s1",
-            "number_of_final_designs": 3,
+            "max_trajectories": 3,
         },
     }
     response = client.post("/api/workflows/launch", json=payload)
@@ -1428,7 +1428,7 @@ def test_launch_does_not_deduct_when_credits_disabled(
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "id": "s1",
-            "number_of_final_designs": 999,
+            "max_trajectories": 999,
         },
     }
     response = client.post("/api/workflows/launch", json=payload)

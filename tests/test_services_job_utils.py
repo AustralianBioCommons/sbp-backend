@@ -728,7 +728,6 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
 
     with (
         patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock(return_value=[])),
-        patch("app.services.results_utils._get_run_output_keys", return_value=[]),
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
@@ -761,7 +760,6 @@ async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_find
 
     with (
         patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock(return_value=[])),
-        patch("app.services.results_utils._get_run_output_keys", return_value=[]),
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,

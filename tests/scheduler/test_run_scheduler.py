@@ -43,6 +43,7 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
     run_scheduler.main(dry_run=True)
 
     assert [job_config["id"] for _, job_config in scheduler.added_jobs] == [
+        "refresh_seqera_health_status",
         "submit_pending_jobs",
         "sync_completed_workflow_runs",
         "sync_data_transfers",
@@ -51,12 +52,19 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
     ]
 
     (
+        health_check_job,
         submit_job,
         sync_job,
         data_transfer_job,
         repo_staging_job,
         refresh_job,
     ) = scheduler.added_jobs
+    health_check_func, health_check_config = health_check_job
+    assert health_check_func is run_scheduler.refresh_seqera_health_status
+    assert health_check_config["kwargs"] == {"dry_run": True}
+    assert health_check_config["jobstore"] == "memory"
+    assert health_check_config["trigger"] is run_scheduler.HEALTH_CHECK_INTERVAL
+
     submit_func, submit_config = submit_job
     assert submit_func is run_scheduler.submit_pending_jobs
     assert submit_config["kwargs"] == {"dry_run": True}
@@ -87,6 +95,7 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
     assert refresh_config["trigger"] == run_scheduler.MONTHLY_TRIGGER
 
     assert scheduler.events == [
+        ("add_job", "refresh_seqera_health_status"),
         ("add_job", "submit_pending_jobs"),
         ("add_job", "sync_completed_workflow_runs"),
         ("add_job", "sync_data_transfers"),

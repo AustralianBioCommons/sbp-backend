@@ -1197,26 +1197,45 @@ def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
     return (category_order.get(output.category, 99), output.label.lower(), key)
 
 
+async def _collect_outputs_with_fallback(
+    db: Session,
+    run: WorkflowRun,
+    spec: WorkflowResultsSpec,
+    *,
+    is_complete: Callable[[dict[str, ClassifiedOutput]], bool],
+    settings: Settings | None = None,
+) -> dict[str, ClassifiedOutput]:
+    """Collect classified outputs, falling back to an S3 listing that persists
+    whatever it finds as RunOutput/DataTransfer rows.
+    """
+    settings = settings or get_settings()
+    outputs = collect_classified_outputs(db, run, spec)
+    if is_complete(outputs):
+        return outputs
+
+    await sync_workflow_outputs(db, run, spec, settings=settings)
+    outputs = collect_classified_outputs(db, run, spec)
+    if is_complete(outputs):
+        return outputs
+
+    # Raise S3 errors if we're still not complete
+    await sync_workflow_outputs(db, run, spec, suppress_s3_errors=False, settings=settings)
+    return collect_classified_outputs(db, run, spec)
+
+
 async def get_result_output_downloads(
     db: Session, run: WorkflowRun, settings: Settings | None = None
 ) -> list[ResultDownloadItem]:
     """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
-    outputs = collect_classified_outputs(db, run, results_spec)
-
-    if missing_required_categories(outputs, results_spec):
-        await sync_workflow_outputs(db, run, results_spec, settings=settings)
-        outputs = collect_classified_outputs(db, run, results_spec)
-
-    if missing_required_categories(outputs, results_spec):
-        discovered = await list_workflow_outputs_from_s3(
-            run,
-            results_spec,
-            suppress_s3_errors=False,
-            settings=settings,
-        )
-        outputs.update(discovered)
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: not missing_required_categories(outputs, results_spec),
+        settings=settings,
+    )
 
     downloads = []
 
@@ -1286,14 +1305,13 @@ async def read_result_output_file(
     """
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
-    outputs = collect_classified_outputs(db, run, results_spec)
-
-    if key not in outputs:
-        outputs.update(
-            await list_workflow_outputs_from_s3(
-                run, results_spec, suppress_s3_errors=False, settings=settings
-            )
-        )
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: key in outputs,
+        settings=settings,
+    )
 
     output = outputs.get(key)
     if output is None or output.category in ("snapshot", "usage"):
@@ -1308,23 +1326,14 @@ async def get_result_report_download(
     """Return a single pre-signed HTML report link for the result view."""
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
-    outputs = collect_classified_outputs(db, run, results_spec)
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: bool(_filter_outputs_by_category(outputs, "report")),
+        settings=settings,
+    )
     report_outputs = _filter_outputs_by_category(outputs, "report")
-
-    if not report_outputs:
-        await sync_workflow_outputs(db, run, results_spec, settings=settings)
-        outputs = collect_classified_outputs(db, run, results_spec)
-        report_outputs = _filter_outputs_by_category(outputs, "report")
-
-    if not report_outputs:
-        discovered = await list_workflow_outputs_from_s3(
-            run,
-            results_spec,
-            suppress_s3_errors=False,
-            settings=settings,
-        )
-        outputs.update(discovered)
-        report_outputs = _filter_outputs_by_category(outputs, "report")
 
     if not report_outputs:
         return None
@@ -1356,23 +1365,14 @@ async def get_result_snapshot_downloads(
     if not results_spec.supports_snapshots:
         return []
 
-    outputs = collect_classified_outputs(db, run, results_spec)
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: bool(_filter_outputs_by_category(outputs, "snapshot")),
+        settings=settings,
+    )
     snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
-
-    if not snapshot_outputs:
-        await sync_workflow_outputs(db, run, results_spec, settings=settings)
-        outputs = collect_classified_outputs(db, run, results_spec)
-        snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
-
-    if not snapshot_outputs:
-        discovered = await list_workflow_outputs_from_s3(
-            run,
-            results_spec,
-            suppress_s3_errors=False,
-            settings=settings,
-        )
-        outputs.update(discovered)
-        snapshot_outputs = _filter_outputs_by_category(outputs, "snapshot")
 
     downloads = []
     for snapshot_key, snapshot_output in sorted(snapshot_outputs.items(), key=_get_output_sort_key):
