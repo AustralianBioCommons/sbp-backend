@@ -12,6 +12,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -21,6 +24,7 @@ jobs:
           private-key: ${{ secrets.SBP_RELEASE_PLEASE_APP_PRIVATE_KEY }}
 
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           release-type: python
           package-name: sbp-backend
@@ -39,3 +43,44 @@ jobs:
               {"type":"chore","section":"Chores","hidden":true},
               {"type":"test","section":"Tests","hidden":true}
             ]
+
+  # Publishes an immutable, version-tagged image for prod to promote, right at
+  # the point a release is actually cut (merging the release-please PR) — no
+  # extra manual step beyond what's already done, and no new IAM trust needed
+  # since this job still runs under the same push-to-staging OIDC identity as
+  # build-push-deploy.yml's staging job.
+  publish-release-image:
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-southeast-2
+      AWS_ACCOUNT_ID: '456789093900'
+      ECR_REPOSITORY: sbp-backend
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/sbp-backend-staging-github-actions-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push release image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
