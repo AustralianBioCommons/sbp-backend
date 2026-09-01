@@ -436,7 +436,10 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
     `git clone`, not a `git archive` extract) or Nextflow fails with
     "Repository may be corrupted" when it finds this checkout at its own
     local-checkout slot."""
-    from app.services.workflow_repo_staging import _clone_and_upload_repo, build_repo_assets_s3_prefix
+    from app.services.workflow_repo_staging import (
+        _clone_and_upload_repo,
+        build_repo_assets_s3_prefix,
+    )
 
     repo_path, commit_sha = _make_local_git_repo(
         tmp_path,
