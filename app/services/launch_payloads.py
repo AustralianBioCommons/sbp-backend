@@ -37,21 +37,18 @@ def get_executor_script(
     """Build a pre-run script from Nextflow env vars, module loads, and a script body.
 
     NXF_OFFLINE=true avoids network calls Gadi compute nodes can't make.
-    NXF_ASSETS points two levels above the checkout (see build_repo_gadi_path:
-    repo_gadi_path is .../<commit_sha>/<owner>/<repo>) so Nextflow's own
-    `<owner>/<repo>` resolution under NXF_OFFLINE lands on the pre-staged
-    checkout instead of trying (and failing, offline) to fetch it itself.
+    NXF_ASSETS is two levels above the checkout (repo_gadi_path is
+    .../<commit_sha>/<owner>/<repo>) so Nextflow's own <owner>/<repo>
+    resolution finds the pre-staged checkout instead of fetching it.
     """
     lines = ["export NXF_OFFLINE=true"]
     if repo_gadi_path:
         bare_repo_path = PurePosixPath(repo_gadi_path)
         nxf_assets_path = f"{bare_repo_path.parent.parent}/"
         lines.append(f"export NXF_ASSETS={nxf_assets_path}")
-        # S3/Globus staging drops unix mode bits, so the pre-staged working
-        # checkout's bin/ scripts land non-executable - restore them here,
-        # the only place this backend runs a command directly on Gadi.
-        # repo_gadi_path is the checkout root itself (see build_repo_gadi_path),
-        # so its own bin/ is where the working checkout's scripts land.
+        # S3/Globus staging drops the execute bit, so the checkout's bin/
+        # scripts land non-executable - restore it here, the only place
+        # this backend runs a command directly on Gadi.
         working_checkout_bin = bare_repo_path / "bin"
         lines.append(
             f'[ -d "{working_checkout_bin}" ] && '

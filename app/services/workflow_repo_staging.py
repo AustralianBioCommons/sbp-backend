@@ -1,14 +1,12 @@
 """Stage a workflow's GitHub repo onto Gadi via S3 + Globus, cached by
 (revision, commit) pair.
 
-Gadi compute nodes have no network access, so Nextflow can't fetch pipeline
-code from GitHub itself when NXF_OFFLINE is set - a real working-tree checkout
-of the repo must already be on Gadi's filesystem for Nextflow to resolve
-`pipeline` (the workflow's plain GitHub URL) against, the same way input files
-are staged there via Globus. A repo checkout is shared across every run of a
-workflow, so it's cached on the Workflow row instead of per run: if
-default_revision still resolves to the commit already staged/staging under
-that same revision, launches reuse it for free.
+Gadi compute nodes have no network access, so under NXF_OFFLINE Nextflow
+resolves `pipeline` (the workflow's GitHub URL) against a pre-staged checkout
+on Gadi's filesystem instead of fetching it, the same way input files are
+staged via Globus. A checkout is shared across every run of a workflow, so
+it's cached on the Workflow row: if default_revision still resolves to the
+commit already staged/staging under that revision, launches reuse it for free.
 """
 
 from __future__ import annotations
@@ -112,17 +110,14 @@ def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha
 def build_repo_gadi_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
-    """Path to a real (non-bare) clone of the commit, for reading
-    pipeline-bundled asset files directly off disk and as the checkout Gadi
-    launches resolve `pipeline` (the workflow's plain GitHub URL) against
-    under NXF_OFFLINE.
+    """Path to a real (non-bare) clone of the commit - used for reading
+    pipeline-bundled asset files off disk, and as the checkout Gadi launches
+    resolve `pipeline` against under NXF_OFFLINE.
 
-    revision is part of the path (not just commit_sha) because the fetched
-    checkout only gets a ref named after `revision` (see stage_pending_repo's
-    refspec) - two different revisions can resolve to the same commit_sha
-    (e.g. a freshly-cut branch), and without revision in the path they'd
-    collide on one checkout that only has a ref for whichever was staged
-    first, breaking checkout of the other's name.
+    revision is part of the path because the checkout only gets a ref named
+    after it (see stage_pending_repo's refspec) - two revisions can resolve
+    to the same commit_sha, and without revision here they'd collide on one
+    checkout with only one of their refs.
     """
     return (
         f"{globus_settings.gadi_collection_root}/workflow_repos/"
@@ -132,11 +127,9 @@ def build_repo_gadi_path(
 
 @dataclass(frozen=True)
 class RepoStagingLocations:
-    """Where a workflow's staged repo checkout lives on Gadi (see
-    build_repo_gadi_path) - gadi_path and assets_gadi_path are always the
-    same location; kept as two fields since callers use them for two
-    distinct purposes (the `pipeline` launch and reading bundled asset
-    files)."""
+    """Where a workflow's staged checkout lives on Gadi (see
+    build_repo_gadi_path). gadi_path and assets_gadi_path are always equal -
+    kept as two fields since callers use them for different purposes."""
 
     gadi_path: str
     assets_gadi_path: str
@@ -222,16 +215,14 @@ def _clone_and_upload_repo(
     revision: str,
     settings: Settings,
 ) -> None:
-    """Fetch commit_sha and upload a real working checkout of it to S3 under
-    build_repo_assets_s3_prefix, for reading pipeline-bundled asset files as
-    plain files and as the checkout Gadi launches resolve `pipeline` against.
+    """Fetch commit_sha and upload a real working checkout to S3 under
+    build_repo_assets_s3_prefix, for reading asset files and as the checkout
+    Gadi launches resolve `pipeline` against.
 
-    Fetches into a branch named after `revision` rather than leaving the
-    commit as bare FETCH_HEAD, since a shallow-fetched bare repo has no other
-    branches and the `revision` sent to Seqera must reference a real ref.
-    The bare repo itself (tmp_dir) never leaves local disk - it only exists
-    as a same-filesystem clone source for the working checkout below, so a
-    second network fetch isn't needed.
+    Fetches into a branch named after `revision` since a shallow bare repo
+    has no other branches and Seqera's `revision` must reference a real ref.
+    tmp_dir (the bare repo) never leaves local disk - it's only a clone
+    source for the working checkout below, so no second network fetch.
     """
     s3_client = get_s3_client(settings)
     bucket = settings.aws.s3_bucket
@@ -244,9 +235,8 @@ def _clone_and_upload_repo(
             _run_git("remote", "add", "origin", repo_url, cwd=tmp_dir)
             _run_git("fetch", "--depth", "1", "origin", refspec, cwd=tmp_dir)
             _run_git("symbolic-ref", "HEAD", f"refs/heads/{revision}", cwd=tmp_dir)
-            # A shallow fetch stores objects loose (one file per blob/tree) -
-            # pack them into one file before cloning, since a real pipeline's
-            # tree can be hundreds of small files otherwise.
+            # Pack the shallow fetch's loose objects before cloning - a real
+            # pipeline's tree can be hundreds of small files otherwise.
             _run_git("gc", cwd=tmp_dir)
         except RepoStagingError as exc:
             raise RepoStagingError(f"Failed to clone {owner}/{repo}@{commit_sha}: {exc}") from exc

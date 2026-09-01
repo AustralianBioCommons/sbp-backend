@@ -484,9 +484,8 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    # Still staged onto Gadi's filesystem for repo_assets_path below - our own
-    # backend code (not Nextflow) reads pipeline-bundled asset files directly
-    # off disk, e.g. bindcraft's settings_filters/settings_advanced.
+    # Staged for repo_assets_path below - our own backend code reads
+    # pipeline-bundled asset files (e.g. bindcraft settings) directly off disk.
     try:
         repo_staging_locations = ensure_repo_staging_requested(
             db_session, workflow, settings=settings
@@ -497,7 +496,7 @@ async def launch_workflow(
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
     pipeline_url = workflow.repo_url
-    # gadi_path and assets_gadi_path are the same staged checkout (see
+    # gadi_path and assets_gadi_path are the same checkout (see
     # build_repo_gadi_path, _rewrite_bindflow_settings_asset_columns).
     repo_assets_path = repo_staging_locations.assets_gadi_path
 
