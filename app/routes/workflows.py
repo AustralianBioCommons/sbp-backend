@@ -484,8 +484,8 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    # Gadi compute nodes have no network access, so Nextflow can't fetch the
-    # pipeline from GitHub itself - it must already be staged there
+    # Staged for repo_assets_path below - our own backend code reads
+    # pipeline-bundled asset files (e.g. bindcraft settings) directly off disk.
     try:
         repo_staging_locations = ensure_repo_staging_requested(
             db_session, workflow, settings=settings
@@ -495,15 +495,9 @@ async def launch_workflow(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
-    # Seqera's launch API validates `pipeline` as a URL, Nextflow's local-path scheme is "file:" with a
-    # single slash before the (already-absolute) path
-    repo_gadi_path = repo_staging_locations.gadi_path
-    pipeline_url = f"file:{repo_gadi_path}"
-    # bindcraft's settings_filters/settings_advanced reference files bundled
-    # inside the workflow repo itself - repo_gadi_path is a bare git repo
-    # (see build_repo_gadi_path) with no working-tree files on disk, so asset
-    # resolution uses the separate plain checkout staged alongside it instead
-    # (see build_repo_assets_gadi_path, _rewrite_bindflow_settings_asset_columns).
+    pipeline_url = workflow.repo_url
+    # gadi_path and assets_gadi_path are the same checkout (see
+    # build_repo_gadi_path, _rewrite_bindflow_settings_asset_columns).
     repo_assets_path = repo_staging_locations.assets_gadi_path
 
     user = db_session.execute(
