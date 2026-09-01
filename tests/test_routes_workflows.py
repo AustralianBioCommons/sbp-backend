@@ -148,7 +148,7 @@ def test_launch_success_without_dataset(
     assert "submitTime" in data
     launch_form_arg = mock_prepare.call_args.args[0]
     assert launch_form_arg.tool == "bindcraft"
-    assert mock_prepare.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
+    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/test/repo"
     assert mock_prepare.call_args.kwargs["revision"] == "dev"
     assert mock_prepare.call_args.kwargs["output_id"] == data["runId"]
 
@@ -394,7 +394,7 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
     assert data["status"] == "staging"
     mock_prepare_proteindj.assert_called_once()
     mock_prepare_bindflow.assert_not_called()
-    assert mock_prepare_proteindj.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
+    assert mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
     assert mock_prepare_proteindj.call_args.kwargs["output_id"] == data["runId"]
     # rfdiffusion's s3InputKey is the starting PDB's own URI (no samplesheet exists
     # for it), and prepare_proteindj_workflow stages that file itself - so the
@@ -745,7 +745,7 @@ def test_launch_proteinfold_success(
     assert data["status"] == "staging"
     run_id = UUID(data["runId"])
     mock_prepare.assert_called_once()
-    assert mock_prepare.call_args.kwargs["pipeline"] == "file:/staged/workflow-repo/path"
+    assert mock_prepare.call_args.kwargs["pipeline"] == "https://github.com/nf-core/proteinfold"
     assert mock_prepare.call_args.kwargs["revision"] == "dev"
     assert mock_prepare.call_args.kwargs["output_id"] == str(run_id)
     with Session(test_engine) as db:
@@ -1100,7 +1100,7 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
     call_kwargs = mock_prepare.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
     assert call_kwargs["form_data"].splitOutputDir == "/data/split"
-    assert call_kwargs["pipeline"] == "file:/staged/workflow-repo/path"
+    assert call_kwargs["pipeline"] == "https://github.com/test/wisps"
     assert call_kwargs["revision"] in {"dev", "main"}
     assert call_kwargs["output_id"] == str(run_id)
 

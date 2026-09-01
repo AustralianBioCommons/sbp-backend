@@ -55,6 +55,7 @@ def _queued_proteindj_job(
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="de-novo-design",
+        repo_url="https://github.com/org/proteindj",
         prerun_script_path=prerun_script_path,
     )
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)

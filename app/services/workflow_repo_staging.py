@@ -2,11 +2,13 @@
 (revision, commit) pair.
 
 Gadi compute nodes have no network access, so Nextflow can't fetch pipeline
-code from GitHub itself - the repo must already be on Gadi's filesystem, the
-same way input files are staged there via Globus. A repo checkout is shared
-across every run of a workflow, so it's cached on the Workflow row instead of
-per run: if default_revision still resolves to the commit already
-staged/staging under that same revision, launches reuse it for free.
+code from GitHub itself when NXF_OFFLINE is set - a real working-tree checkout
+of the repo must already be on Gadi's filesystem for Nextflow to resolve
+`pipeline` (the workflow's plain GitHub URL) against, the same way input files
+are staged there via Globus. A repo checkout is shared across every run of a
+workflow, so it's cached on the Workflow row instead of per run: if
+default_revision still resolves to the commit already staged/staging under
+that same revision, launches reuse it for free.
 """
 
 from __future__ import annotations
@@ -103,10 +105,6 @@ def resolve_latest_commit_sha(
     return cast(str, commit.sha)
 
 
-def build_repo_s3_prefix(owner: str, repo: str, revision: str, commit_sha: str) -> str:
-    return f"workflow-repos/{owner}-{repo}/{revision}/{commit_sha}"
-
-
 def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha: str) -> str:
     return f"workflow-repos-assets/{owner}-{repo}/{revision}/{commit_sha}"
 
@@ -114,46 +112,31 @@ def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha
 def build_repo_gadi_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
-    # revision is part of the path (not just commit_sha) because the bare repo
-    # only gets a ref named after `revision` (see stage_pending_repo's
-    # refspec) - two different revisions can resolve to the same commit_sha
-    # (e.g. a freshly-cut branch), and without revision in the path they'd
-    # collide on one bare repo that only has a ref for whichever was staged
-    # first, breaking checkout of the other's name.
-    #
-    # ".git" suffix required: Seqera's launch API rejects a `pipeline`
-    # "file:<path>" URL without it, and Nextflow then resolves that path as a
-    # git-dir directly (`--git-dir=<path>`) - so this must be a real bare
-    # repo, not a checkout with a nested .git/ one level down.
-    return (
-        f"{globus_settings.gadi_collection_root}/workflow_repos/"
-        f"{owner}-{repo}/{revision}/{commit_sha}.git"
-    )
+    """Path to a real (non-bare) clone of the commit, for reading
+    pipeline-bundled asset files directly off disk and as the checkout Gadi
+    launches resolve `pipeline` (the workflow's plain GitHub URL) against
+    under NXF_OFFLINE.
 
-
-def build_repo_assets_gadi_path(
-    owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
-) -> str:
-    """Path to a real (non-bare) clone of the same commit, for reading
-    pipeline-bundled assets as plain files (the bare repo has no working tree).
-
-    Lives at ``$NXF_ASSETS/local/<commit_sha>`` - Nextflow's own checkout slot
-    for a `file:` bare-repo pipeline - so a real clone there
-    (_clone_working_checkout) makes Nextflow skip its own checkout; anything
-    less (e.g. `git archive`) fails with "Repository may be corrupted".
-    revision is included for the same collision reason as build_repo_gadi_path.
+    revision is part of the path (not just commit_sha) because the fetched
+    checkout only gets a ref named after `revision` (see stage_pending_repo's
+    refspec) - two different revisions can resolve to the same commit_sha
+    (e.g. a freshly-cut branch), and without revision in the path they'd
+    collide on one checkout that only has a ref for whichever was staged
+    first, breaking checkout of the other's name.
     """
     return (
         f"{globus_settings.gadi_collection_root}/workflow_repos/"
-        f"{owner}-{repo}/{revision}/local/{commit_sha}"
+        f"{repo}/{revision}/{commit_sha}/{owner}/{repo}"
     )
 
 
 @dataclass(frozen=True)
 class RepoStagingLocations:
-    """Where a workflow's staged repo lives on Gadi: the bare repo for
-    Seqera's `pipeline`, and a real checkout at Nextflow's own local-checkout
-    slot for pipeline-bundled assets (see build_repo_assets_gadi_path)."""
+    """Where a workflow's staged repo checkout lives on Gadi (see
+    build_repo_gadi_path) - gadi_path and assets_gadi_path are always the
+    same location; kept as two fields since callers use them for two
+    distinct purposes (the `pipeline` launch and reading bundled asset
+    files)."""
 
     gadi_path: str
     assets_gadi_path: str
@@ -177,9 +160,6 @@ def ensure_repo_staging_requested(
     gadi_path = build_repo_gadi_path(
         owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
-    assets_gadi_path = build_repo_assets_gadi_path(
-        owner, repo, revision, commit_sha, globus_settings=settings.globus
-    )
 
     # Comparing the full gadi_path (not just commit_sha) means a revision
     # change is always detected, even when the new revision happens to
@@ -200,7 +180,7 @@ def ensure_repo_staging_requested(
         db.add(workflow)
         db.commit()
 
-    return RepoStagingLocations(gadi_path=gadi_path, assets_gadi_path=assets_gadi_path)
+    return RepoStagingLocations(gadi_path=gadi_path, assets_gadi_path=gadi_path)
 
 
 def _run_git(*args: str, cwd: str) -> None:
@@ -222,10 +202,10 @@ def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) ->
     """Clone a real (non-bare) working checkout from the already-fetched bare
     repo (local filesystem clone, no second network fetch). A real `.git/`,
     unlike a `git archive` extract, so it's indistinguishable from a checkout
-    Nextflow would produce itself (see build_repo_assets_gadi_path).
+    Nextflow would produce itself (see build_repo_gadi_path).
 
     `git clone` records bare_dir (an ephemeral tmp dir) as `origin`, so it
-    must be rewritten to origin_url (the eventual Gadi bare-repo path) -
+    must be rewritten to origin_url (the workflow's real repo_url) -
     otherwise Nextflow sees a since-deleted tmp path as this checkout's
     provenance and refuses to reuse it ("has already been downloaded from a
     different provider")."""
@@ -238,19 +218,20 @@ def _clone_and_upload_repo(
     repo: str,
     commit_sha: str,
     repo_url: str,
-    s3_prefix: str,
     *,
     revision: str,
     settings: Settings,
 ) -> None:
-    """Fetch commit_sha into a bare repo and upload every file to S3 under
-    s3_prefix (bare repo contents land directly at s3_prefix's root, not
-    nested under .git/), plus a real working checkout of the same commit
-    under build_repo_assets_s3_prefix for pipeline-bundled asset files.
+    """Fetch commit_sha and upload a real working checkout of it to S3 under
+    build_repo_assets_s3_prefix, for reading pipeline-bundled asset files as
+    plain files and as the checkout Gadi launches resolve `pipeline` against.
 
     Fetches into a branch named after `revision` rather than leaving the
     commit as bare FETCH_HEAD, since a shallow-fetched bare repo has no other
     branches and the `revision` sent to Seqera must reference a real ref.
+    The bare repo itself (tmp_dir) never leaves local disk - it only exists
+    as a same-filesystem clone source for the working checkout below, so a
+    second network fetch isn't needed.
     """
     s3_client = get_s3_client(settings)
     bucket = settings.aws.s3_bucket
@@ -264,41 +245,16 @@ def _clone_and_upload_repo(
             _run_git("fetch", "--depth", "1", "origin", refspec, cwd=tmp_dir)
             _run_git("symbolic-ref", "HEAD", f"refs/heads/{revision}", cwd=tmp_dir)
             # A shallow fetch stores objects loose (one file per blob/tree) -
-            # `gc` packs them into one file, since a real pipeline's tree can
-            # be hundreds of small files otherwise. gc.packRefs=false keeps
-            # the branch ref itself as a loose file: we only upload actual
-            # files (no empty-directory markers), so a ref packed away would
-            # leave refs/heads with nothing to upload and never reappear on
-            # Gadi.
-            _run_git("-c", "gc.packRefs=false", "gc", cwd=tmp_dir)
+            # pack them into one file before cloning, since a real pipeline's
+            # tree can be hundreds of small files otherwise.
+            _run_git("gc", cwd=tmp_dir)
         except RepoStagingError as exc:
             raise RepoStagingError(f"Failed to clone {owner}/{repo}@{commit_sha}: {exc}") from exc
 
-        tmp_path = Path(tmp_dir)
-        uploaded = 0
-        for file_path in tmp_path.rglob("*"):
-            if not file_path.is_file():
-                continue
-            relative_path = file_path.relative_to(tmp_path).as_posix()
-            s3_client.upload_file(str(file_path), bucket, f"{s3_prefix}/{relative_path}")
-            uploaded += 1
-        logger.info(
-            "Uploaded %d file(s) for bare repo %s/%s@%s to s3://%s/%s",
-            uploaded,
-            owner,
-            repo,
-            commit_sha,
-            bucket,
-            s3_prefix,
-        )
-
         assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
-        gadi_bare_repo_path = build_repo_gadi_path(
-            owner, repo, revision, commit_sha, globus_settings=settings.globus
-        )
         with tempfile.TemporaryDirectory() as assets_tmp_dir:
             try:
-                _clone_working_checkout(tmp_dir, assets_tmp_dir, origin_url=gadi_bare_repo_path)
+                _clone_working_checkout(tmp_dir, assets_tmp_dir, origin_url=repo_url)
             except RepoStagingError as exc:
                 raise RepoStagingError(
                     f"Failed to clone working checkout for {owner}/{repo}@{commit_sha}: {exc}"
@@ -334,14 +290,10 @@ def stage_pending_repo(
     if not commit_sha:
         raise RepoStagingError(f"Workflow {workflow.id} has no commit sha to stage")
 
-    s3_prefix = build_repo_s3_prefix(owner, repo, revision, commit_sha)
     gadi_path = workflow.repo_gadi_path or build_repo_gadi_path(
         owner, repo, revision, commit_sha, globus_settings=settings.globus
     )
     assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
-    assets_gadi_path = build_repo_assets_gadi_path(
-        owner, repo, revision, commit_sha, globus_settings=settings.globus
-    )
 
     try:
         _clone_and_upload_repo(
@@ -349,7 +301,6 @@ def stage_pending_repo(
             repo,
             commit_sha,
             workflow.repo_url,
-            s3_prefix,
             revision=workflow.default_revision,
             settings=settings,
         )
@@ -373,12 +324,7 @@ def stage_pending_repo(
         # gadi_path is absolute, but the Gadi collection's root maps to
         # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
         destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
-        transfer_data.add_item(f"/{s3_prefix}", destination_path, recursive=True)
-        # Second item: the working checkout (see build_repo_assets_gadi_path).
-        assets_destination_path = _gadi_relative_path(
-            assets_gadi_path, globus_settings=settings.globus
-        )
-        transfer_data.add_item(f"/{assets_s3_prefix}", assets_destination_path, recursive=True)
+        transfer_data.add_item(f"/{assets_s3_prefix}", destination_path, recursive=True)
         result = transfer_client.submit_transfer(transfer_data)
     except (RepoStagingError, globus_sdk.GlobusAPIError) as exc:
         logger.warning("Workflow repo staging failed for %s: %s", workflow.id, exc)

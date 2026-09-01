@@ -16,7 +16,6 @@ from app.services.globus_errors import GlobusTransferError
 from app.services.workflow_repo_staging import (
     RepoStagingError,
     build_repo_gadi_path,
-    build_repo_s3_prefix,
     ensure_repo_staging_requested,
     parse_github_repo,
     poll_repo_staging,
@@ -127,23 +126,16 @@ def test_parse_github_repo_rejects_missing_repo():
         parse_github_repo("https://github.com/nf-core")
 
 
-def test_build_repo_s3_prefix():
-    assert (
-        build_repo_s3_prefix("nf-core", "proteinfold", "dev", "abc123")
-        == "workflow-repos/nf-core-proteinfold/dev/abc123"
-    )
-
-
 def test_build_repo_gadi_path(globus_settings):
     path = build_repo_gadi_path(
         "nf-core", "proteinfold", "dev", "abc123", globus_settings=globus_settings
     )
-    assert path == "/test/workflow_repos/nf-core-proteinfold/dev/abc123.git"
+    assert path == "/test/workflow_repos/proteinfold/dev/abc123/nf-core/proteinfold"
 
 
 def test_build_repo_gadi_path_distinguishes_revisions_at_same_commit(globus_settings):
     """Two revisions resolving to the same commit must not collide on one
-    bare repo path - each name needs its own staged copy with its own ref."""
+    checkout path - each name needs its own staged copy with its own ref."""
     main_path = build_repo_gadi_path(
         "nf-core", "proteinfold", "main", "abc123", globus_settings=globus_settings
     )
@@ -215,7 +207,7 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
     assert locations.gadi_path == workflow.repo_gadi_path
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/local/newsha"
+    assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/newsha/test/repo"
     assert workflow.repo_staged_commit_sha == "newsha"
     assert workflow.repo_staging_status == "pending"
 
@@ -252,7 +244,7 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
         default_revision="dev",
         repo_staged_commit_sha="samesha",
         repo_staging_status="completed",
-        repo_gadi_path="/test/workflow_repos/test-repo/dev/samesha.git",
+        repo_gadi_path="/test/workflow_repos/repo/dev/samesha/test/repo",
     )
 
     with patch(
@@ -261,8 +253,8 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_mode
     ):
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
-    assert locations.gadi_path == "/test/workflow_repos/test-repo/dev/samesha.git"
-    assert locations.assets_gadi_path == "/test/workflow_repos/test-repo/dev/local/samesha"
+    assert locations.gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
+    assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
     assert workflow.repo_staging_status == "completed"
 
 
@@ -271,15 +263,15 @@ def test_ensure_repo_staging_requested_restages_on_revision_change_same_commit(
 ):
     """Regression test: a freshly-cut branch ("staging") can resolve to the
     exact same commit as the previously staged revision ("main"). Comparing
-    commit_sha alone would wrongly call this "up to date" and reuse a bare
-    repo whose only ref is named "main", so a Nextflow launch asking for
+    commit_sha alone would wrongly call this "up to date" and reuse a
+    checkout whose only ref is named "main", so a Nextflow launch asking for
     revision "staging" would fail with `invalid object name 'staging'`."""
     workflow = WorkflowFactory.create_sync(
         repo_url="https://github.com/test/repo",
         default_revision="staging",
         repo_staged_commit_sha="samesha",
         repo_staging_status="completed",
-        repo_gadi_path="/test/workflow_repos/test-repo/main/samesha.git",
+        repo_gadi_path="/test/workflow_repos/repo/main/samesha/test/repo",
     )
 
     with patch(
@@ -288,8 +280,8 @@ def test_ensure_repo_staging_requested_restages_on_revision_change_same_commit(
     ):
         locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
 
-    assert locations.gadi_path == "/test/workflow_repos/test-repo/staging/samesha.git"
-    assert workflow.repo_gadi_path == "/test/workflow_repos/test-repo/staging/samesha.git"
+    assert locations.gadi_path == "/test/workflow_repos/repo/staging/samesha/test/repo"
+    assert workflow.repo_gadi_path == "/test/workflow_repos/repo/staging/samesha/test/repo"
     assert workflow.repo_staging_status == "pending"
 
 
@@ -351,12 +343,9 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     # NOT "/test/workflow_repos/test-repo/dev/abc123" - that's the absolute
     # path, which would double-nest under the "/test" collection root on Gadi.
     assert submitted["DATA"][0]["destination_path"] == "/workflow_repos/test-repo/dev/abc123"
-    assert submitted["DATA"][0]["source_path"] == "/workflow-repos/test-repo/dev/abc123"
+    assert submitted["DATA"][0]["source_path"] == "/workflow-repos-assets/test-repo/dev/abc123"
     assert submitted["DATA"][0]["recursive"] is True
-    # Second item: the working-checkout companion (see build_repo_assets_gadi_path).
-    assert submitted["DATA"][1]["destination_path"] == "/workflow_repos/test-repo/dev/local/abc123"
-    assert submitted["DATA"][1]["source_path"] == "/workflow-repos-assets/test-repo/dev/abc123"
-    assert submitted["DATA"][1]["recursive"] is True
+    assert len(submitted["DATA"]) == 1
 
     assert workflow.repo_staging_status == "in_progress"
     assert workflow.repo_staging_transfer_id == "task-1"
@@ -440,91 +429,14 @@ def test_stage_pending_repo_reuses_existing_submission_id(
 # ============================================================================
 
 
-def test_clone_and_upload_repo_uploads_bare_repo_structure(tmp_path, mock_settings):
-    """The staged repo must be bare - HEAD/config/objects directly at the
-    prefix root, not nested under a .git/ subdirectory, and no plain working-
-    tree files like main.nf (see build_repo_gadi_path's docstring: Nextflow
-    resolves the ".git"-suffixed path as a git-dir directly, so a non-bare
-    checkout with a *nested* .git/ put those one level too deep to be found -
-    confirmed in production as "fatal: not a git repository: '<path>'" even
-    though the nested .git was fully and correctly staged)."""
-    from app.services.workflow_repo_staging import _clone_and_upload_repo
-
-    revision = "dev"
-    repo_path, commit_sha = _make_local_git_repo(
-        tmp_path, {"main.nf": "process {}", "nextflow.config": "params {}"}
-    )
-    mock_s3_client = MagicMock()
-    prefix = "workflow-repos/test-repo/abc123"
-    # _clone_and_upload_repo's source files live under a TemporaryDirectory
-    # that's cleaned up before the function returns - copy each file's bytes
-    # out at upload time (mocked here in place of a real S3 PUT) so they can
-    # be reassembled and verified with a real `git show` after the fact.
-    staged_dir = tmp_path / "staged-verify"
-
-    def _capture_upload(source_path: str, _bucket: str, key: str) -> None:
-        # _clone_and_upload_repo also uploads a plain-checkout companion
-        # under a different prefix (see test_clone_and_upload_repo_uploads_
-        # plain_checkout_assets below) - ignore those keys here, this test
-        # only cares about the bare repo's structure.
-        if not key.startswith(f"{prefix}/"):
-            return
-        dest = staged_dir / key[len(prefix) + 1 :]
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(Path(source_path).read_bytes())
-
-    mock_s3_client.upload_file.side_effect = _capture_upload
-
-    with patch("app.services.workflow_repo_staging.get_s3_client", return_value=mock_s3_client):
-        _clone_and_upload_repo(
-            "test",
-            "repo",
-            commit_sha,
-            repo_path,
-            prefix,
-            revision=revision,
-            settings=mock_settings,
-        )
-
-    all_uploaded_keys = {call.args[2] for call in mock_s3_client.upload_file.call_args_list}
-    # Scoped to the bare repo's own prefix - the working-checkout companion
-    # (its own .git/, tested separately below) uploads under a different one.
-    uploaded_keys = {key for key in all_uploaded_keys if key.startswith(f"{prefix}/")}
-    assert f"{prefix}/HEAD" in uploaded_keys
-    assert f"{prefix}/config" in uploaded_keys
-    assert any(key.startswith(f"{prefix}/objects/") for key in uploaded_keys)
-    # No nested .git/ - and no plain working-tree files, since a bare repo has
-    # no working tree; main.nf only exists as a blob inside the packed objects.
-    assert not any(".git/" in key for key in uploaded_keys)
-    assert f"{prefix}/main.nf" not in uploaded_keys
-    # The branch ref must be a real loose file (not packed away) so it
-    # survives the S3/Globus round-trip, which only preserves actual files.
-    assert f"{prefix}/refs/heads/{revision}" in uploaded_keys
-
-    # revision must actually resolve to the fetched commit and read back the
-    # real file content - this is what Nextflow's own checkout will do once
-    # it resolves the pipeline.
-    shown = subprocess.run(
-        ["git", f"--git-dir={staged_dir}", "show", f"{revision}:main.nf"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert shown.stdout == "process {}"
-
-
 def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_settings):
-    """Alongside the bare repo, a real (non-bare) checkout must be uploaded
-    under build_repo_assets_s3_prefix - readable plain files for
-    pipeline-bundled assets (e.g. bindcraft's settings JSON), since the bare
-    repo has no working tree. Must include a real `.git/` (a `git clone`, not
-    a `git archive` extract) or Nextflow fails with "Repository may be
-    corrupted" when it finds this checkout at its own local-checkout slot."""
-    from app.services.workflow_repo_staging import (
-        _clone_and_upload_repo,
-        build_repo_assets_s3_prefix,
-        build_repo_gadi_path,
-    )
+    """A real (non-bare) checkout must be uploaded under
+    build_repo_assets_s3_prefix - readable plain files for pipeline-bundled
+    assets (e.g. bindcraft's settings JSON). Must include a real `.git/` (a
+    `git clone`, not a `git archive` extract) or Nextflow fails with
+    "Repository may be corrupted" when it finds this checkout at its own
+    local-checkout slot."""
+    from app.services.workflow_repo_staging import _clone_and_upload_repo, build_repo_assets_s3_prefix
 
     repo_path, commit_sha = _make_local_git_repo(
         tmp_path,
@@ -534,7 +446,6 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
         },
     )
     mock_s3_client = MagicMock()
-    prefix = "workflow-repos/test-repo/abc123"
     assets_prefix = build_repo_assets_s3_prefix("test", "repo", "dev", commit_sha)
     # Source files live under a TemporaryDirectory cleaned up before the
     # function returns - capture content at upload time, mocked here in
@@ -552,7 +463,6 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
             "repo",
             commit_sha,
             repo_path,
-            prefix,
             revision="dev",
             settings=mock_settings,
         )
@@ -569,14 +479,11 @@ def test_clone_and_upload_repo_uploads_plain_checkout_assets(tmp_path, mock_sett
     assert f"{assets_prefix}/.git/config" in uploaded_content
     assert f"{assets_prefix}/.git/HEAD" in uploaded_content
     # `git clone` records its source (an ephemeral tmp dir) as `origin` by
-    # default - must be rewritten to the real Gadi bare-repo path before
+    # default - must be rewritten to the workflow's real repo_url before
     # upload, or Nextflow rejects the checkout's stale provenance (see
     # _clone_working_checkout).
-    expected_origin = build_repo_gadi_path(
-        "test", "repo", "dev", commit_sha, globus_settings=mock_settings.globus
-    )
     git_config = uploaded_content[f"{assets_prefix}/.git/config"].decode()
-    assert expected_origin in git_config
+    assert repo_path in git_config
 
 
 def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):
@@ -590,7 +497,6 @@ def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):
             "repo",
             "abc123",
             nonexistent_repo_path,
-            "workflow-repos/test-repo/abc123",
             revision="dev",
             settings=mock_settings,
         )
