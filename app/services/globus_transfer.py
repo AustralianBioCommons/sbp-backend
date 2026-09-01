@@ -155,6 +155,7 @@ def submit_pending_transfer(
             source_endpoint=source_collection,
             destination_endpoint=destination_collection,
             submission_id=submission_id,
+            skip_source_errors=True,
             label=f"sbp-run-{data_transfer.workflow_run_id}",
         )
         transfer_data.add_item(
