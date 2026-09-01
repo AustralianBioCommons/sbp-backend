@@ -143,6 +143,7 @@ async def launch_wisps_workflow(
     prerun_script = get_executor_script(
         prerun_script_path=queued_job.workflow.prerun_script_path,
         repo_gadi_path=queued_job.workflow.repo_gadi_path,
+        repo_url=queued_job.workflow.repo_url,
     )
     # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
     # files the samplesheet references, reading F (input) and D (output dir) as

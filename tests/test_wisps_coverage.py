@@ -64,6 +64,7 @@ def _queued_wisps_job(
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="interaction-screening",
+        repo_url="https://github.com/test/repo",
         prerun_script_path=prerun_script_path,
     )
     workflow_run = WorkflowRunFactory.create_sync(
@@ -162,6 +163,7 @@ def test_get_executor_script_fetches_from_url():
         script = get_executor_script(
             prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
             repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_called_once_with(
@@ -170,7 +172,7 @@ def test_get_executor_script_fetches_from_url():
     assert fetched_body in script
     assert "module load singularity" in script
     assert "export NXF_OFFLINE=true" in script
-    assert "export NXF_ASSETS=/test/workflow_repos/owner-repo/" in script
+    assert "export NXF_ASSETS=/test/workflow_repos/" in script
 
 
 def test_get_executor_script_no_path_returns_header_only():
@@ -179,14 +181,15 @@ def test_get_executor_script_no_path_returns_header_only():
         script = get_executor_script(
             prerun_script_path=None,
             repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )
     mock_fetch.assert_not_called()
     assert script == (
         "export NXF_OFFLINE=true\n"
-        "export NXF_ASSETS=/test/workflow_repos/owner-repo/\n"
-        '[ -d "/test/workflow_repos/owner-repo/local/abc123/bin" ] && '
-        'find "/test/workflow_repos/owner-repo/local/abc123/bin" -type f -exec chmod +x {} +\n'
+        "export NXF_ASSETS=/test/workflow_repos/\n"
+        '[ -d "/test/workflow_repos/owner-repo/abc123.git/bin" ] && '
+        'find "/test/workflow_repos/owner-repo/abc123.git/bin" -type f -exec chmod +x {} +\n'
         "module load singularity\n"
         "module load nextflow\n"
     )
