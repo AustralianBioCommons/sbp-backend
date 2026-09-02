@@ -20,6 +20,7 @@ from app.db.models.core import (
 )
 from app.routes.workflow.results import (
     get_result_download_all,
+    get_result_download_pdb,
     get_result_downloads,
     get_result_file,
     get_result_logs,
@@ -391,18 +392,20 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
-    assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
+    # bindcraft's ranked PDB structures are hidden from the individual file
+    # listing - they're surfaced instead as a single bundled zip via the
+    # /download-pdb route (see test_get_result_download_pdb_*).
+    assert [item.category for item in result.downloads] == ["report", "stats_csv"]
     assert [item.label for item in result.downloads] == [
         "PDL1_l100_s975117.html",
         "demo2_final_design_stats.csv",
-        "1_PDL1_model1.pdb",
     ]
     assert all(item.category != "snapshot" for item in result.downloads)
     assert (
         result.downloads[1].url
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
     )
-    assert mock_presign.await_count == 3
+    assert mock_presign.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -517,6 +520,180 @@ async def test_get_result_download_all_returns_valid_zip_file(
         assert zip_file.read("report/result.html") == b"<html>report</html>"
         assert zip_file.read("stats_csv/download-all_final_design_stats.csv") == b"score\n0.9\n"
         assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_returns_valid_zip_file(
+    test_db, persistent_models, mock_settings
+):
+    """The PDB bundle route zips only the ranked structures, hidden from /downloads."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="bindcraft",
+        seqera_run_id="wf-download-pdb-1",
+        run_name="download-pdb-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    output_contents = {
+        f"{run.id}/generate/result.html": b"<html>report</html>",
+        f"{run.id}/ranker/download-pdb_final_design_stats.csv": b"score\n0.9\n",
+        f"{run.id}/ranker/download-pdb_Ranked/model.pdb": b"ATOM\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
+        response = await get_result_download_pdb(str(run.id), user.id, test_db, mock_settings)
+
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    returned_zip = BytesIO(body)
+
+    assert response.media_type == "application/zip"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="pdb-structures-download-pdb-run.zip"; '
+        "filename*=UTF-8''pdb-structures-download-pdb-run.zip"
+    )
+    with ZipFile(returned_zip) as zip_file:
+        assert set(zip_file.namelist()) == {"pdb/model.pdb"}
+        assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_returns_404_without_pdb_outputs(
+    test_db, persistent_models, mock_settings
+):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="bindcraft",
+        seqera_run_id="wf-download-pdb-empty",
+        run_name="download-pdb-empty-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_pdb(str(run.id), user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "No PDB files found for this run"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_returns_404_for_missing_owned_run(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-pdb-missing",
+        name="Download Pdb Missing",
+        email="download-pdb-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_download_pdb("wf-download-pdb-missing", user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-pdb-syncing",
+        name="Download Pdb Syncing",
+        email="download-pdb-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-pdb-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-download-pdb-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(),
+    ) as get_zip:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_pdb(str(run.id), user.id, test_db, mock_settings)
+
+    get_zip.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_maps_s3_configuration_error_to_500(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-pdb-config-err",
+        name="Download Pdb Config Err",
+        email="download-pdb-config-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-pdb-config-err",
+        work_dir="/tmp/wf-download-pdb-config-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_pdb(str(run.id), user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "s3 config missing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_pdb_maps_s3_service_error_to_502(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-pdb-service-err",
+        name="Download Pdb Service Err",
+        email="download-pdb-service-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-pdb-service-err",
+        work_dir="/tmp/wf-download-pdb-service-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_pdb(str(run.id), user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream error"
 
 
 @pytest.mark.asyncio

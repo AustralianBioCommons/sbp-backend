@@ -85,6 +85,11 @@ class WorkflowResultsSpec:
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
+    # Categories that are classified and counted towards `required_categories`
+    # (e.g. for report-readiness checks) but are excluded from the individual
+    # file listing returned by `get_result_output_downloads`, because they
+    # are surfaced instead as a single bundled zip (see `get_category_downloads_zipped`).
+    hidden_download_categories: frozenset[OutputCategory] = frozenset()
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
@@ -320,7 +325,7 @@ async def resolve_fasta_form_data(
                 response_content_disposition=_format_attachment_content_disposition(filename),
                 settings=settings,
             )
-        except S3ConfigurationError, S3ServiceError:
+        except (S3ConfigurationError, S3ServiceError):
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -363,7 +368,7 @@ async def resolve_pdb_presigned_urls(
             settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except S3ConfigurationError, S3ServiceError:
+    except (S3ConfigurationError, S3ServiceError):
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
@@ -962,6 +967,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             extract_max_score=extract_bindcraft_max_score,
             classifier=classify_bindcraft_output_key,
             supports_snapshots=True,
+            hidden_download_categories=frozenset({"pdb"}),
         ),
         "rfdiffusion": WorkflowResultsSpec(
             kind="de-novo-design",
@@ -1243,6 +1249,8 @@ async def get_result_output_downloads(
     for key, output in sorted(outputs.items(), key=_get_output_sort_key):
         if output.category in ("snapshot", "usage"):
             continue
+        if output.category in results_spec.hidden_download_categories:
+            continue
         downloads.append(
             ResultDownloadItem(
                 label=output.label,
@@ -1278,6 +1286,49 @@ async def get_all_downloads_zipped(
     zip_file = BytesIO()
     with ZipFile(zip_file, "w") as zip_obj:
         for key, output in downloads:
+            content = await read_s3_bytes(key, settings=settings)
+            output_name = get_safe_zip_filename(output.category, output.label)
+            # Simple protection against duplicate filenames
+            if output_name in used_filenames:
+                output_name = get_safe_zip_filename(
+                    output.category, f"{len(used_filenames)}_{output.label}"
+                )
+            zip_obj.writestr(output_name, content)
+            used_filenames.add(output_name)
+    zip_file.seek(0)
+    return zip_file
+
+
+async def get_category_downloads_zipped(
+    db: Session,
+    run: WorkflowRun,
+    category: OutputCategory,
+    settings: Settings | None = None,
+) -> BytesIO | None:
+    """
+    Zip all result outputs of a single category for a run (e.g. bindcraft's
+    ranked PDB structures, hidden from the individual file listing and
+    surfaced instead as one bundled download).
+
+    Returns `None` when the run has no outputs in that category.
+    """
+    settings = settings or get_settings()
+    results_spec = get_output_spec(run)
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: bool(_filter_outputs_by_category(outputs, category)),
+        settings=settings,
+    )
+    category_outputs = _filter_outputs_by_category(outputs, category)
+    if not category_outputs:
+        return None
+
+    used_filenames: set[str] = set()
+    zip_file = BytesIO()
+    with ZipFile(zip_file, "w") as zip_obj:
+        for key, output in sorted(category_outputs.items(), key=_get_output_sort_key):
             content = await read_s3_bytes(key, settings=settings)
             output_name = get_safe_zip_filename(output.category, output.label)
             # Simple protection against duplicate filenames

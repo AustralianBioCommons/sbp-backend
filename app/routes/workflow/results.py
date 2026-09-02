@@ -25,6 +25,7 @@ from ...services.results_utils import (
     _format_attachment_content_disposition,
     format_log_entries,
     get_all_downloads_zipped,
+    get_category_downloads_zipped,
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
@@ -255,6 +256,42 @@ async def get_result_download_all(
         ) from exc
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/{run_id}/download-pdb", response_class=StreamingResponse)
+async def get_result_download_pdb(
+    run_id: str,
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Stream a zip of this run's PDB structure outputs (e.g. bindcraft's ranked designs)."""
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
+
+    filename = f"pdb-structures-{owned_run.run_name or run_id}.zip"
+    content_disposition = _format_attachment_content_disposition(filename)
+    try:
+        zipped_pdb = await get_category_downloads_zipped(db, owned_run, "pdb", settings=settings)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    if zipped_pdb is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No PDB files found for this run"
+        )
+
+    return StreamingResponse(
+        zipped_pdb,
+        media_type="application/zip",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.get("/{run_id}/snapshots", response_model=ResultSnapshotsResponse)
