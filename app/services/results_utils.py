@@ -32,7 +32,9 @@ from .s3 import (
     read_s3_file,
 )
 
-OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment", "usage"]
+OutputCategory = Literal[
+    "report", "stats_csv", "pdb", "snapshot", "alignment", "confidence", "usage"
+]
 
 
 class OutputClassifier(Protocol):
@@ -806,6 +808,10 @@ def classify_wisps_output_key(key: str, sample_id: str | None = None) -> Classif
         return ClassifiedOutput(category="pdb", label=basename)
     if "/colabfold_predictions/pdb/" in lowered and basename.lower().endswith(".pdb"):
         return ClassifiedOutput(category="pdb", label=basename)
+    if "/boltz_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
+        return ClassifiedOutput(category="confidence", label=basename)
+    if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
+        return ClassifiedOutput(category="confidence", label=basename)
     return None
 
 
@@ -864,6 +870,8 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
         f"{run_uuid}/ipsae/",
         f"{run_uuid}/boltz_predictions/cif/",
         f"{run_uuid}/colabfold_predictions/pdb/",
+        f"{run_uuid}/boltz_predictions/confidence/",
+        f"{run_uuid}/colabfold_predictions/confidence/",
     ]
 
 
@@ -1206,7 +1214,7 @@ async def sync_bindcraft_outputs(
 
 def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
     """Sort output items by category, label, and key"""
-    category_order = {"report": 0, "stats_csv": 1, "pdb": 2, "alignment": 3}
+    category_order = {"report": 0, "stats_csv": 1, "pdb": 2, "alignment": 3, "confidence": 4}
     key, output = item
     return (category_order.get(output.category, 99), output.label.lower(), key)
 

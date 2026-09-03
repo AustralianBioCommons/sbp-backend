@@ -335,6 +335,8 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/ipsae/",
         f"{run.id}/boltz_predictions/cif/",
         f"{run.id}/colabfold_predictions/pdb/",
+        f"{run.id}/boltz_predictions/confidence/",
+        f"{run.id}/colabfold_predictions/confidence/",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
         f"{run.id}/results/",
@@ -1334,6 +1336,22 @@ def test_classify_wisps_output_key_colabfold_predicted_structure():
     assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.pdb")
 
 
+def test_classify_wisps_output_key_boltz_confidence_json():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(
+        f"{run_id}/boltz_predictions/confidence/sample1_model_0.json"
+    )
+    assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
+
+
+def test_classify_wisps_output_key_colabfold_confidence_json():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(
+        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json"
+    )
+    assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
+
+
 def test_classify_wisps_output_key_returns_none_for_unmatched():
     run_id = str(uuid4())
     assert classify_wisps_output_key(f"{run_id}/other/unknown_file.txt") is None
@@ -1454,13 +1472,15 @@ async def test_get_run_service_usage():
 def test_build_wisps_output_listing_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
     prefixes = build_wisps_output_listing_prefixes(run)
-    assert len(prefixes) == 6
+    assert len(prefixes) == 8
     assert f"{run.id}/" in prefixes
     assert f"{run.id}/multiqc/" in prefixes
     assert f"{run.id}/collect/" in prefixes
     assert f"{run.id}/ipsae/" in prefixes
     assert f"{run.id}/boltz_predictions/cif/" in prefixes
     assert f"{run.id}/colabfold_predictions/pdb/" in prefixes
+    assert f"{run.id}/boltz_predictions/confidence/" in prefixes
+    assert f"{run.id}/colabfold_predictions/confidence/" in prefixes
 
 
 def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
