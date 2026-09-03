@@ -38,7 +38,9 @@ from app.services.results_utils import (
     format_log_entries,
     get_all_downloads_zipped,
     get_bindcraft_score_file,
+    get_category_downloads_zipped,
     get_proteinfold_score_file,
+    get_result_output_downloads,
     get_result_report_download,
     get_rfdiffusion_score_file,
     get_run_service_usage,
@@ -331,6 +333,8 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/multiqc/",
         f"{run.id}/collect/",
         f"{run.id}/ipsae/",
+        f"{run.id}/boltz_predictions/cif/",
+        f"{run.id}/colabfold_predictions/pdb/",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
         f"{run.id}/results/",
@@ -1318,6 +1322,18 @@ def test_classify_wisps_output_key_ipsae_scores_csv():
     assert result == ClassifiedOutput(category="stats_csv", label="ipsae_scores.csv")
 
 
+def test_classify_wisps_output_key_boltz_predicted_structure():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(f"{run_id}/boltz_predictions/cif/sample1_model_0.cif")
+    assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.cif")
+
+
+def test_classify_wisps_output_key_colabfold_predicted_structure():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(f"{run_id}/colabfold_predictions/pdb/sample1_model_0.pdb")
+    assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.pdb")
+
+
 def test_classify_wisps_output_key_returns_none_for_unmatched():
     run_id = str(uuid4())
     assert classify_wisps_output_key(f"{run_id}/other/unknown_file.txt") is None
@@ -1438,16 +1454,137 @@ async def test_get_run_service_usage():
 def test_build_wisps_output_listing_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
     prefixes = build_wisps_output_listing_prefixes(run)
-    assert len(prefixes) == 4
+    assert len(prefixes) == 6
     assert f"{run.id}/" in prefixes
     assert f"{run.id}/multiqc/" in prefixes
     assert f"{run.id}/collect/" in prefixes
     assert f"{run.id}/ipsae/" in prefixes
+    assert f"{run.id}/boltz_predictions/cif/" in prefixes
+    assert f"{run.id}/colabfold_predictions/pdb/" in prefixes
 
 
 def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
     run = SimpleNamespace(id=None)
     assert build_wisps_output_listing_prefixes(run) == []
+
+
+# ---------------------------------------------------------------------------
+# wisps-based workflows (interaction-screening / bulk-prediction) hide their
+# predicted structures from the individual downloads list, and bundle them
+# into a zip instead - same treatment as bindcraft's ranked designs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_result_output_downloads_hides_pdb_for_interaction_screening(
+    test_db, persistent_models
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="interaction-screening",
+            repo_url="https://github.com/test/interaction-screening",
+            default_revision="main",
+            config_path="/config/interaction-screening.config",
+        ),
+        tool="boltz",
+        seqera_run_id="wf-wisps-downloads-1",
+    )
+    output_keys = [
+        f"{run.id}/multiqc/multiqc_report.html",
+        f"{run.id}/collect/boltz_confidence_scores_full.csv",
+        f"{run.id}/boltz_predictions/cif/sample1_model_0.cif",
+    ]
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_keys]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new_callable=AsyncMock,
+        side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
+    ):
+        downloads = await get_result_output_downloads(test_db, run)
+
+    assert [item.category for item in downloads] == ["report", "stats_csv"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "structure_key", "structure_content"),
+    [
+        ("boltz", "boltz_predictions/cif/sample1_model_0.cif", b"data_sample1\n"),
+        ("colabfold", "colabfold_predictions/pdb/sample1_model_0.pdb", b"ATOM\n"),
+    ],
+)
+async def test_get_category_downloads_zipped_bundles_wisps_structures(
+    test_db, persistent_models, tool, structure_key, structure_content
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="bulk-prediction",
+            repo_url="https://github.com/test/bulk-prediction",
+            default_revision="main",
+            config_path="/config/bulk-prediction.config",
+        ),
+        tool=tool,
+        seqera_run_id=f"wf-wisps-zip-{tool}",
+    )
+    output_contents = {
+        f"{run.id}/multiqc/multiqc_report.html": b"<html>report</html>",
+        f"{run.id}/{structure_key}": structure_content,
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(side_effect=read_bytes),
+    ):
+        zip_buffer = await get_category_downloads_zipped(test_db, run, "pdb")
+
+    structure_filename = structure_key.rsplit("/", 1)[-1]
+    with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
+        assert set(zip_file.namelist()) == {f"pdb/{structure_filename}"}
+        assert zip_file.read(f"pdb/{structure_filename}") == structure_content
+
+
+@pytest.mark.asyncio
+async def test_get_category_downloads_zipped_returns_none_without_matches(
+    test_db, persistent_models
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="interaction-screening",
+            repo_url="https://github.com/test/interaction-screening",
+            default_revision="main",
+            config_path="/config/interaction-screening.config",
+        ),
+        tool="boltz",
+        seqera_run_id="wf-wisps-zip-empty",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        assert await get_category_downloads_zipped(test_db, run, "pdb") is None
 
 
 # ---------------------------------------------------------------------------

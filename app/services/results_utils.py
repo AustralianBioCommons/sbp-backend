@@ -802,6 +802,10 @@ def classify_wisps_output_key(key: str, sample_id: str | None = None) -> Classif
         return ClassifiedOutput(category="stats_csv", label=basename)
     if "/ipsae/" in lowered and basename.lower() == "ipsae_scores.csv":
         return ClassifiedOutput(category="stats_csv", label=basename)
+    if "/boltz_predictions/cif/" in lowered and basename.lower().endswith(".cif"):
+        return ClassifiedOutput(category="pdb", label=basename)
+    if "/colabfold_predictions/pdb/" in lowered and basename.lower().endswith(".pdb"):
+        return ClassifiedOutput(category="pdb", label=basename)
     return None
 
 
@@ -858,6 +862,8 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
         f"{run_uuid}/multiqc/",
         f"{run_uuid}/collect/",
         f"{run_uuid}/ipsae/",
+        f"{run_uuid}/boltz_predictions/cif/",
+        f"{run_uuid}/colabfold_predictions/pdb/",
     ]
 
 
@@ -941,6 +947,7 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_wisps_max_score,
         classifier=classify_wisps_output_key,
+        hidden_download_categories=frozenset({"pdb"}),
     )
 
 
@@ -951,6 +958,7 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         required_categories={"report", "stats_csv"},
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
+        hidden_download_categories=frozenset({"pdb"}),
         extract_max_score=extract_bulk_prediction_max_score,
         classifier=classify_wisps_output_key,
     )
