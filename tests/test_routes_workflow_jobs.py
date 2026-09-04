@@ -47,19 +47,15 @@ async def test_list_jobs_success(mock_db, mock_user_id):
     run_id = "run-123"
     seqera_run_id = "wf-123"
 
+    row = UserJobListRowFactory.build(
+        run_id=run_id,
+        seqera_run_id=seqera_run_id,
+        workflow_type="BindCraft",
+        tool="BindCraft",
+        score=0.95,
+    )
     with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(
-                    run_id=run_id,
-                    seqera_run_id=seqera_run_id,
-                    workflow_type="BindCraft",
-                    tool="BindCraft",
-                    score=0.95,
-                )
-            ],
-        ),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -135,13 +131,9 @@ async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
     """Test job listing with status filter."""
     run_id = "run-789"
 
+    row = UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-789", score=0.95)
     with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-789", score=0.95)
-            ],
-        ),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -301,7 +293,7 @@ async def test_list_jobs_stored_terminal_status_skips_seqera_lookup(mock_db, moc
     describe = AsyncMock()
 
     with (
-        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([user_run], 1)),
         patch("app.routes.workflow.jobs.describe_workflow", describe),
     ):
         response = await list_jobs(
@@ -341,7 +333,7 @@ async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db
     )
 
     with (
-        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([user_run], 1)),
         patch("app.routes.workflow.jobs.describe_workflow", new_callable=AsyncMock) as describe,
     ):
         response = await list_jobs(
@@ -364,11 +356,9 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
     """Test that jobs with non-matching status are filtered out."""
     run_id = "run-999"
 
+    row = UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-999")
     with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[UserJobListRowFactory.build(run_id=run_id, seqera_run_id="wf-999")],
-        ),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -388,37 +378,36 @@ async def test_list_jobs_filters_out_non_matching_status(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_pagination(mock_db, mock_user_id):
-    """Test job listing with pagination."""
-    run_ids = [f"run-{i}" for i in range(10)]
+async def test_list_jobs_with_pagination(test_db, persistent_models):
+    """Test job listing with pagination, sorted/sliced by the DB query."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    for index in range(10):
+        run = WorkflowRunFactory.create_sync(
+            workflow=workflow,
+            owner=user,
+            seqera_run_id=f"wf-{index}",
+            seqera_final_status="SUCCEEDED",
+            sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+            binder_name=None,
+            run_name=f"run-{index}",
+            submission_timestamp=datetime(2026, 2, 1, 10, index, tzinfo=UTC),
+        )
+        test_db.add(RunMetric(run_id=run.id, max_score=0.95))
+    test_db.commit()
 
-    with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(
-                    run_id=run_id,
-                    seqera_run_id=f"wf-{index}",
-                    score=0.95,
-                )
-                for index, run_id in enumerate(run_ids)
-            ],
-        ),
-        patch(
-            "app.routes.workflow.jobs.describe_workflow",
-            new_callable=AsyncMock,
-            return_value={"workflow": {"status": "SUCCEEDED"}},
-        ),
-    ):
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
         response = await list_jobs(
             search=None,
             status_filter=None,
             limit=5,
             offset=3,
-            current_user_id=mock_user_id,
-            db=mock_db,
+            current_user_id=user.id,
+            db=test_db,
         )
 
+    describe.assert_not_awaited()
     assert response.total == 10
     assert len(response.jobs) == 5
     assert response.limit == 5
@@ -426,24 +415,36 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_sort_by_score_places_failed_jobs_last(mock_db, mock_user_id):
-    """Unscored (e.g. failed) jobs sort to the end in both directions, even across pages."""
-    rows = [
-        UserJobListRowFactory.build(run_id="mid", seqera_run_id="wf-mid", score=0.5),
-        UserJobListRowFactory.build(run_id="failed-1", queued_status="failed", score=None),
-        UserJobListRowFactory.build(run_id="high", seqera_run_id="wf-high", score=0.9),
-        UserJobListRowFactory.build(run_id="failed-2", queued_status="failed", score=None),
-        UserJobListRowFactory.build(run_id="low", seqera_run_id="wf-low", score=0.1),
-    ]
+async def test_list_jobs_sort_by_score_places_failed_jobs_last(test_db, persistent_models):
+    """Unscored (e.g. failed) jobs sort to the end in both directions, even across pages.
+    Exercises the DB-level `ORDER BY ... NULLS LAST`, not just the search/live-status
+    fallback path."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
 
-    with (
-        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=rows),
-        patch(
-            "app.routes.workflow.jobs.describe_workflow",
-            new_callable=AsyncMock,
-            return_value={"workflow": {"status": "SUCCEEDED"}},
-        ),
-    ):
+    def make_run(name: str, score: float | None, *, failed: bool = False) -> None:
+        run = WorkflowRunFactory.create_sync(
+            workflow=workflow,
+            owner=user,
+            seqera_run_id=None if failed else f"wf-{name}",
+            seqera_final_status="FAILED" if failed else "SUCCEEDED",
+            sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+            binder_name=None,
+            run_name=name,
+            submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        )
+        if score is not None:
+            test_db.add(RunMetric(run_id=run.id, max_score=score))
+
+    make_run("mid", 0.5)
+    make_run("failed-1", None, failed=True)
+    make_run("high", 0.9)
+    make_run("failed-2", None, failed=True)
+    make_run("low", 0.1)
+    test_db.commit()
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
         desc_page_1 = await list_jobs(
             search=None,
             status_filter=None,
@@ -451,8 +452,8 @@ async def test_list_jobs_sort_by_score_places_failed_jobs_last(mock_db, mock_use
             offset=0,
             sort_by="score",
             sort_order="desc",
-            current_user_id=mock_user_id,
-            db=mock_db,
+            current_user_id=user.id,
+            db=test_db,
         )
         asc_all = await list_jobs(
             search=None,
@@ -461,16 +462,219 @@ async def test_list_jobs_sort_by_score_places_failed_jobs_last(mock_db, mock_use
             offset=0,
             sort_by="score",
             sort_order="asc",
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    # The first (highest-score) page must not contain any failed/unscored jobs.
+    assert [job.jobName for job in desc_page_1.jobs] == ["high", "mid"]
+    # Ascending order still pushes failed jobs (order between them is unspecified) to the very end.
+    names = [job.jobName for job in asc_all.jobs]
+    assert names[:3] == ["low", "mid", "high"]
+    assert set(names[3:]) == {"failed-1", "failed-2"}
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_status_filter_db_resolvable_combo(test_db, persistent_models):
+    """Completed/Failed/Stopped/Pending/Staging are all resolvable from stored columns,
+    so combining them stays a single DB query with no live Seqera calls."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+
+    def make_terminal(name: str, seqera_final_status: str) -> None:
+        WorkflowRunFactory.create_sync(
+            workflow=workflow,
+            owner=user,
+            seqera_run_id=f"wf-{name}",
+            seqera_final_status=seqera_final_status,
+            sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+            binder_name=None,
+            run_name=name,
+            submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        )
+
+    make_terminal("done", "SUCCEEDED")
+    make_terminal("broke", "FAILED")
+    make_terminal("axed", "CANCELLED")
+
+    pending_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        binder_name=None,
+        run_name="queued",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    QueuedJobFactory.create_sync(
+        workflow_run=pending_run,
+        workflow=workflow,
+        launch_payload={},
+        status="pending",
+    )
+    test_db.commit()
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
+        response = await list_jobs(
+            search=None,
+            status_filter=["Failed", "Stopped", "Pending"],
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    assert {job.jobName for job in response.jobs} == {"broke", "axed", "queued"}
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_completed_filter_matches_unresolved_scored_row_via_db(
+    test_db, persistent_models
+):
+    """A row with a cached score but no terminal Seqera status yet (e.g. Seqera was
+    unreachable on a prior sync) should still match a Completed filter - the DB query
+    treats "not locally queued, not terminal, but scored" as Completed."""
+    from app.services.seqera_errors import SeqeraAPIError
+
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id="wf-ambiguous",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        binder_name=None,
+        run_name="ambiguous",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    test_db.add(RunMetric(run_id=run.id, max_score=0.7))
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.jobs.describe_workflow",
+        new_callable=AsyncMock,
+        side_effect=SeqeraAPIError("Internal error", status_code=500),
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=["Completed"],
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    assert len(response.jobs) == 1
+    assert response.jobs[0].status == "Completed"
+    assert response.jobs[0].score == 0.7
+    assert response.seqeraUnavailable is True
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_completed_filter_drops_scored_row_that_is_actually_still_running(
+    test_db, persistent_models
+):
+    """The DB query optimistically includes a scored-but-not-yet-terminal row under a
+    Completed filter; if the live Seqera check (done for the returned page) reveals
+    it's actually still running, it must be dropped rather than misreported."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id="wf-ambiguous",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        binder_name=None,
+        run_name="ambiguous",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    test_db.add(RunMetric(run_id=run.id, max_score=0.7))
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.jobs.describe_workflow",
+        new_callable=AsyncMock,
+        return_value={"workflow": {"status": "RUNNING"}},
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=["Completed"],
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    assert response.jobs == []
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_routes_search_to_full_scan_not_db_page(mock_db, mock_user_id):
+    """A search term can't be resolved by the DB query alone (a job name can fall back
+    to a live Seqera value), so it must use the full-scan path, not the DB-paginated
+    one."""
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[]) as get_rows,
+        patch("app.routes.workflow.jobs.get_user_job_list_page") as get_page,
+    ):
+        await list_jobs(
+            search="anything",
+            status_filter=None,
+            limit=50,
+            offset=0,
             current_user_id=mock_user_id,
             db=mock_db,
         )
 
-    # The first (highest-score) page must not contain any failed/unscored jobs.
-    assert [job.id for job in desc_page_1.jobs] == ["high", "mid"]
-    # Ascending order still pushes failed jobs (order between them is unspecified) to the very end.
-    ids = [job.id for job in asc_all.jobs]
-    assert ids[:3] == ["low", "mid", "high"]
-    assert set(ids[3:]) == {"failed-1", "failed-2"}
+    get_rows.assert_called_once()
+    get_page.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_routes_live_only_status_filter_to_full_scan(mock_db, mock_user_id):
+    """In queue / In progress aren't persisted anywhere (see LIVE_ONLY_UI_STATUSES), so
+    filtering on them must use the full-scan path, not the DB-paginated one."""
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[]) as get_rows,
+        patch("app.routes.workflow.jobs.get_user_job_list_page") as get_page,
+    ):
+        await list_jobs(
+            search=None,
+            status_filter=["In progress"],
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    get_rows.assert_called_once()
+    get_page.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_routes_plain_listing_to_db_page(mock_db, mock_user_id):
+    """No search and only DB-resolvable statuses should use the DB-paginated path."""
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows") as get_rows,
+        patch(
+            "app.routes.workflow.jobs.get_user_job_list_page", return_value=([], 0)
+        ) as get_page,
+    ):
+        await list_jobs(
+            search=None,
+            status_filter=["Completed"],
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    get_page.assert_called_once()
+    get_rows.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -479,16 +683,9 @@ async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status
     """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""
     from app.services.seqera_errors import SeqeraAPIError
 
+    row = UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")
     with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[
-                UserJobListRowFactory.build(
-                    run_id="run-1",
-                    seqera_run_id="wf-1",
-                )
-            ],
-        ),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -512,11 +709,9 @@ async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id):
     """Seqera 5xx errors fall back to DB data and flag seqeraUnavailable instead of surfacing a 502."""
     from app.services.seqera_errors import SeqeraAPIError
 
+    row = UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")
     with (
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_rows",
-            return_value=[UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")],
-        ),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
@@ -715,7 +910,7 @@ async def test_list_jobs_does_not_calculate_score_before_result_sync(
     )
 
     with (
-        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[user_run]),
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([user_run], 1)),
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,

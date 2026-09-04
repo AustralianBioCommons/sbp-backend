@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...config import Settings, get_settings
 from ...db.models.core import DataTransfer, RunInput, RunMetric, RunOutput, WorkflowRun
 from ...schemas.workflows.shared import (
+    LIVE_ONLY_UI_STATUSES,
     TERMINAL_SEQERA_STATUSES,
     BulkDeleteJobsRequest,
     BulkDeleteJobsResponse,
@@ -34,6 +35,7 @@ from ...services.job_utils import (
     format_tool_name,
     format_workflow_name,
     get_owned_run_by_id,
+    get_user_job_list_page,
     get_user_job_list_rows,
     parse_submit_datetime,
 )
@@ -115,6 +117,80 @@ async def cancel_workflow(
     )
 
 
+def _build_job_list_item(
+    user_run: UserJobListRow, seqera_payload: dict[str, object] | None
+) -> tuple[JobListItem, bool] | None:
+    """Build a JobListItem for one row. `seqera_payload` is the live Seqera lookup
+    result for this row if one was fetched (None if none was needed/attempted, {} if
+    Seqera was unreachable, a populated dict otherwise) - see `_fetch_seqera`.
+
+    Returns None if the run is inaccessible on Seqera (4xx) and should be dropped.
+    The second tuple element is True if Seqera was unreachable for this row.
+    """
+    run_id = user_run.run_id
+    owned_run = user_run.run
+    seqera_run_id = user_run.seqera_run_id
+
+    payload: dict[str, object] | None = None
+    ui_status = "N/A"
+    seqera_unavailable = False
+    if user_run.queued_status == "staging":
+        ui_status = "Staging"
+    elif user_run.queued_status == "pending":
+        ui_status = "Pending"
+    elif user_run.queued_status == "failed":
+        ui_status = "Failed"
+    elif stored_ui_status := _get_stored_terminal_ui_status(owned_run):
+        ui_status = stored_ui_status
+    elif seqera_run_id:
+        if seqera_payload is None:
+            # 4xx: run is inaccessible (not found, wrong workspace, no permission).
+            return None
+        if seqera_payload:
+            payload = seqera_payload
+            pipeline_status = extract_pipeline_status(seqera_payload)
+            ui_status = map_pipeline_status_to_ui(pipeline_status)
+        else:
+            seqera_unavailable = True
+
+    wf = coerce_workflow_payload(payload or {})
+    submitted_at = (
+        parse_submit_datetime(payload or {}) or owned_run.submission_timestamp or datetime.now(UTC)
+    )
+    job_name = _resolve_job_name(run_id, wf, owned_run)
+
+    db_score = user_run.score
+    # A cached score means the job completed at some point; treat it as Completed
+    # when Seqera is unreachable and we cannot get the live status.
+    if ui_status == "N/A" and db_score is not None:
+        ui_status = "Completed"
+
+    item = JobListItem(
+        id=run_id,
+        seqeraRunId=seqera_run_id,
+        jobName=job_name,
+        workflow=user_run.workflow_type,
+        tool=user_run.tool,
+        status=ui_status,
+        submittedAt=submitted_at,
+        score=db_score if ui_status == "Completed" else None,
+        finalDesignCount=user_run.final_design_count,
+    )
+    return item, seqera_unavailable
+
+
+def _rows_needing_live_status(user_runs: list[UserJobListRow]) -> list[UserJobListRow]:
+    """Rows whose status can't be resolved from stored columns alone - not locally
+    queued (pending/staging/failed) and not yet Seqera-finalized."""
+    return [
+        user_run
+        for user_run in user_runs
+        if user_run.seqera_run_id
+        and user_run.queued_status not in {"pending", "staging", "failed"}
+        and not user_run.run.is_seqera_finalized()
+    ]
+
+
 def _compare_submitted(a: JobListItem, b: JobListItem, order: str) -> int:
     if a.submittedAt == b.submittedAt:
         return 0
@@ -158,7 +234,6 @@ async def list_jobs(
     settings: Settings = Depends(get_settings),
 ) -> JobListResponse:
     """Retrieve a paginated list of the current user's jobs with search and filtering."""
-    user_runs = get_user_job_list_rows(db, current_user_id)
     search_text = (search or "").strip().lower()
     allowed_statuses = set(status_filter or [])
 
@@ -186,93 +261,79 @@ async def list_jobs(
             )
             return user_run.run_id, {}
 
-    # Only need to get status from seqera for runs
-    #   that are currently running
-    seqera_fetch_rows = [
-        user_run
-        for user_run in user_runs
-        if user_run.seqera_run_id
-        and user_run.queued_status not in {"pending", "staging", "failed"}
-        and not user_run.run.is_seqera_finalized()
-    ]
-    seqera_results = dict(
-        await asyncio.gather(*(_fetch_seqera(user_run) for user_run in seqera_fetch_rows))
-    )
-
-    jobs: list[JobListItem] = []
-    seqera_unavailable = False
-
-    for user_run in user_runs:
-        run_id = user_run.run_id
-        owned_run = user_run.run
-        seqera_run_id = user_run.seqera_run_id
-
-        seqera_payload: dict[str, object] | None = None
-        ui_status = "N/A"
-        if user_run.queued_status == "staging":
-            ui_status = "Staging"
-        elif user_run.queued_status == "pending":
-            ui_status = "Pending"
-        elif user_run.queued_status == "failed":
-            ui_status = "Failed"
-        elif stored_ui_status := _get_stored_terminal_ui_status(owned_run):
-            ui_status = stored_ui_status
-        elif seqera_run_id:
-            fetched_payload = seqera_results.get(run_id)
-            if fetched_payload is None:
-                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-                continue
-            if fetched_payload:
-                seqera_payload = fetched_payload
-                pipeline_status = extract_pipeline_status(fetched_payload)
-                ui_status = map_pipeline_status_to_ui(pipeline_status)
-            else:
-                seqera_unavailable = True
-
-        if allowed_statuses and ui_status not in allowed_statuses:
-            continue
-
-        wf = coerce_workflow_payload(seqera_payload or {})
-        submitted_at = (
-            parse_submit_datetime(seqera_payload or {})
-            or owned_run.submission_timestamp
-            or datetime.now(UTC)
+    async def _fetch_seqera_for(user_runs: list[UserJobListRow]) -> dict[str, dict[str, object] | None]:
+        return dict(
+            await asyncio.gather(
+                *(_fetch_seqera(user_run) for user_run in _rows_needing_live_status(user_runs))
+            )
         )
 
-        workflow_type = user_run.workflow_type
-        tool = user_run.tool
-        job_name = _resolve_job_name(run_id, wf, owned_run)
+    # Job name/workflow/tool search and the two Seqera-only statuses (In queue,
+    # In progress - see LIVE_ONLY_UI_STATUSES) can't be resolved by a DB query alone,
+    # so those fall back to fetching + live-checking the user's whole job history.
+    # Otherwise, sort/filter/paginate in SQL and only make live Seqera calls for the
+    # page we're about to return - not the user's entire history on every request.
+    if not search_text and not (allowed_statuses & LIVE_ONLY_UI_STATUSES):
+        page_rows, total = get_user_job_list_page(
+            db,
+            current_user_id,
+            allowed_statuses=allowed_statuses,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+        seqera_results = await _fetch_seqera_for(page_rows)
 
+        jobs: list[JobListItem] = []
+        seqera_unavailable = False
+        for user_run in page_rows:
+            built = _build_job_list_item(user_run, seqera_results.get(user_run.run_id))
+            if built is None:
+                continue
+            item, unavailable = built
+            seqera_unavailable = seqera_unavailable or unavailable
+            if allowed_statuses and item.status not in allowed_statuses:
+                # Rare: the DB filter used the best-known stored status for a run that
+                # hadn't reached a terminal Seqera state yet; the live check just done
+                # above for this row revealed a different one.
+                # ponytail: this (and the 4xx case above) can make `total`/page-fullness
+                # slightly off in these rare cases; exact numbers would mean live-checking
+                # every row up front, which is the cost this path exists to avoid.
+                continue
+            jobs.append(item)
+
+        return JobListResponse(
+            jobs=jobs,
+            total=total,
+            limit=limit,
+            offset=offset,
+            seqeraUnavailable=seqera_unavailable,
+        )
+
+    user_runs = get_user_job_list_rows(db, current_user_id)
+    seqera_results = await _fetch_seqera_for(user_runs)
+
+    jobs = []
+    seqera_unavailable = False
+    for user_run in user_runs:
+        built = _build_job_list_item(user_run, seqera_results.get(user_run.run_id))
+        if built is None:
+            continue
+        item, unavailable = built
+        seqera_unavailable = seqera_unavailable or unavailable
+
+        if allowed_statuses and item.status not in allowed_statuses:
+            continue
         if (
             search_text
-            and search_text not in str(job_name).lower()
-            and search_text not in str(workflow_type or "").lower()
-            and search_text not in str(tool or "").lower()
+            and search_text not in item.jobName.lower()
+            and search_text not in str(item.workflow or "").lower()
+            and search_text not in str(item.tool or "").lower()
         ):
             continue
 
-        db_score = user_run.score
-
-        # A cached score means the job completed at some point; treat it as Completed
-        # when Seqera is unreachable and we cannot get the live status.
-        if ui_status == "N/A" and db_score is not None:
-            ui_status = "Completed"
-
-        score = db_score
-
-        jobs.append(
-            JobListItem(
-                id=run_id,
-                seqeraRunId=seqera_run_id,
-                jobName=job_name,
-                workflow=workflow_type,
-                tool=tool,
-                status=ui_status,
-                submittedAt=submitted_at,
-                score=score if ui_status == "Completed" else None,
-                finalDesignCount=user_run.final_design_count,
-            )
-        )
+        jobs.append(item)
 
     jobs.sort(key=cmp_to_key(lambda a, b: _compare_jobs(a, b, sort_by, sort_order)))
     total = len(jobs)
