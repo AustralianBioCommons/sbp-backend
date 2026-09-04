@@ -335,9 +335,9 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/collect/",
         f"{run.id}/ipsae/",
         f"{run.id}/boltz_predictions/cif/",
-        f"{run.id}/boltz_predictions/confidence/",
+        f"{run.id}/boltz_predictions/pae/",
         f"{run.id}/colabfold_predictions/pdb/",
-        f"{run.id}/colabfold_predictions/confidence/",
+        f"{run.id}/colabfold_predictions/pae/",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
         f"{run.id}/results/",
@@ -1343,20 +1343,20 @@ def test_classify_wisps_output_key_colabfold_predicted_structure():
     assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.pdb")
 
 
-def test_classify_wisps_output_key_boltz_confidence_json():
+def test_classify_wisps_output_key_boltz_pae_npz():
     run_id = str(uuid4())
     result = classify_wisps_output_key(
-        f"{run_id}/boltz_predictions/confidence/sample1_model_0.json", None, "boltz"
+        f"{run_id}/boltz_predictions/pae/sample1_model_0.npz", None, "boltz"
     )
-    assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
+    assert result == ClassifiedOutput(category="pae", label="sample1_model_0.npz")
 
 
-def test_classify_wisps_output_key_colabfold_confidence_json():
+def test_classify_wisps_output_key_colabfold_pae_npz():
     run_id = str(uuid4())
     result = classify_wisps_output_key(
-        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json", None, "colabfold"
+        f"{run_id}/colabfold_predictions/pae/sample1_model_0.npz", None, "colabfold"
     )
-    assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
+    assert result == ClassifiedOutput(category="pae", label="sample1_model_0.npz")
 
 
 def test_classify_wisps_output_key_tool_restricts_to_matching_predictions_folder():
@@ -1382,17 +1382,17 @@ def test_make_wisps_classifier_binds_tool():
     boltz_classifier = make_wisps_classifier("boltz")
     colabfold_classifier = make_wisps_classifier("colabfold")
 
-    boltz_confidence = f"{run_id}/boltz_predictions/confidence/sample1.json"
-    colabfold_confidence = f"{run_id}/colabfold_predictions/confidence/sample1.json"
+    boltz_pae = f"{run_id}/boltz_predictions/pae/sample1.npz"
+    colabfold_pae = f"{run_id}/colabfold_predictions/pae/sample1.npz"
 
-    assert boltz_classifier(boltz_confidence, None) == ClassifiedOutput(
-        category="confidence", label="sample1.json"
+    assert boltz_classifier(boltz_pae, None) == ClassifiedOutput(
+        category="pae", label="sample1.npz"
     )
-    assert boltz_classifier(colabfold_confidence, None) is None
-    assert colabfold_classifier(colabfold_confidence, None) == ClassifiedOutput(
-        category="confidence", label="sample1.json"
+    assert boltz_classifier(colabfold_pae, None) is None
+    assert colabfold_classifier(colabfold_pae, None) == ClassifiedOutput(
+        category="pae", label="sample1.npz"
     )
-    assert colabfold_classifier(boltz_confidence, None) is None
+    assert colabfold_classifier(boltz_pae, None) is None
 
 
 def test_classify_wisps_output_key_returns_none_for_unmatched():
@@ -1522,8 +1522,8 @@ def test_build_wisps_output_listing_prefixes():
     assert f"{run.id}/ipsae/" in prefixes
     assert f"{run.id}/boltz_predictions/cif/" in prefixes
     assert f"{run.id}/colabfold_predictions/pdb/" in prefixes
-    assert f"{run.id}/boltz_predictions/confidence/" in prefixes
-    assert f"{run.id}/colabfold_predictions/confidence/" in prefixes
+    assert f"{run.id}/boltz_predictions/pae/" in prefixes
+    assert f"{run.id}/colabfold_predictions/pae/" in prefixes
 
 
 def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
@@ -1558,6 +1558,7 @@ async def test_get_result_output_downloads_hides_pdb_for_interaction_screening(
         f"{run.id}/multiqc/multiqc_report.html",
         f"{run.id}/collect/boltz_confidence_scores_full.csv",
         f"{run.id}/boltz_predictions/cif/sample1_model_0.cif",
+        f"{run.id}/boltz_predictions/pae/sample1_model_0.npz",
     ]
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_keys]
     test_db.add_all([user, run, *outputs])
@@ -1570,9 +1571,10 @@ async def test_get_result_output_downloads_hides_pdb_for_interaction_screening(
         new_callable=AsyncMock,
         side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
     ):
-        downloads = await get_result_output_downloads(test_db, run)
+        result = await get_result_output_downloads(test_db, run)
 
-    assert [item.category for item in downloads] == ["report", "stats_csv"]
+    assert [item.category for item in result.downloads] == ["report", "stats_csv"]
+    assert result.hidden_categories == ["pdb", "pae"]
 
 
 @pytest.mark.asyncio

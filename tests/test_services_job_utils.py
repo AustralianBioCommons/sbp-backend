@@ -660,7 +660,8 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
 
     # bindcraft's ranked PDB structures are still required for the fast-path
     # completeness check, but are hidden from the individual file listing.
-    assert [item.category for item in result] == ["report", "stats_csv"]
+    assert [item.category for item in result.downloads] == ["report", "stats_csv"]
+    assert result.hidden_categories == ["pdb"]
     mocked_sync.assert_not_awaited()
 
 

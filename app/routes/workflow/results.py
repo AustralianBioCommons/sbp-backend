@@ -22,6 +22,7 @@ from ...schemas.workflows.shared import (
 )
 from ...services.job_utils import get_owned_run_by_id
 from ...services.results_utils import (
+    OutputCategory,
     _format_attachment_content_disposition,
     format_log_entries,
     get_all_downloads_zipped,
@@ -175,7 +176,7 @@ async def get_result_downloads(
         )
 
     try:
-        downloads = await get_result_output_downloads(db, owned_run, settings=settings)
+        result = await get_result_output_downloads(db, owned_run, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -186,7 +187,8 @@ async def get_result_downloads(
     return ResultDownloadsResponse(
         runId=run_id,
         resultsSyncStatus=owned_run.results_sync_status,
-        downloads=downloads,
+        downloads=result.downloads,
+        hiddenCategories=result.hidden_categories,
     )
 
 
@@ -258,23 +260,27 @@ async def get_result_download_all(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
-@router.get("/{run_id}/download-pdb", response_class=StreamingResponse)
-async def get_result_download_pdb(
+@router.get("/{run_id}/download-category/{category}", response_class=StreamingResponse)
+async def get_result_download_category(
     run_id: str,
+    category: OutputCategory,
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """Stream a zip of this run's PDB structure outputs (e.g. bindcraft's ranked designs)."""
+    """Stream a zip of one hidden category's outputs (e.g. bindcraft's ranked PDB
+    structures, or WISPS's per-sample structure/PAE files)."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     raise_if_results_syncing_for_download(owned_run)
 
-    filename = f"pdb-structures-{owned_run.run_name or run_id}.zip"
+    filename = f"{category}-{owned_run.run_name or run_id}.zip"
     content_disposition = _format_attachment_content_disposition(filename)
     try:
-        zipped_pdb = await get_category_downloads_zipped(db, owned_run, "pdb", settings=settings)
+        zipped_category = await get_category_downloads_zipped(
+            db, owned_run, category, settings=settings
+        )
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -282,13 +288,14 @@ async def get_result_download_pdb(
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    if zipped_pdb is None:
+    if zipped_category is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="No PDB files found for this run"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No {category!r} files found for this run",
         )
 
     return StreamingResponse(
-        zipped_pdb,
+        zipped_category,
         media_type="application/zip",
         headers={"Content-Disposition": content_disposition},
     )
