@@ -149,7 +149,9 @@ async def list_jobs(
     ),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-    sort_by: str = Query("submitted", pattern="^(submitted|score)$", description="Field to sort by"),
+    sort_by: str = Query(
+        "submitted", pattern="^(submitted|score)$", description="Field to sort by"
+    ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
