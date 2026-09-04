@@ -261,7 +261,9 @@ async def list_jobs(
             )
             return user_run.run_id, {}
 
-    async def _fetch_seqera_for(user_runs: list[UserJobListRow]) -> dict[str, dict[str, object] | None]:
+    async def _fetch_seqera_for(
+        user_runs: list[UserJobListRow],
+    ) -> dict[str, dict[str, object] | None]:
         return dict(
             await asyncio.gather(
                 *(_fetch_seqera(user_run) for user_run in _rows_needing_live_status(user_runs))

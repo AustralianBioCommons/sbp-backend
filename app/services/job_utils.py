@@ -147,7 +147,9 @@ def _build_db_status_filter(
         "Pending": queued_status_col == "pending",
         "Staging": queued_status_col == "staging",
     }
-    clauses = [clause_by_status[status] for status in allowed_statuses if status in clause_by_status]
+    clauses = [
+        clause_by_status[status] for status in allowed_statuses if status in clause_by_status
+    ]
     if not clauses:
         return false()
     return or_(*clauses)

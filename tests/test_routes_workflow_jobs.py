@@ -660,9 +660,7 @@ async def test_list_jobs_routes_plain_listing_to_db_page(mock_db, mock_user_id):
     """No search and only DB-resolvable statuses should use the DB-paginated path."""
     with (
         patch("app.routes.workflow.jobs.get_user_job_list_rows") as get_rows,
-        patch(
-            "app.routes.workflow.jobs.get_user_job_list_page", return_value=([], 0)
-        ) as get_page,
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([], 0)) as get_page,
     ):
         await list_jobs(
             search=None,
