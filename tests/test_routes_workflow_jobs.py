@@ -426,6 +426,54 @@ async def test_list_jobs_with_pagination(mock_db, mock_user_id):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_sort_by_score_places_failed_jobs_last(mock_db, mock_user_id):
+    """Unscored (e.g. failed) jobs sort to the end in both directions, even across pages."""
+    rows = [
+        UserJobListRowFactory.build(run_id="mid", seqera_run_id="wf-mid", score=0.5),
+        UserJobListRowFactory.build(run_id="failed-1", queued_status="failed", score=None),
+        UserJobListRowFactory.build(run_id="high", seqera_run_id="wf-high", score=0.9),
+        UserJobListRowFactory.build(run_id="failed-2", queued_status="failed", score=None),
+        UserJobListRowFactory.build(run_id="low", seqera_run_id="wf-low", score=0.1),
+    ]
+
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=rows),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            return_value={"workflow": {"status": "SUCCEEDED"}},
+        ),
+    ):
+        desc_page_1 = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=2,
+            offset=0,
+            sort_by="score",
+            sort_order="desc",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+        asc_all = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            sort_by="score",
+            sort_order="asc",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    # The first (highest-score) page must not contain any failed/unscored jobs.
+    assert [job.id for job in desc_page_1.jobs] == ["high", "mid"]
+    # Ascending order still pushes failed jobs (order between them is unspecified) to the very end.
+    ids = [job.id for job in asc_all.jobs]
+    assert ids[:3] == ["low", "mid", "high"]
+    assert set(ids[3:]) == {"failed-1", "failed-2"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("seqera_status", [403, 404])
 async def test_list_jobs_seqera_4xx_skipped(mock_db, mock_user_id, seqera_status):
     """Runs that return 4xx from Seqera are silently skipped (not found, wrong workspace, etc.)."""

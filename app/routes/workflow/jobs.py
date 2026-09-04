@@ -6,6 +6,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import cmp_to_key
 from typing import Any
 from uuid import UUID
 
@@ -114,6 +115,30 @@ async def cancel_workflow(
     )
 
 
+def _compare_submitted(a: JobListItem, b: JobListItem, order: str) -> int:
+    if a.submittedAt == b.submittedAt:
+        return 0
+    result = -1 if a.submittedAt < b.submittedAt else 1
+    return result if order == "asc" else -result
+
+
+def _compare_jobs(a: JobListItem, b: JobListItem, sort_by: str, order: str) -> int:
+    """Sort jobs, with unscored (e.g. failed) jobs always last regardless of order."""
+    if sort_by != "score":
+        return _compare_submitted(a, b, order)
+
+    if a.score is None and b.score is None:
+        return _compare_submitted(a, b, "desc")
+    if a.score is None:
+        return 1
+    if b.score is None:
+        return -1
+    if a.score == b.score:
+        return _compare_submitted(a, b, "desc")
+    result = -1 if a.score < b.score else 1
+    return result if order == "asc" else -result
+
+
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
     search: str | None = Query(None, description="Search by job name, workflow type, or tool"),
@@ -124,6 +149,8 @@ async def list_jobs(
     ),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    sort_by: str = Query("submitted", pattern="^(submitted|score)$", description="Field to sort by"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -245,7 +272,7 @@ async def list_jobs(
             )
         )
 
-    jobs.sort(key=lambda item: item.submittedAt, reverse=True)
+    jobs.sort(key=cmp_to_key(lambda a, b: _compare_jobs(a, b, sort_by, sort_order)))
     total = len(jobs)
     jobs = jobs[offset : offset + limit]
 
