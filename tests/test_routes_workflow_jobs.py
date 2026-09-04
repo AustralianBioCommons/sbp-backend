@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.db.models.core import RunMetric
 from app.main import create_app
 from app.routes.workflow.jobs import get_job_details, list_jobs
+from app.services.job_utils import UserJobListRow
 from tests.datagen import (
     AppUserFactory,
     QueuedJobFactory,
@@ -124,6 +125,203 @@ async def test_list_jobs_with_search(mock_db, mock_user_id):
 
     assert len(response.jobs) == 1
     assert response.jobs[0].jobName == "Matching Job"
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_search_path_sorts_and_filters(mock_db, mock_user_id):
+    """The full-scan (search) fallback path still sorts and filters correctly -
+    exercises _compare_jobs/_compare_submitted directly (score ties, nulls, both
+    sort_by branches), not just the DB-sorted fast path."""
+
+    def scored_row(run_id: str, score: float | None, submitted_at: datetime) -> UserJobListRow:
+        run = WorkflowRunFactory.build(
+            seqera_final_status="SUCCEEDED" if score is not None else "FAILED",
+            sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+            binder_name=None,
+            run_name=None,
+            submission_timestamp=submitted_at,
+        )
+        return UserJobListRowFactory.build(
+            run=run,
+            run_id=run_id,
+            seqera_run_id=f"wf-{run_id}",
+            workflow_type="Job Alpha",
+            score=score,
+        )
+
+    excluded = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(
+            seqera_final_status="SUCCEEDED",
+            sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+            binder_name=None,
+            run_name=None,
+            submission_timestamp=datetime(2026, 2, 1, 6, 0, tzinfo=UTC),
+        ),
+        run_id="excluded",
+        seqera_run_id="wf-excluded",
+        workflow_type="Other Thing",
+        score=0.3,
+    )
+    rows = [
+        scored_row("tie-a", 0.5, datetime(2026, 2, 1, 9, 0, tzinfo=UTC)),
+        scored_row("tie-b", 0.5, datetime(2026, 2, 1, 10, 0, tzinfo=UTC)),
+        scored_row("high", 0.9, datetime(2026, 2, 1, 8, 0, tzinfo=UTC)),
+        scored_row("failed", None, datetime(2026, 2, 1, 7, 0, tzinfo=UTC)),
+        excluded,
+    ]
+
+    describe = AsyncMock()
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=rows),
+        patch("app.routes.workflow.jobs.describe_workflow", describe),
+    ):
+        desc = await list_jobs(
+            search="job",
+            status_filter=None,
+            limit=50,
+            offset=0,
+            sort_by="score",
+            sort_order="desc",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+        asc = await list_jobs(
+            search="job",
+            status_filter=None,
+            limit=50,
+            offset=0,
+            sort_by="score",
+            sort_order="asc",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+        by_submitted = await list_jobs(
+            search="job",
+            status_filter=None,
+            limit=50,
+            offset=0,
+            sort_by="submitted",
+            sort_order="asc",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    # "excluded" never matches the search text - its workflow/tool/name don't contain "job".
+    assert [job.id for job in desc.jobs] == ["high", "tie-b", "tie-a", "failed"]
+    ids_asc = [job.id for job in asc.jobs]
+    assert ids_asc[:3] == ["tie-b", "tie-a", "high"]
+    assert ids_asc[3] == "failed"
+    assert [job.id for job in by_submitted.jobs] == ["failed", "high", "tie-a", "tie-b"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_search_path_skips_4xx_inaccessible_run(mock_db, mock_user_id):
+    """4xx-inaccessible runs are dropped in the full-scan (search) path too, not just
+    the DB-paginated fast path."""
+    from app.services.seqera_errors import SeqeraAPIError
+
+    visible = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(
+            seqera_final_status="SUCCEEDED", binder_name=None, run_name=None
+        ),
+        run_id="visible",
+        seqera_run_id="wf-visible",
+        workflow_type="Job Alpha",
+    )
+    inaccessible = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run_id="gone",
+        seqera_run_id="wf-gone",
+        workflow_type="Job Alpha",
+    )
+
+    with (
+        patch(
+            "app.routes.workflow.jobs.get_user_job_list_rows",
+            return_value=[visible, inaccessible],
+        ),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            side_effect=SeqeraAPIError("Not found", status_code=404),
+        ),
+    ):
+        response = await list_jobs(
+            search="job",
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    assert [job.id for job in response.jobs] == ["visible"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_live_only_status_filter_selects_matching_rows(mock_db, mock_user_id):
+    """Filtering to a live-only status (In progress) uses the full-scan path and still
+    filters out rows that resolve to a different live status (here, In queue)."""
+    running = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run_id="running",
+        seqera_run_id="wf-running",
+    )
+    queued = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run_id="queued",
+        seqera_run_id="wf-queued",
+    )
+
+    async def fake_describe(seqera_run_id, settings=None):
+        if seqera_run_id == "wf-running":
+            return {"workflow": {"status": "RUNNING"}}
+        return {"workflow": {"status": "SUBMITTED"}}
+
+    with (
+        patch(
+            "app.routes.workflow.jobs.get_user_job_list_rows",
+            return_value=[running, queued],
+        ),
+        patch("app.routes.workflow.jobs.describe_workflow", side_effect=fake_describe),
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=["In progress"],
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    assert [job.id for job in response.jobs] == ["running"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_seqera_unexpected_error_falls_back(mock_db, mock_user_id):
+    """A non-SeqeraAPIError exception from describe_workflow still falls back to DB
+    data and flags seqeraUnavailable, same as a 5xx SeqeraAPIError."""
+    row = UserJobListRowFactory.build(run_id="run-1", seqera_run_id="wf-1")
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([row], 1)),
+        patch(
+            "app.routes.workflow.jobs.describe_workflow",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        result = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    assert result.seqeraUnavailable is True
+    assert len(result.jobs) == 1
 
 
 @pytest.mark.asyncio
