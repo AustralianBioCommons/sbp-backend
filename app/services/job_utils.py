@@ -10,12 +10,13 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, Select, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import ColumnElement, Select, and_, false, func, or_, select
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from ..config import Settings
 from ..db.models.core import RunMetric, WorkflowRun
 from ..db.models.job_queue import JobStatus, QueuedJob
+from ..schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus, UIStatus
 from .results_utils import (
     get_output_spec,
     get_sample_id_for_result,
@@ -106,6 +107,130 @@ def get_user_job_list_rows(db: Session, user_id: UUID) -> list[UserJobListRow]:
         )
         for run, queued_status in rows
     ]
+
+
+def _build_db_status_filter(
+    allowed_statuses: set[str],
+    queued_status_col: ColumnElement[JobStatus | None],
+    score_col: ColumnElement[float | None],
+) -> ColumnElement[bool] | None:
+    """Express an allowed-statuses filter as SQL, for statuses derivable from stored
+    columns alone. Callers must exclude LIVE_ONLY_UI_STATUSES first - those (In queue,
+    In progress) only exist between "submitted to Seqera" and "terminal", which isn't
+    persisted anywhere (see job_sync.py's non-terminal branch), so they can't be
+    expressed here.
+    """
+    if not allowed_statuses:
+        return None
+
+    seqera_upper = func.upper(WorkflowRun.seqera_final_status)
+    not_locally_queued = or_(
+        queued_status_col.is_(None), queued_status_col.not_in(["pending", "staging", "failed"])
+    )
+    not_terminal = or_(
+        WorkflowRun.seqera_final_status.is_(None),
+        seqera_upper.not_in(tuple(TERMINAL_SEQERA_STATUSES)),
+    )
+
+    # Mirrors the per-row branching in routes/workflow/jobs.py's list_jobs.
+    clause_by_status: dict[str, ColumnElement[bool]] = {
+        UIStatus.COMPLETED.value: or_(
+            seqera_upper == PipelineStatus.SUCCEEDED.value,
+            # Seqera unreachable but we already have a cached score from a prior sync.
+            and_(not_locally_queued, not_terminal, score_col.is_not(None)),
+        ),
+        UIStatus.FAILED.value: or_(
+            queued_status_col == "failed",
+            seqera_upper.in_([PipelineStatus.FAILED.value, PipelineStatus.UNKNOWN.value]),
+        ),
+        UIStatus.STOPPED.value: seqera_upper == PipelineStatus.CANCELLED.value,
+        "Pending": queued_status_col == "pending",
+        "Staging": queued_status_col == "staging",
+    }
+    clauses = [
+        clause_by_status[status] for status in allowed_statuses if status in clause_by_status
+    ]
+    if not clauses:
+        return false()
+    return or_(*clauses)
+
+
+def get_user_job_list_page_select(
+    user_id: UUID,
+    allowed_statuses: set[str],
+    sort_by: str,
+    sort_order: str,
+) -> Select[tuple[WorkflowRun, JobStatus | None]]:
+    queued_job_status = cast(
+        ColumnElement[JobStatus | None],
+        (
+            select(QueuedJob.status)
+            .where(QueuedJob.workflow_run_id == WorkflowRun.id)
+            .order_by(QueuedJob.queued_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        ),
+    )
+    score_metric = aliased(RunMetric)
+
+    stmt = (
+        select(WorkflowRun, queued_job_status)
+        .outerjoin(score_metric, score_metric.run_id == WorkflowRun.id)
+        .options(joinedload(WorkflowRun.workflow), joinedload(WorkflowRun.metrics))
+        .where(WorkflowRun.owner_user_id == user_id)
+    )
+
+    score_col = cast(ColumnElement[float | None], score_metric.max_score)
+    status_filter = _build_db_status_filter(allowed_statuses, queued_job_status, score_col)
+    if status_filter is not None:
+        stmt = stmt.where(status_filter)
+
+    if sort_by == "score":
+        primary: ColumnElement[Any] = score_col.asc() if sort_order == "asc" else score_col.desc()
+        stmt = stmt.order_by(primary.nulls_last(), WorkflowRun.submission_timestamp.desc())
+    else:
+        primary = (
+            WorkflowRun.submission_timestamp.asc()
+            if sort_order == "asc"
+            else WorkflowRun.submission_timestamp.desc()
+        )
+        stmt = stmt.order_by(primary.nulls_last())
+
+    return stmt
+
+
+def get_user_job_list_page(
+    db: Session,
+    user_id: UUID,
+    *,
+    allowed_statuses: set[str],
+    sort_by: str,
+    sort_order: str,
+    limit: int,
+    offset: int,
+) -> tuple[list[UserJobListRow], int]:
+    """DB-level sort/filter/paginate. Only valid when `allowed_statuses` excludes
+    LIVE_ONLY_UI_STATUSES - see `_build_db_status_filter`.
+    """
+    base_stmt = get_user_job_list_page_select(user_id, allowed_statuses, sort_by, sort_order)
+
+    total = db.scalar(select(func.count()).select_from(base_stmt.order_by(None).subquery())) or 0
+
+    rows = db.execute(base_stmt.limit(limit).offset(offset)).all()
+    page = [
+        UserJobListRow(
+            run=run,
+            run_id=str(run.id),
+            seqera_run_id=run.seqera_run_id,
+            workflow_type=_get_workflow_type(run),
+            tool=_get_tool(run),
+            score=_round_score(run.metrics.max_score) if run.metrics else None,
+            final_design_count=_get_final_design_count(run),
+            queued_status=queued_status,
+        )
+        for run, queued_status in rows
+    ]
+    return page, total
 
 
 def get_owned_run_by_id(db: Session, user_id: UUID, run_id: str) -> WorkflowRun | None:
