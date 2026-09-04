@@ -20,6 +20,7 @@ from app.db.models.core import (
 )
 from app.routes.workflow.results import (
     get_result_download_all,
+    get_result_download_category,
     get_result_downloads,
     get_result_file,
     get_result_logs,
@@ -27,6 +28,7 @@ from app.routes.workflow.results import (
     get_result_setting_params,
     get_result_snapshots,
 )
+from app.services.results_utils import ResultOutputDownloads
 from app.services.s3 import S3ConfigurationError, S3ServiceError
 from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
@@ -391,13 +393,19 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
-    assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
+    # pdb is flagged hidden but still returned individually.
+    assert [item.category for item in result.downloads] == [
+        "report",
+        "stats_csv",
+        "pdb",
+    ]
     assert [item.label for item in result.downloads] == [
         "PDL1_l100_s975117.html",
         "demo2_final_design_stats.csv",
         "1_PDL1_model1.pdb",
     ]
     assert all(item.category != "snapshot" for item in result.downloads)
+    assert result.hiddenCategories == ["pdb"]
     assert (
         result.downloads[1].url
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
@@ -457,7 +465,7 @@ async def test_get_result_downloads_returns_cancelled_status_for_failed_run(test
 
     with patch(
         "app.routes.workflow.results.get_result_output_downloads",
-        new=AsyncMock(return_value=[]),
+        new=AsyncMock(return_value=ResultOutputDownloads(downloads=[], hidden_categories=[])),
     ):
         result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
@@ -517,6 +525,229 @@ async def test_get_result_download_all_returns_valid_zip_file(
         assert zip_file.read("report/result.html") == b"<html>report</html>"
         assert zip_file.read("stats_csv/download-all_final_design_stats.csv") == b"score\n0.9\n"
         assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_returns_valid_zip_file(
+    test_db, persistent_models, mock_settings
+):
+    """The category zip route bundles only that category, hidden from /downloads."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="bindcraft",
+        seqera_run_id="wf-download-category-1",
+        run_name="download-category-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    output_contents = {
+        f"{run.id}/generate/result.html": b"<html>report</html>",
+        f"{run.id}/ranker/download-category_final_design_stats.csv": b"score\n0.9\n",
+        f"{run.id}/ranker/download-category_Ranked/model.pdb": b"ATOM\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
+        response = await get_result_download_category(
+            str(run.id), "pdb", user.id, test_db, mock_settings
+        )
+
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    returned_zip = BytesIO(body)
+
+    assert response.media_type == "application/zip"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="pdb-download-category-run.zip"; '
+        "filename*=UTF-8''pdb-download-category-run.zip"
+    )
+    with ZipFile(returned_zip) as zip_file:
+        assert set(zip_file.namelist()) == {"pdb/model.pdb"}
+        assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_returns_404_without_matching_outputs(
+    test_db, persistent_models, mock_settings
+):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="bindcraft",
+        seqera_run_id="wf-download-category-empty",
+        run_name="download-category-empty-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.commit()
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "No 'pdb' files found for this run"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_returns_404_for_missing_owned_run(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|download-category-missing",
+        name="Download Category Missing",
+        email="download-category-missing@example.com",
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_download_category(
+            "wf-download-category-missing", "pdb", user.id, test_db, mock_settings
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_returns_404_while_results_sync(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-category-syncing",
+        name="Download Category Syncing",
+        email="download-category-syncing@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-category-syncing",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+        work_dir="/tmp/wf-download-category-syncing",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(),
+    ) as get_zip:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
+
+    get_zip.assert_not_awaited()
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Results are still syncing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_maps_s3_configuration_error_to_500(
+    test_db, mock_settings
+):
+    user = AppUser(
+        auth0_user_id="auth0|download-category-config-err",
+        name="Download Category Config Err",
+        email="download-category-config-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-category-config-err",
+        work_dir="/tmp/wf-download-category-config-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "s3 config missing"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_maps_s3_service_error_to_502(test_db, mock_settings):
+    user = AppUser(
+        auth0_user_id="auth0|download-category-service-err",
+        name="Download Category Service Err",
+        email="download-category-service-err@example.com",
+    )
+    run = WorkflowRun(
+        owner=user,
+        seqera_run_id="wf-download-category-service-err",
+        work_dir="/tmp/wf-download-category-service-err",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.results.get_category_downloads_zipped",
+        new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "s3 upstream error"
+
+
+@pytest.mark.asyncio
+async def test_get_result_download_category_bundles_pae_files(
+    test_db, persistent_models, mock_settings
+):
+    """The same generic route bundles WISPS's per-sample PAE npz files."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="interaction-screening")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="boltz",
+        seqera_run_id="wf-download-category-pae",
+        run_name="download-category-pae-run",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    output_contents = {
+        f"{run.id}/multiqc/multiqc_report.html": b"<html>report</html>",
+        f"{run.id}/boltz_predictions/pae/sample1.npz": b"npz-bytes",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch("app.services.results_utils.read_s3_bytes", new=AsyncMock(side_effect=read_bytes)):
+        response = await get_result_download_category(
+            str(run.id), "pae", user.id, test_db, mock_settings
+        )
+
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    with ZipFile(BytesIO(body)) as zip_file:
+        assert set(zip_file.namelist()) == {"pae/sample1.npz"}
+        assert zip_file.read("pae/sample1.npz") == b"npz-bytes"
 
 
 @pytest.mark.asyncio

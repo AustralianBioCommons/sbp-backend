@@ -32,7 +32,7 @@ from .s3 import (
     read_s3_file,
 )
 
-OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment", "usage"]
+OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment", "pae", "usage"]
 
 
 class OutputClassifier(Protocol):
@@ -85,6 +85,10 @@ class WorkflowResultsSpec:
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
+    # Flagged in `get_result_output_downloads`'s `hidden_categories` for a UI
+    # to bundle as one zip instead of listing individually; still returned
+    # in `downloads` itself for callers that read files directly.
+    hidden_download_categories: frozenset[OutputCategory] = frozenset()
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
@@ -784,12 +788,20 @@ def build_alphafold2_proteinfold_output_listing_prefixes(run: WorkflowRun) -> li
     return prefixes
 
 
-def classify_wisps_output_key(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_wisps_output_key(
+    key: str, sample_id: str | None, tool: str
+) -> ClassifiedOutput | None:
+    """Classify one WISPS output key.
+
+    ``tool`` restricts the structure/PAE match to that tool's own prediction
+    folder, so a stale file under the other tool's folder is never picked up.
+    """
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
     basename = normalized.rsplit("/", 1)[-1]
     lowered = normalized.lower()
+    normalized_tool = tool.strip().lower()
 
     if "/multiqc/" in lowered and basename.lower() == "multiqc_report.html":
         return ClassifiedOutput(category="report", label=basename)
@@ -797,7 +809,27 @@ def classify_wisps_output_key(key: str, sample_id: str | None = None) -> Classif
         return ClassifiedOutput(category="stats_csv", label=basename)
     if "/ipsae/" in lowered and basename.lower() == "ipsae_scores.csv":
         return ClassifiedOutput(category="stats_csv", label=basename)
+
+    if normalized_tool == "boltz":
+        if "/boltz_predictions/cif/" in lowered and basename.lower().endswith(".cif"):
+            return ClassifiedOutput(category="pdb", label=basename)
+        if "/boltz_predictions/pae/" in lowered and basename.lower().endswith(".npz"):
+            return ClassifiedOutput(category="pae", label=basename)
+    if normalized_tool == "colabfold":
+        if "/colabfold_predictions/pdb/" in lowered and basename.lower().endswith(".pdb"):
+            return ClassifiedOutput(category="pdb", label=basename)
+        if "/colabfold_predictions/pae/" in lowered and basename.lower().endswith(".npz"):
+            return ClassifiedOutput(category="pae", label=basename)
     return None
+
+
+def make_wisps_classifier(tool: WorkflowTool) -> OutputClassifier:
+    """Bind a WISPS classifier to one tool's own prediction folder."""
+
+    def _classify(key: str, sample_id: str | None) -> ClassifiedOutput | None:
+        return classify_wisps_output_key(key, sample_id, tool=tool)
+
+    return _classify
 
 
 def get_wisps_score_file(keys: list[str], sample_id: str | None) -> str | None:
@@ -848,12 +880,24 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
         return []
-    return [
+
+    prefixes = [
         f"{run_uuid}/",
         f"{run_uuid}/multiqc/",
         f"{run_uuid}/collect/",
         f"{run_uuid}/ipsae/",
     ]
+
+    # Only list the run's own tool's folder; unknown tool lists both.
+    tool = (get_tool_name(run) or "").strip().lower()
+    if tool in ("", "boltz"):
+        prefixes.append(f"{run_uuid}/boltz_predictions/cif/")
+        prefixes.append(f"{run_uuid}/boltz_predictions/pae/")
+    if tool in ("", "colabfold"):
+        prefixes.append(f"{run_uuid}/colabfold_predictions/pdb/")
+        prefixes.append(f"{run_uuid}/colabfold_predictions/pae/")
+
+    return prefixes
 
 
 def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
@@ -935,7 +979,8 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_wisps_max_score,
-        classifier=classify_wisps_output_key,
+        classifier=make_wisps_classifier(tool),
+        hidden_download_categories=frozenset({"pdb", "pae"}),
     )
 
 
@@ -946,8 +991,9 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         required_categories={"report", "stats_csv"},
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
+        hidden_download_categories=frozenset({"pdb", "pae"}),
         extract_max_score=extract_bulk_prediction_max_score,
-        classifier=classify_wisps_output_key,
+        classifier=make_wisps_classifier(tool),
     )
 
 
@@ -962,6 +1008,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             extract_max_score=extract_bindcraft_max_score,
             classifier=classify_bindcraft_output_key,
             supports_snapshots=True,
+            hidden_download_categories=frozenset({"pdb"}),
         ),
         "rfdiffusion": WorkflowResultsSpec(
             kind="de-novo-design",
@@ -1190,11 +1237,19 @@ async def sync_bindcraft_outputs(
     return discovered
 
 
+_CATEGORY_ORDER: dict[str, int] = {
+    "report": 0,
+    "stats_csv": 1,
+    "pdb": 2,
+    "alignment": 3,
+    "pae": 4,
+}
+
+
 def _get_output_sort_key(item: tuple[str, ClassifiedOutput]):
     """Sort output items by category, label, and key"""
-    category_order = {"report": 0, "stats_csv": 1, "pdb": 2, "alignment": 3}
     key, output = item
-    return (category_order.get(output.category, 99), output.label.lower(), key)
+    return (_CATEGORY_ORDER.get(output.category, 99), output.label.lower(), key)
 
 
 async def _collect_outputs_with_fallback(
@@ -1223,10 +1278,25 @@ async def _collect_outputs_with_fallback(
     return collect_classified_outputs(db, run, spec)
 
 
+@dataclass(frozen=True)
+class ResultOutputDownloads:
+    """A run's downloads, plus which categories among them are hidden."""
+
+    downloads: list[ResultDownloadItem]
+    # Present, hidden categories - lets a UI offer them as one zip download
+    # instead of individual files, without per-workflow/tool knowledge.
+    hidden_categories: list[OutputCategory]
+
+
 async def get_result_output_downloads(
     db: Session, run: WorkflowRun, settings: Settings | None = None
-) -> list[ResultDownloadItem]:
-    """Return pre-signed non-snapshot links for the result artifacts shown in the UI."""
+) -> ResultOutputDownloads:
+    """Return pre-signed non-snapshot links for every result artifact.
+
+    Hidden-category outputs stay in `downloads` (a caller reading files
+    directly, e.g. a structure viewer, still needs them) but are also flagged
+    in `hidden_categories`, for a plain listing UI to bundle as one zip.
+    """
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
     outputs = await _collect_outputs_with_fallback(
@@ -1237,12 +1307,15 @@ async def get_result_output_downloads(
         settings=settings,
     )
 
-    downloads = []
+    downloads: list[ResultDownloadItem] = []
+    hidden_categories_present: set[OutputCategory] = set()
 
     # Sort and filter outputs
     for key, output in sorted(outputs.items(), key=_get_output_sort_key):
         if output.category in ("snapshot", "usage"):
             continue
+        if output.category in results_spec.hidden_download_categories:
+            hidden_categories_present.add(output.category)
         downloads.append(
             ResultDownloadItem(
                 label=output.label,
@@ -1252,7 +1325,10 @@ async def get_result_output_downloads(
             )
         )
 
-    return downloads
+    hidden_categories = sorted(
+        hidden_categories_present, key=lambda category: _CATEGORY_ORDER.get(category, 99)
+    )
+    return ResultOutputDownloads(downloads=downloads, hidden_categories=hidden_categories)
 
 
 async def get_all_downloads_zipped(
@@ -1278,6 +1354,43 @@ async def get_all_downloads_zipped(
     zip_file = BytesIO()
     with ZipFile(zip_file, "w") as zip_obj:
         for key, output in downloads:
+            content = await read_s3_bytes(key, settings=settings)
+            output_name = get_safe_zip_filename(output.category, output.label)
+            # Simple protection against duplicate filenames
+            if output_name in used_filenames:
+                output_name = get_safe_zip_filename(
+                    output.category, f"{len(used_filenames)}_{output.label}"
+                )
+            zip_obj.writestr(output_name, content)
+            used_filenames.add(output_name)
+    zip_file.seek(0)
+    return zip_file
+
+
+async def get_category_downloads_zipped(
+    db: Session,
+    run: WorkflowRun,
+    category: OutputCategory,
+    settings: Settings | None = None,
+) -> BytesIO | None:
+    """Zip a run's outputs in one category. Returns `None` if there are none."""
+    settings = settings or get_settings()
+    results_spec = get_output_spec(run)
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        results_spec,
+        is_complete=lambda outputs: bool(_filter_outputs_by_category(outputs, category)),
+        settings=settings,
+    )
+    category_outputs = _filter_outputs_by_category(outputs, category)
+    if not category_outputs:
+        return None
+
+    used_filenames: set[str] = set()
+    zip_file = BytesIO()
+    with ZipFile(zip_file, "w") as zip_obj:
+        for key, output in sorted(category_outputs.items(), key=_get_output_sort_key):
             content = await read_s3_bytes(key, settings=settings)
             output_name = get_safe_zip_filename(output.category, output.label)
             # Simple protection against duplicate filenames

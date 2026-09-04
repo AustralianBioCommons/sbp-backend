@@ -355,6 +355,8 @@ class ResultDownloadsResponse(BaseModel):
     runId: str
     resultsSyncStatus: str = "ready"
     downloads: list[ResultDownloadItem] = Field(default_factory=list)
+    # Categories bundled as a single zip instead of listed individually
+    hiddenCategories: list[str] = Field(default_factory=list)
 
 
 class ResultSnapshotsResponse(BaseModel):
