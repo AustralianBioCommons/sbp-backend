@@ -87,10 +87,9 @@ class WorkflowResultsSpec:
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
-    # Categories that are classified and counted towards `required_categories`
-    # (e.g. for report-readiness checks) but are excluded from the individual
-    # file listing returned by `get_result_output_downloads`, because they
-    # are surfaced instead as a single bundled zip (see `get_category_downloads_zipped`).
+    # Flagged in `get_result_output_downloads`'s `hidden_categories` for a UI
+    # to bundle as one zip instead of listing individually; still returned
+    # in `downloads` itself for callers that read files directly.
     hidden_download_categories: frozenset[OutputCategory] = frozenset()
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
@@ -796,11 +795,8 @@ def classify_wisps_output_key(
 ) -> ClassifiedOutput | None:
     """Classify one WISPS output key.
 
-    ``tool`` restricts the structure/PAE match to the given tool's own
-    prediction folder (``boltz_predictions/`` vs ``colabfold_predictions/``),
-    since only one of the two ever exists for a given run - matching both
-    unconditionally risked picking up stale/orphaned files from a different
-    tool's folder.
+    ``tool`` restricts the structure/PAE match to that tool's own prediction
+    folder, so a stale file under the other tool's folder is never picked up.
     """
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
@@ -830,8 +826,7 @@ def classify_wisps_output_key(
 
 
 def make_wisps_classifier(tool: WorkflowTool) -> OutputClassifier:
-    """Bind a WISPS classifier to one tool, so only that tool's own
-    prediction folder is matched for structure/PAE outputs."""
+    """Bind a WISPS classifier to one tool's own prediction folder."""
 
     def _classify(key: str, sample_id: str | None) -> ClassifiedOutput | None:
         return classify_wisps_output_key(key, sample_id, tool=tool)
@@ -895,10 +890,7 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
         f"{run_uuid}/ipsae/",
     ]
 
-    # Only list the run's own tool's prediction folder - the other tool's
-    # folder never exists for this run, so listing it just wastes a request.
-    # Unknown tool (e.g. ad-hoc calls without a resolvable run.tool) falls
-    # back to listing both.
+    # Only list the run's own tool's folder; unknown tool lists both.
     tool = (get_tool_name(run) or "").strip().lower()
     if tool in ("", "boltz"):
         prefixes.append(f"{run_uuid}/boltz_predictions/cif/")
@@ -1290,25 +1282,22 @@ async def _collect_outputs_with_fallback(
 
 @dataclass(frozen=True)
 class ResultOutputDownloads:
-    """Result of splitting a run's outputs into individually-listed files and
-    categories bundled instead as a single zip (see `hidden_download_categories`)."""
+    """A run's downloads, plus which categories among them are hidden."""
 
     downloads: list[ResultDownloadItem]
-    # Hidden categories that actually have output(s) for this run, ordered like
-    # the downloads list. The frontend uses this to know which "download as
-    # zip" buttons to offer, without hardcoding per-workflow/tool knowledge.
+    # Present, hidden categories - lets a UI offer them as one zip download
+    # instead of individual files, without per-workflow/tool knowledge.
     hidden_categories: list[OutputCategory]
 
 
 async def get_result_output_downloads(
     db: Session, run: WorkflowRun, settings: Settings | None = None
 ) -> ResultOutputDownloads:
-    """Return pre-signed non-snapshot links for the result artifacts shown in the UI.
+    """Return pre-signed non-snapshot links for every result artifact.
 
-    Outputs in the spec's `hidden_download_categories` are left out of `downloads`
-    and reported instead in `hidden_categories`, so the caller can offer them as a
-    single bundled zip (see `get_category_downloads_zipped`) rather than as
-    individual files.
+    Hidden-category outputs stay in `downloads` (a caller reading files
+    directly, e.g. a structure viewer, still needs them) but are also flagged
+    in `hidden_categories`, for a plain listing UI to bundle as one zip.
     """
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
@@ -1329,7 +1318,6 @@ async def get_result_output_downloads(
             continue
         if output.category in results_spec.hidden_download_categories:
             hidden_categories_present.add(output.category)
-            continue
         downloads.append(
             ResultDownloadItem(
                 label=output.label,
@@ -1387,13 +1375,7 @@ async def get_category_downloads_zipped(
     category: OutputCategory,
     settings: Settings | None = None,
 ) -> BytesIO | None:
-    """
-    Zip all result outputs of a single category for a run (e.g. bindcraft's
-    ranked PDB structures, hidden from the individual file listing and
-    surfaced instead as one bundled download).
-
-    Returns `None` when the run has no outputs in that category.
-    """
+    """Zip a run's outputs in one category. Returns `None` if there are none."""
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
     outputs = await _collect_outputs_with_fallback(

@@ -1532,14 +1532,13 @@ def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
 
 
 # ---------------------------------------------------------------------------
-# wisps-based workflows (interaction-screening / bulk-prediction) hide their
-# predicted structures from the individual downloads list, and bundle them
-# into a zip instead - same treatment as bindcraft's ranked designs.
+# wisps-based workflows flag structures as a hidden category, zipped like
+# bindcraft's ranked designs
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_result_output_downloads_hides_pdb_for_interaction_screening(
+async def test_get_result_output_downloads_flags_hidden_categories_for_interaction_screening(
     test_db, persistent_models
 ):
     user = AppUserFactory.create_sync()
@@ -1573,7 +1572,13 @@ async def test_get_result_output_downloads_hides_pdb_for_interaction_screening(
     ):
         result = await get_result_output_downloads(test_db, run)
 
-    assert [item.category for item in result.downloads] == ["report", "stats_csv"]
+    # Hidden categories still appear in downloads, just also flagged.
+    assert [item.category for item in result.downloads] == [
+        "report",
+        "stats_csv",
+        "pdb",
+        "pae",
+    ]
     assert result.hidden_categories == ["pdb", "pae"]
 
 

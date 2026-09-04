@@ -393,13 +393,16 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
-    # bindcraft's ranked PDB structures are hidden from the individual file
-    # listing - they're surfaced instead as a single bundled zip via the
-    # /download-category/pdb route (see test_get_result_download_category_*).
-    assert [item.category for item in result.downloads] == ["report", "stats_csv"]
+    # pdb is flagged hidden but still returned individually.
+    assert [item.category for item in result.downloads] == [
+        "report",
+        "stats_csv",
+        "pdb",
+    ]
     assert [item.label for item in result.downloads] == [
         "PDL1_l100_s975117.html",
         "demo2_final_design_stats.csv",
+        "1_PDL1_model1.pdb",
     ]
     assert all(item.category != "snapshot" for item in result.downloads)
     assert result.hiddenCategories == ["pdb"]
@@ -407,7 +410,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         result.downloads[1].url
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
     )
-    assert mock_presign.await_count == 2
+    assert mock_presign.await_count == 3
 
 
 @pytest.mark.asyncio

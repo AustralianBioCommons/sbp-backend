@@ -268,8 +268,7 @@ async def get_result_download_category(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """Stream a zip of one hidden category's outputs (e.g. bindcraft's ranked PDB
-    structures, or WISPS's per-sample structure/PAE files)."""
+    """Stream a zip of one hidden category's outputs."""
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
