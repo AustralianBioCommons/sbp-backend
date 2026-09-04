@@ -48,6 +48,7 @@ from app.services.results_utils import (
     get_tool_name,
     get_wisps_score_file,
     list_workflow_outputs_from_s3,
+    make_wisps_classifier,
     read_result_output_file,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
@@ -334,8 +335,8 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/collect/",
         f"{run.id}/ipsae/",
         f"{run.id}/boltz_predictions/cif/",
-        f"{run.id}/colabfold_predictions/pdb/",
         f"{run.id}/boltz_predictions/confidence/",
+        f"{run.id}/colabfold_predictions/pdb/",
         f"{run.id}/colabfold_predictions/confidence/",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
@@ -1306,13 +1307,15 @@ async def test_resolve_fasta_form_data_keeps_original_on_s3_error(caplog):
 
 def test_classify_wisps_output_key_report():
     run_id = str(uuid4())
-    result = classify_wisps_output_key(f"{run_id}/multiqc/multiqc_report.html")
+    result = classify_wisps_output_key(f"{run_id}/multiqc/multiqc_report.html", None, "boltz")
     assert result == ClassifiedOutput(category="report", label="multiqc_report.html")
 
 
 def test_classify_wisps_output_key_confidence_scores_csv():
     run_id = str(uuid4())
-    result = classify_wisps_output_key(f"{run_id}/collect/boltz_confidence_scores_full.csv")
+    result = classify_wisps_output_key(
+        f"{run_id}/collect/boltz_confidence_scores_full.csv", None, "boltz"
+    )
     assert result == ClassifiedOutput(
         category="stats_csv", label="boltz_confidence_scores_full.csv"
     )
@@ -1320,26 +1323,30 @@ def test_classify_wisps_output_key_confidence_scores_csv():
 
 def test_classify_wisps_output_key_ipsae_scores_csv():
     run_id = str(uuid4())
-    result = classify_wisps_output_key(f"{run_id}/ipsae/ipsae_scores.csv")
+    result = classify_wisps_output_key(f"{run_id}/ipsae/ipsae_scores.csv", None, "boltz")
     assert result == ClassifiedOutput(category="stats_csv", label="ipsae_scores.csv")
 
 
 def test_classify_wisps_output_key_boltz_predicted_structure():
     run_id = str(uuid4())
-    result = classify_wisps_output_key(f"{run_id}/boltz_predictions/cif/sample1_model_0.cif")
+    result = classify_wisps_output_key(
+        f"{run_id}/boltz_predictions/cif/sample1_model_0.cif", None, "boltz"
+    )
     assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.cif")
 
 
 def test_classify_wisps_output_key_colabfold_predicted_structure():
     run_id = str(uuid4())
-    result = classify_wisps_output_key(f"{run_id}/colabfold_predictions/pdb/sample1_model_0.pdb")
+    result = classify_wisps_output_key(
+        f"{run_id}/colabfold_predictions/pdb/sample1_model_0.pdb", None, "colabfold"
+    )
     assert result == ClassifiedOutput(category="pdb", label="sample1_model_0.pdb")
 
 
 def test_classify_wisps_output_key_boltz_confidence_json():
     run_id = str(uuid4())
     result = classify_wisps_output_key(
-        f"{run_id}/boltz_predictions/confidence/sample1_model_0.json"
+        f"{run_id}/boltz_predictions/confidence/sample1_model_0.json", None, "boltz"
     )
     assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
 
@@ -1347,23 +1354,59 @@ def test_classify_wisps_output_key_boltz_confidence_json():
 def test_classify_wisps_output_key_colabfold_confidence_json():
     run_id = str(uuid4())
     result = classify_wisps_output_key(
-        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json"
+        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json", None, "colabfold"
     )
     assert result == ClassifiedOutput(category="confidence", label="sample1_model_0.json")
 
 
+def test_classify_wisps_output_key_tool_restricts_to_matching_predictions_folder():
+    """A run's classifier only matches its own tool's prediction folder - the other
+    tool's folder never exists for that run, so it must never be misclassified."""
+    run_id = str(uuid4())
+    boltz_cif = f"{run_id}/boltz_predictions/cif/sample1_model_0.cif"
+    colabfold_pdb = f"{run_id}/colabfold_predictions/pdb/sample1_model_0.pdb"
+
+    assert classify_wisps_output_key(boltz_cif, None, "boltz") == ClassifiedOutput(
+        category="pdb", label="sample1_model_0.cif"
+    )
+    assert classify_wisps_output_key(colabfold_pdb, None, "boltz") is None
+
+    assert classify_wisps_output_key(colabfold_pdb, None, "colabfold") == ClassifiedOutput(
+        category="pdb", label="sample1_model_0.pdb"
+    )
+    assert classify_wisps_output_key(boltz_cif, None, "colabfold") is None
+
+
+def test_make_wisps_classifier_binds_tool():
+    run_id = str(uuid4())
+    boltz_classifier = make_wisps_classifier("boltz")
+    colabfold_classifier = make_wisps_classifier("colabfold")
+
+    boltz_confidence = f"{run_id}/boltz_predictions/confidence/sample1.json"
+    colabfold_confidence = f"{run_id}/colabfold_predictions/confidence/sample1.json"
+
+    assert boltz_classifier(boltz_confidence, None) == ClassifiedOutput(
+        category="confidence", label="sample1.json"
+    )
+    assert boltz_classifier(colabfold_confidence, None) is None
+    assert colabfold_classifier(colabfold_confidence, None) == ClassifiedOutput(
+        category="confidence", label="sample1.json"
+    )
+    assert colabfold_classifier(boltz_confidence, None) is None
+
+
 def test_classify_wisps_output_key_returns_none_for_unmatched():
     run_id = str(uuid4())
-    assert classify_wisps_output_key(f"{run_id}/other/unknown_file.txt") is None
+    assert classify_wisps_output_key(f"{run_id}/other/unknown_file.txt", None, "boltz") is None
 
 
 def test_classify_wisps_output_key_returns_none_for_trailing_slash():
     run_id = str(uuid4())
-    assert classify_wisps_output_key(f"{run_id}/multiqc/") is None
+    assert classify_wisps_output_key(f"{run_id}/multiqc/", None, "boltz") is None
 
 
 def test_classify_wisps_output_key_returns_none_for_blank():
-    assert classify_wisps_output_key("   ") is None
+    assert classify_wisps_output_key("   ", None, "boltz") is None
 
 
 # ---------------------------------------------------------------------------

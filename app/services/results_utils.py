@@ -327,7 +327,7 @@ async def resolve_fasta_form_data(
                 response_content_disposition=_format_attachment_content_disposition(filename),
                 settings=settings,
             )
-        except S3ConfigurationError, S3ServiceError:
+        except (S3ConfigurationError, S3ServiceError):
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -370,7 +370,7 @@ async def resolve_pdb_presigned_urls(
             settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except S3ConfigurationError, S3ServiceError:
+    except (S3ConfigurationError, S3ServiceError):
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
@@ -791,12 +791,23 @@ def build_alphafold2_proteinfold_output_listing_prefixes(run: WorkflowRun) -> li
     return prefixes
 
 
-def classify_wisps_output_key(key: str, sample_id: str | None = None) -> ClassifiedOutput | None:
+def classify_wisps_output_key(
+    key: str, sample_id: str | None, tool: str
+) -> ClassifiedOutput | None:
+    """Classify one WISPS output key.
+
+    ``tool`` restricts the structure/confidence match to the given tool's own
+    prediction folder (``boltz_predictions/`` vs ``colabfold_predictions/``),
+    since only one of the two ever exists for a given run - matching both
+    unconditionally risked picking up stale/orphaned files from a different
+    tool's folder.
+    """
     normalized = key.strip()
     if not normalized or normalized.endswith("/"):
         return None
     basename = normalized.rsplit("/", 1)[-1]
     lowered = normalized.lower()
+    normalized_tool = tool.strip().lower()
 
     if "/multiqc/" in lowered and basename.lower() == "multiqc_report.html":
         return ClassifiedOutput(category="report", label=basename)
@@ -804,15 +815,28 @@ def classify_wisps_output_key(key: str, sample_id: str | None = None) -> Classif
         return ClassifiedOutput(category="stats_csv", label=basename)
     if "/ipsae/" in lowered and basename.lower() == "ipsae_scores.csv":
         return ClassifiedOutput(category="stats_csv", label=basename)
-    if "/boltz_predictions/cif/" in lowered and basename.lower().endswith(".cif"):
-        return ClassifiedOutput(category="pdb", label=basename)
-    if "/colabfold_predictions/pdb/" in lowered and basename.lower().endswith(".pdb"):
-        return ClassifiedOutput(category="pdb", label=basename)
-    if "/boltz_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
-        return ClassifiedOutput(category="confidence", label=basename)
-    if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
-        return ClassifiedOutput(category="confidence", label=basename)
+
+    if normalized_tool == "boltz":
+        if "/boltz_predictions/cif/" in lowered and basename.lower().endswith(".cif"):
+            return ClassifiedOutput(category="pdb", label=basename)
+        if "/boltz_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
+            return ClassifiedOutput(category="confidence", label=basename)
+    if normalized_tool == "colabfold":
+        if "/colabfold_predictions/pdb/" in lowered and basename.lower().endswith(".pdb"):
+            return ClassifiedOutput(category="pdb", label=basename)
+        if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
+            return ClassifiedOutput(category="confidence", label=basename)
     return None
+
+
+def make_wisps_classifier(tool: WorkflowTool) -> OutputClassifier:
+    """Bind a WISPS classifier to one tool, so only that tool's own
+    prediction folder is matched for structure/confidence outputs."""
+
+    def _classify(key: str, sample_id: str | None) -> ClassifiedOutput | None:
+        return classify_wisps_output_key(key, sample_id, tool=tool)
+
+    return _classify
 
 
 def get_wisps_score_file(keys: list[str], sample_id: str | None) -> str | None:
@@ -863,16 +887,27 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
         return []
-    return [
+
+    prefixes = [
         f"{run_uuid}/",
         f"{run_uuid}/multiqc/",
         f"{run_uuid}/collect/",
         f"{run_uuid}/ipsae/",
-        f"{run_uuid}/boltz_predictions/cif/",
-        f"{run_uuid}/colabfold_predictions/pdb/",
-        f"{run_uuid}/boltz_predictions/confidence/",
-        f"{run_uuid}/colabfold_predictions/confidence/",
     ]
+
+    # Only list the run's own tool's prediction folder - the other tool's
+    # folder never exists for this run, so listing it just wastes a request.
+    # Unknown tool (e.g. ad-hoc calls without a resolvable run.tool) falls
+    # back to listing both.
+    tool = (get_tool_name(run) or "").strip().lower()
+    if tool in ("", "boltz"):
+        prefixes.append(f"{run_uuid}/boltz_predictions/cif/")
+        prefixes.append(f"{run_uuid}/boltz_predictions/confidence/")
+    if tool in ("", "colabfold"):
+        prefixes.append(f"{run_uuid}/colabfold_predictions/pdb/")
+        prefixes.append(f"{run_uuid}/colabfold_predictions/confidence/")
+
+    return prefixes
 
 
 def build_colabfold_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
@@ -954,7 +989,7 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_prefixes=build_wisps_output_listing_prefixes,
         get_score_file=get_wisps_score_file,
         extract_max_score=extract_wisps_max_score,
-        classifier=classify_wisps_output_key,
+        classifier=make_wisps_classifier(tool),
         hidden_download_categories=frozenset({"pdb"}),
     )
 
@@ -968,7 +1003,7 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         get_score_file=get_wisps_score_file,
         hidden_download_categories=frozenset({"pdb"}),
         extract_max_score=extract_bulk_prediction_max_score,
-        classifier=classify_wisps_output_key,
+        classifier=make_wisps_classifier(tool),
     )
 
 
