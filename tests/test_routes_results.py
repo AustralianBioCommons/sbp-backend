@@ -599,9 +599,7 @@ async def test_get_result_download_category_returns_404_without_matching_outputs
         return_value=[],
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_category(
-                str(run.id), "pdb", user.id, test_db, mock_settings
-            )
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "No 'pdb' files found for this run"
@@ -629,9 +627,7 @@ async def test_get_result_download_category_returns_404_for_missing_owned_run(
 
 
 @pytest.mark.asyncio
-async def test_get_result_download_category_returns_404_while_results_sync(
-    test_db, mock_settings
-):
+async def test_get_result_download_category_returns_404_while_results_sync(test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|download-category-syncing",
         name="Download Category Syncing",
@@ -652,9 +648,7 @@ async def test_get_result_download_category_returns_404_while_results_sync(
         new=AsyncMock(),
     ) as get_zip:
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_category(
-                str(run.id), "pdb", user.id, test_db, mock_settings
-            )
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
 
     get_zip.assert_not_awaited()
     assert exc_info.value.status_code == 404
@@ -683,9 +677,7 @@ async def test_get_result_download_category_maps_s3_configuration_error_to_500(
         new=AsyncMock(side_effect=S3ConfigurationError("s3 config missing")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_category(
-                str(run.id), "pdb", user.id, test_db, mock_settings
-            )
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "s3 config missing"
@@ -711,9 +703,7 @@ async def test_get_result_download_category_maps_s3_service_error_to_502(test_db
         new=AsyncMock(side_effect=S3ServiceError("s3 upstream error")),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_download_category(
-                str(run.id), "pdb", user.id, test_db, mock_settings
-            )
+            await get_result_download_category(str(run.id), "pdb", user.id, test_db, mock_settings)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
