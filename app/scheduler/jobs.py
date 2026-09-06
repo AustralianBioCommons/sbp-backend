@@ -219,8 +219,8 @@ def get_available_workflow_capacity(settings: Settings | None = None) -> int:
 @with_scheduler_db_session
 def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = None):
     db_session = require_scheduler_db_session(db_session)
-    # Time between jobs
-    job_offset = 10
+    # Time between jobs - don't want multiple launching simultaneously
+    job_offset = 30
     logger.info("Checking for pending jobs...")
     settings = get_settings()
     ok_to_launch = is_seqera_available(db_session, settings=settings)
