@@ -188,7 +188,7 @@ async def get_result_downloads(
         runId=run_id,
         resultsSyncStatus=owned_run.results_sync_status,
         downloads=result.downloads,
-        hiddenCategories=result.hidden_categories,
+        zipCategories=result.zip_categories,
     )
 
 

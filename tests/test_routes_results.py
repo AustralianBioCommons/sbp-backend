@@ -405,7 +405,7 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         "1_PDL1_model1.pdb",
     ]
     assert all(item.category != "snapshot" for item in result.downloads)
-    assert result.hiddenCategories == ["pdb"]
+    assert result.zipCategories == ["pdb"]
     assert (
         result.downloads[1].url
         == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
@@ -465,7 +465,7 @@ async def test_get_result_downloads_returns_cancelled_status_for_failed_run(test
 
     with patch(
         "app.routes.workflow.results.get_result_output_downloads",
-        new=AsyncMock(return_value=ResultOutputDownloads(downloads=[], hidden_categories=[])),
+        new=AsyncMock(return_value=ResultOutputDownloads(downloads=[], zip_categories=[])),
     ):
         result = await get_result_downloads(str(run.id), user.id, test_db, mock_settings)
 

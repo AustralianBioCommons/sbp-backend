@@ -85,7 +85,7 @@ class WorkflowResultsSpec:
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
     supports_snapshots: bool = False
-    # Flagged in `get_result_output_downloads`'s `hidden_categories` for a UI
+    # Flagged in `get_result_output_downloads`'s `zip_categories` for a UI
     # to bundle as one zip instead of listing individually; still returned
     # in `downloads` itself for callers that read files directly.
     hidden_download_categories: frozenset[OutputCategory] = frozenset()
@@ -1285,7 +1285,7 @@ class ResultOutputDownloads:
     downloads: list[ResultDownloadItem]
     # Present, hidden categories - lets a UI offer them as one zip download
     # instead of individual files, without per-workflow/tool knowledge.
-    hidden_categories: list[OutputCategory]
+    zip_categories: list[OutputCategory]
 
 
 async def get_result_output_downloads(
@@ -1295,7 +1295,7 @@ async def get_result_output_downloads(
 
     Hidden-category outputs stay in `downloads` (a caller reading files
     directly, e.g. a structure viewer, still needs them) but are also flagged
-    in `hidden_categories`, for a plain listing UI to bundle as one zip.
+    in `zip_categories`, for a plain listing UI to bundle as one zip.
     """
     settings = settings or get_settings()
     results_spec = get_output_spec(run)
@@ -1308,14 +1308,14 @@ async def get_result_output_downloads(
     )
 
     downloads: list[ResultDownloadItem] = []
-    hidden_categories_present: set[OutputCategory] = set()
+    zip_categories_present: set[OutputCategory] = set()
 
     # Sort and filter outputs
     for key, output in sorted(outputs.items(), key=_get_output_sort_key):
         if output.category in ("snapshot", "usage"):
             continue
         if output.category in results_spec.hidden_download_categories:
-            hidden_categories_present.add(output.category)
+            zip_categories_present.add(output.category)
         downloads.append(
             ResultDownloadItem(
                 label=output.label,
@@ -1325,10 +1325,10 @@ async def get_result_output_downloads(
             )
         )
 
-    hidden_categories = sorted(
-        hidden_categories_present, key=lambda category: _CATEGORY_ORDER.get(category, 99)
+    zip_categories = sorted(
+        zip_categories_present, key=lambda category: _CATEGORY_ORDER.get(category, 99)
     )
-    return ResultOutputDownloads(downloads=downloads, hidden_categories=hidden_categories)
+    return ResultOutputDownloads(downloads=downloads, zip_categories=zip_categories)
 
 
 async def get_all_downloads_zipped(

@@ -1538,7 +1538,7 @@ def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
 
 
 @pytest.mark.asyncio
-async def test_get_result_output_downloads_flags_hidden_categories_for_interaction_screening(
+async def test_get_result_output_downloads_flags_zip_categories_for_interaction_screening(
     test_db, persistent_models
 ):
     user = AppUserFactory.create_sync()
@@ -1579,7 +1579,7 @@ async def test_get_result_output_downloads_flags_hidden_categories_for_interacti
         "pdb",
         "pae",
     ]
-    assert result.hidden_categories == ["pdb", "pae"]
+    assert result.zip_categories == ["pdb", "pae"]
 
 
 @pytest.mark.asyncio

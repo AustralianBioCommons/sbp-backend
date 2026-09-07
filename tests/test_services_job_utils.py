@@ -660,7 +660,7 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
 
     # pdb is still returned individually, just flagged as hidden.
     assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
-    assert result.hidden_categories == ["pdb"]
+    assert result.zip_categories == ["pdb"]
     mocked_sync.assert_not_awaited()
 
 
