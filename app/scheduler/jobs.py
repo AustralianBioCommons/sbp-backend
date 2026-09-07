@@ -266,6 +266,8 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
             max_instances=1,
             replace_existing=True,
             next_run_time=now + timedelta(seconds=index * job_offset),
+            # Allow a long grace time for job launches, don't want them missed
+            misfire_grace_time=30 * 60,
         )
 
     logger.info("Finished submitting pending jobs.")
