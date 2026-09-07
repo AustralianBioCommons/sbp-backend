@@ -349,6 +349,8 @@ def _try_promote_staging_job(db: Session, queued_job: QueuedJob) -> None:
         return
 
     queued_job.status = "pending"
+    # Make sure the pending job has next_attempt_at set so it gets picked up
+    queued_job.next_attempt_at = datetime.now(tz=UTC)
     db.add(queued_job)
     db.commit()
 
