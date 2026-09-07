@@ -10,7 +10,7 @@ from .. import Base
 if TYPE_CHECKING:
     from .core import Workflow, WorkflowRun
 
-JobStatus = Literal["staging", "pending", "submitted", "failed", "cancelled"]
+JobStatus = Literal["staging", "pending", "launching", "submitted", "failed", "cancelled"]
 
 
 class QueuedJob(Base):
@@ -53,6 +53,24 @@ class QueuedJob(Base):
     def cancel_pending_job(self, session: Session, commit: bool = False) -> None:
         self.status = "cancelled"
         self.next_attempt_at = None
+        session.add(self)
+        if commit:
+            session.commit()
+
+    def reserve_for_launch(
+        self, session: Session, *, next_attempt_at: datetime, commit: bool = False
+    ) -> None:
+        self.status = "launching"
+        self.next_attempt_at = next_attempt_at
+        session.add(self)
+        if commit:
+            session.commit()
+
+    def release_launch_reservation(
+        self, session: Session, *, next_attempt_at: datetime, commit: bool = False
+    ) -> None:
+        self.status = "pending"
+        self.next_attempt_at = next_attempt_at
         session.add(self)
         if commit:
             session.commit()

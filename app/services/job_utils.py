@@ -65,7 +65,7 @@ class UserJobListRow:
 
     @property
     def is_pending(self) -> bool:
-        return self.queued_status == "pending"
+        return self.queued_status in {"pending", "launching"}
 
 
 def get_user_job_list_rows_select(user_id: UUID) -> Select[tuple[WorkflowRun, JobStatus | None]]:

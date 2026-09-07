@@ -122,6 +122,9 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     scheduled_jobs = scheduler.get_jobs(jobstore="memory")
     assert [job.id for job in scheduled_jobs] == [launch_id]
     assert scheduled_jobs[0].kwargs == {"job_id": due_job.id, "dry_run": False}
+    test_db.refresh(due_job)
+    assert due_job.status == "launching"
+    assert due_job.next_attempt_at is not None
 
 
 def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_models, monkeypatch):
@@ -159,6 +162,32 @@ def test_submit_pending_jobs_caps_submissions_to_available_capacity(
     assert len(scheduled_jobs) == 2
     scheduled_job_ids = {job.kwargs["job_id"] for job in scheduled_jobs}
     assert scheduled_job_ids.issubset({job.id for job in due_jobs})
+    for job in due_jobs:
+        test_db.refresh(job)
+    assert sum(1 for job in due_jobs if job.status == "launching") == 2
+    assert sum(1 for job in due_jobs if job.status == "pending") == 1
+
+
+def test_submit_pending_jobs_reschedules_due_launching_jobs(
+    test_db, persistent_models, monkeypatch
+):
+    due_launching_job = _create_queued_job(
+        status="launching", next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
+    scheduler = _make_scheduler()
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
+    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 1)
+
+    scheduler_jobs.submit_pending_jobs()
+
+    scheduled_jobs = scheduler.get_jobs(jobstore="memory")
+    assert [job.kwargs["job_id"] for job in scheduled_jobs] == [due_launching_job.id]
+    test_db.refresh(due_launching_job)
+    assert due_launching_job.status == "launching"
+    assert due_launching_job.next_attempt_at is not None
 
 
 def test_get_available_workflow_capacity_uses_seqera_active_count(monkeypatch, mock_settings):

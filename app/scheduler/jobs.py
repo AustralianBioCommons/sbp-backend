@@ -31,6 +31,8 @@ LAUNCH_MAX_ATTEMPTS = 5
 RETRY_DELAY_BASE = 5 * 60
 # Keeps retries from colliding with other 5-min-cadence scheduler jobs.
 RETRY_DELAY_JITTER_SECONDS = 120
+LAUNCH_JOB_OFFSET_SECONDS = 30
+LAUNCH_MISFIRE_GRACE_SECONDS = 30 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
@@ -84,6 +86,12 @@ def get_retry_delay(job: QueuedJob) -> timedelta:
     base_delay = RETRY_DELAY_BASE * (2**job.attempts - 1)
     jitter = random.uniform(0, RETRY_DELAY_JITTER_SECONDS)
     return timedelta(seconds=base_delay + jitter)
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def is_seqera_available(db_session: Session, settings: Settings | None = None) -> bool:
@@ -143,15 +151,32 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
     logger.info(f"Launching job {job_id}...")
     settings = get_settings()
 
-    ok_to_launch = is_seqera_available(db_session, settings=settings)
-    if not ok_to_launch:
-        logger.warning("Skipping job launching while system status is unhealthy.")
-        return
     job = db_session.get(QueuedJob, job_id)
     if job is None:
         return
 
     now = datetime.now(tz=UTC)
+    if job.status != "launching":
+        logger.info(f"Skipping job {job_id}: queue status is {job.status!r}, not 'launching'.")
+        return
+    if job.next_attempt_at is None:
+        logger.warning(f"Job {job_id} was marked launching without next_attempt_at; releasing it.")
+        if not dry_run:
+            job.release_launch_reservation(db_session, next_attempt_at=now, commit=True)
+        return
+    if _as_aware_utc(job.next_attempt_at) > now:
+        logger.info(f"Skipping job {job_id}: launch reservation is not due yet.")
+        return
+
+    ok_to_launch = is_seqera_available(db_session, settings=settings)
+    if not ok_to_launch:
+        logger.warning("Skipping job launching while system status is unhealthy.")
+        if not dry_run:
+            job.next_attempt_at = now
+            db_session.add(job)
+            db_session.commit()
+        return
+
     launch_func: LaunchFunction
     workflow_name: WorkflowName = cast(WorkflowName, job.workflow.name)
     if workflow_name in ("interaction-screening", "bulk-prediction"):
@@ -219,8 +244,6 @@ def get_available_workflow_capacity(settings: Settings | None = None) -> int:
 @with_scheduler_db_session
 def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = None):
     db_session = require_scheduler_db_session(db_session)
-    # Time between jobs - don't want multiple launching simultaneously
-    job_offset = 30
     logger.info("Checking for pending jobs...")
     settings = get_settings()
     ok_to_launch = is_seqera_available(db_session, settings=settings)
@@ -238,10 +261,10 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
         return
 
     now = datetime.now(tz=UTC)
-
     pending_query = select(QueuedJob).where(
-        QueuedJob.status == "pending", QueuedJob.next_attempt_at <= now
-    )
+        QueuedJob.status.in_(["pending", "launching"]),
+        QueuedJob.next_attempt_at <= now,
+    ).order_by(QueuedJob.queued_at.asc(), QueuedJob.id.asc())
 
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
@@ -253,22 +276,41 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
         )
     for index, job in enumerate(jobs_to_submit):
         launch_id = f"launch_job_{job.id}"
+        next_run_time = now + timedelta(seconds=index * LAUNCH_JOB_OFFSET_SECONDS)
         # Ignore if already scheduled
-        if SCHEDULER.get_job(launch_id, jobstore="memory") is not None:
+        scheduled_job = SCHEDULER.get_job(launch_id, jobstore="memory")
+        if scheduled_job is not None:
+            scheduled_run_time = getattr(scheduled_job, "next_run_time", None)
+            if scheduled_run_time is None:
+                scheduled_run_time = next_run_time
+            if not dry_run:
+                job.reserve_for_launch(
+                    db_session,
+                    next_attempt_at=_as_aware_utc(scheduled_run_time),
+                    commit=True,
+                )
             continue
 
-        SCHEDULER.add_job(
-            launch_job,
-            id=launch_id,
-            jobstore="memory",
-            kwargs={"job_id": job.id, "dry_run": dry_run},
-            name=launch_id,
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=now + timedelta(seconds=index * job_offset),
-            # Allow a long grace time for job launches, don't want them missed
-            misfire_grace_time=30 * 60,
-        )
+        if not dry_run:
+            job.reserve_for_launch(db_session, next_attempt_at=next_run_time, commit=True)
+
+        try:
+            SCHEDULER.add_job(
+                launch_job,
+                id=launch_id,
+                jobstore="memory",
+                kwargs={"job_id": job.id, "dry_run": dry_run},
+                name=launch_id,
+                max_instances=1,
+                replace_existing=True,
+                next_run_time=next_run_time,
+                # Allow a long grace time for job launches, don't want them missed
+                misfire_grace_time=LAUNCH_MISFIRE_GRACE_SECONDS,
+            )
+        except Exception:
+            if not dry_run:
+                job.release_launch_reservation(db_session, next_attempt_at=now, commit=True)
+            raise
 
     logger.info("Finished submitting pending jobs.")
 
