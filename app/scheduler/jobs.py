@@ -261,10 +261,14 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
         return
 
     now = datetime.now(tz=UTC)
-    pending_query = select(QueuedJob).where(
-        QueuedJob.status.in_(["pending", "launching"]),
-        QueuedJob.next_attempt_at <= now,
-    ).order_by(QueuedJob.queued_at.asc(), QueuedJob.id.asc())
+    pending_query = (
+        select(QueuedJob)
+        .where(
+            QueuedJob.status.in_(["pending", "launching"]),
+            QueuedJob.next_attempt_at <= now,
+        )
+        .order_by(QueuedJob.queued_at.asc(), QueuedJob.id.asc())
+    )
 
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
