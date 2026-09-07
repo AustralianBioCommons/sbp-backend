@@ -299,6 +299,37 @@ async def test_list_jobs_live_only_status_filter_selects_matching_rows(mock_db, 
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_search_path_renders_launching_as_pending(mock_db, mock_user_id):
+    """The full-scan (search) fallback path builds items via _build_job_list_item,
+    same as the DB-page path - a "launching" queued job renders as "Pending" there
+    too, and doesn't hit Seqera."""
+    row = UserJobListRowFactory.build(
+        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name="job-1"),
+        run_id="launching-run",
+        seqera_run_id=None,
+        queued_status="launching",
+    )
+
+    describe = AsyncMock()
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_rows", return_value=[row]),
+        patch("app.routes.workflow.jobs.describe_workflow", describe),
+    ):
+        response = await list_jobs(
+            search="job",
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    assert [job.id for job in response.jobs] == ["launching-run"]
+    assert response.jobs[0].status == "Pending"
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_seqera_unexpected_error_falls_back(mock_db, mock_user_id):
     """A non-SeqeraAPIError exception from describe_workflow still falls back to DB
     data and flags seqeraUnavailable, same as a 5xx SeqeraAPIError."""
@@ -387,6 +418,54 @@ async def test_list_jobs_pending_queued_job_skips_seqera_lookup(test_db, persist
     assert response.jobs[0].id == str(owned_run.id)
     assert response.jobs[0].jobName == "Queued Job"
     assert response.jobs[0].status == "Pending"
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_launching_queued_job_renders_as_pending(test_db, persistent_models):
+    """A queued job mid-launch ("launching") renders as "Pending", from local DB
+    state, in both the DB-page path and the status_filter="Pending" DB query."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    owned_run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        binder_name=None,
+        run_name="Launching Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+        tool="colabfold",
+    )
+    QueuedJobFactory.create_sync(
+        workflow_run=owned_run,
+        workflow=workflow,
+        launch_payload={},
+        status="launching",
+    )
+
+    describe = AsyncMock()
+    with patch("app.routes.workflow.jobs.describe_workflow", describe):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+        filtered = await list_jobs(
+            search=None,
+            status_filter=["Pending"],
+            limit=50,
+            offset=0,
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].id == str(owned_run.id)
+    assert response.jobs[0].status == "Pending"
+    assert [job.id for job in filtered.jobs] == [str(owned_run.id)]
 
 
 @pytest.mark.asyncio

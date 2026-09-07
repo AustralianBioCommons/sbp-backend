@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -322,4 +322,27 @@ async def test_sync_workflow_runs_records_seqera_error_without_marking_complete(
     assert result.errored == 1
     assert result.results[0].error == "Seqera unavailable"
     assert run.seqera_final_status is None
+    assert run.sync_completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_sync_workflow_runs_marks_old_403_run_unknown(test_db, persistent_models):
+    submitted_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=31)
+    run = _create_run()
+    run.submission_timestamp = submitted_at
+    test_db.add(run)
+    test_db.commit()
+    describe = AsyncMock(
+        side_effect=SeqeraAPIError("Failed to describe workflow: 403", status_code=403)
+    )
+
+    result = await job_sync.sync_workflow_runs(test_db, describe_func=describe)
+
+    test_db.refresh(run)
+    describe.assert_awaited_once_with("wf-sync-1")
+    assert result.checked == 1
+    assert result.errored == 1
+    assert result.results[0].seqera_status == "UNKNOWN"
+    assert result.results[0].terminal is True
+    assert run.seqera_final_status == "UNKNOWN"
     assert run.sync_completed_at is None

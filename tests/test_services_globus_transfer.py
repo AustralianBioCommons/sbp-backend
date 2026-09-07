@@ -642,8 +642,10 @@ def test_sync_data_transfers_submits_and_notifies(test_db, persistent_models, mo
 def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, mock_transfer_client):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
 
+    test_db.expire_on_commit = False
+    before_sync = datetime.now(UTC)
     workflow_run = _workflow_run_without_repo_staging()
-    QueuedJobFactory.create_sync(
+    queued_job = QueuedJobFactory.create_sync(
         workflow=workflow_run.workflow, workflow_run=workflow_run, status="staging"
     )
     DataTransferFactory.create_sync(
@@ -658,8 +660,12 @@ def test_sync_data_transfers_polls_and_completes(test_db, persistent_models, moc
 
     assert result.checked == 1
     assert result.completed == 1
-    queued_job = workflow_run.get_queued_job(test_db)
     assert queued_job.status == "pending"
+    assert queued_job.next_attempt_at is not None
+    next_attempt_at = queued_job.next_attempt_at
+    assert next_attempt_at.tzinfo is not None
+    assert next_attempt_at.utcoffset() is not None
+    assert before_sync <= next_attempt_at <= datetime.now(UTC)
 
 
 def test_sync_data_transfers_polls_output_to_completion_without_finalizing(
