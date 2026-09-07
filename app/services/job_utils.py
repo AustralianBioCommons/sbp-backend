@@ -125,7 +125,8 @@ def _build_db_status_filter(
 
     seqera_upper = func.upper(WorkflowRun.seqera_final_status)
     not_locally_queued = or_(
-        queued_status_col.is_(None), queued_status_col.not_in(["pending", "staging", "failed"])
+        queued_status_col.is_(None),
+        queued_status_col.not_in(["pending", "launching", "staging", "failed"]),
     )
     not_terminal = or_(
         WorkflowRun.seqera_final_status.is_(None),
@@ -144,7 +145,7 @@ def _build_db_status_filter(
             seqera_upper.in_([PipelineStatus.FAILED.value, PipelineStatus.UNKNOWN.value]),
         ),
         UIStatus.STOPPED.value: seqera_upper == PipelineStatus.CANCELLED.value,
-        "Pending": queued_status_col == "pending",
+        "Pending": queued_status_col.in_(["pending", "launching"]),
         "Staging": queued_status_col == "staging",
     }
     clauses = [

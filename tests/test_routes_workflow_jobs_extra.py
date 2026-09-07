@@ -88,6 +88,33 @@ async def test_cancel_workflow_cancels_pending_queued_job(test_db, persistent_mo
 
 
 @pytest.mark.asyncio
+async def test_cancel_workflow_cancels_launching_queued_job(test_db, persistent_models):
+    """A job mid-launch (status="launching") is still cancellable, same as pending."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id=None,
+        work_dir="workdir-cancel-launching-1",
+    )
+    queued_job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        launch_payload={},
+        status="launching",
+    )
+
+    resp = await cancel_workflow(str(run.id), user.id, test_db)
+
+    test_db.refresh(queued_job)
+    assert resp.runId == str(run.id)
+    assert resp.status == "cancelled"
+    assert queued_job.status == "cancelled"
+    assert queued_job.next_attempt_at is None
+
+
+@pytest.mark.asyncio
 async def test_cancel_workflow_cancels_staging_queued_job(test_db, persistent_models):
     """A job still waiting on Globus input staging must also be cancellable -
     not just "pending" ones."""

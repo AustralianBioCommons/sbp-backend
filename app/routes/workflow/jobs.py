@@ -100,7 +100,7 @@ async def cancel_workflow(
     if not owned_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     queued_job = owned_run.get_queued_job(session=db)
-    if queued_job and queued_job.status in {"pending", "staging"}:
+    if queued_job and queued_job.status in {"pending", "launching", "staging"}:
         queued_job.cancel_pending_job(session=db)
 
     if owned_run.seqera_run_id is not None:
@@ -136,7 +136,7 @@ def _build_job_list_item(
     seqera_unavailable = False
     if user_run.queued_status == "staging":
         ui_status = "Staging"
-    elif user_run.queued_status == "pending":
+    elif user_run.queued_status in {"pending", "launching"}:
         ui_status = "Pending"
     elif user_run.queued_status == "failed":
         ui_status = "Failed"
@@ -186,7 +186,7 @@ def _rows_needing_live_status(user_runs: list[UserJobListRow]) -> list[UserJobLi
         user_run
         for user_run in user_runs
         if user_run.seqera_run_id
-        and user_run.queued_status not in {"pending", "staging", "failed"}
+        and user_run.queued_status not in {"pending", "launching", "staging", "failed"}
         and not user_run.run.is_seqera_finalized()
     ]
 
@@ -319,31 +319,11 @@ async def list_jobs(
     jobs = []
     seqera_unavailable = False
     for user_run in user_runs:
-        run_id = user_run.run_id
-        owned_run = user_run.run
-        seqera_run_id = user_run.seqera_run_id
-
-        seqera_payload: dict[str, object] | None = None
-        ui_status = "N/A"
-        if user_run.queued_status == "staging":
-            ui_status = "Staging"
-        elif user_run.queued_status == "pending":
-            ui_status = "Pending"
-        elif user_run.queued_status == "failed":
-            ui_status = "Failed"
-        elif stored_ui_status := _get_stored_terminal_ui_status(owned_run):
-            ui_status = stored_ui_status
-        elif seqera_run_id:
-            fetched_payload = seqera_results.get(run_id)
-            if fetched_payload is None:
-                # 4xx: run is inaccessible (not found, wrong workspace, no permission).
-                continue
-            if fetched_payload:
-                seqera_payload = fetched_payload
-                pipeline_status = extract_pipeline_status(fetched_payload)
-                ui_status = map_pipeline_status_to_ui(pipeline_status)
-            else:
-                seqera_unavailable = True
+        built = _build_job_list_item(user_run, seqera_results.get(user_run.run_id))
+        if built is None:
+            continue
+        item, unavailable = built
+        seqera_unavailable = seqera_unavailable or unavailable
 
         if allowed_statuses and item.status not in allowed_statuses:
             continue
@@ -456,7 +436,7 @@ async def delete_job(
     seqera_run_id = owned_run.seqera_run_id
     # Cancel the queued job if it's still pending.
     queued_job = owned_run.get_queued_job(session=db)
-    if queued_job and queued_job.status in {"pending", "staging"}:
+    if queued_job and queued_job.status in {"pending", "launching", "staging"}:
         queued_job.cancel_pending_job(session=db)
     if seqera_run_id:
         try:
@@ -509,7 +489,7 @@ async def bulk_delete_jobs(
         queued_job = owned_run.get_queued_job(session=db)
         if queued_job:
             run_status["queued_job"] = queued_job
-            if queued_job.status in {"pending", "staging"}:
+            if queued_job.status in {"pending", "launching", "staging"}:
                 queued_job.cancel_pending_job(session=db)
                 run_status["queue_cancelled"] = True
 
