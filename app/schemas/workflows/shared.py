@@ -355,6 +355,8 @@ class ResultDownloadsResponse(BaseModel):
     runId: str
     resultsSyncStatus: str = "ready"
     downloads: list[ResultDownloadItem] = Field(default_factory=list)
+    # Categories bundled as a single zip instead of listed individually
+    zipCategories: list[str] = Field(default_factory=list)
 
 
 class ResultSnapshotsResponse(BaseModel):
@@ -404,3 +406,8 @@ TERMINAL_SEQERA_STATUSES = frozenset(
         PipelineStatus.UNKNOWN.value,
     }
 )
+
+# UI statuses that only exist between "submitted to Seqera" and "terminal" - not
+# persisted anywhere, so filtering on them requires a live Seqera lookup and can't
+# be expressed as a DB query.
+LIVE_ONLY_UI_STATUSES = frozenset({UIStatus.IN_QUEUE.value, UIStatus.IN_PROGRESS.value})
