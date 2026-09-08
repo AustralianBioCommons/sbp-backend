@@ -65,6 +65,10 @@ async def prepare_wisps_workflow(
     if not job_id:
         raise WorkflowLaunchError("Missing run name for workflow launch")
 
+    workflow = workflow_run.workflow
+    if workflow is None:
+        raise WorkflowLaunchError("Missing workflow for workflow launch")
+
     mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
     sheet_url = staged_input_location
     params_text = params_to_yaml_text(
@@ -90,7 +94,7 @@ async def prepare_wisps_workflow(
         "workspaceId": workspace_id,
         "revision": revision or "main",
         "paramsText": params_text,
-        "configProfiles": get_wisps_config_profiles(workflow_run.workflow.profile),
+        "configProfiles": get_wisps_config_profiles(workflow.profile),
         "configText": config_text,
         "resume": False,
     }
