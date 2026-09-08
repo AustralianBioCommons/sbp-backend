@@ -208,9 +208,10 @@ Optional entries:
 - `SEQERA_ENABLE_AGENT_HEALTHCHECK` — Set to `true` to enable the active Tower Agent liveness probe (default `false`).
 - `SEQERA_HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — Max seconds to wait for throwaway env validation (default `20`).
 - `AWS_LOG_GROUP` — Backend CloudWatch log group name for the admin System Status link.
-- `SEQERA_GADI_PBS_QUEUE_STATUS_S3_KEY` — S3 key (in `AWS_S3_BUCKET`) that
-  `scripts/gadi/push_pbs_queue_status.sh` (running on Gadi) periodically overwrites
-  with PBS queue status (default `system-status/gadi-pbs-queue-status.json`).
+- `SEQERA_GADI_PBS_QUEUE_STATUS_S3_KEY` — S3 key (in `AWS_S3_BUCKET`) that a script
+  running on Gadi under the `yz52_workflow` service account (maintained outside
+  this repo) periodically overwrites with PBS queue status
+  (default `system-status/gadi-pbs-queue-status.json`).
 
 ## DB Debug UI (Starlette Admin)
 
@@ -283,10 +284,11 @@ Surfaces:
   cluster. This backend has no direct connection to Gadi (no SSH/qstat). Instead,
   data flows in two steps, reusing the same Globus pipeline that already moves
   job outputs (e.g. `UsageReport.csv`) from Gadi to S3:
-  1. `scripts/gadi/push_pbs_queue_status.sh` runs under the `yz52_workflow` service
-     account on Gadi (alongside the Tower Agent, in its own persistent tmux
-     session) and writes `qstat -Q -f -F json` output to a local file every 5
-     minutes — no AWS credentials or S3 bucket name involved on the Gadi side.
+  1. A script running under the `yz52_workflow` service account on Gadi
+     (maintained outside this repo, alongside the Tower Agent in its own
+     persistent tmux session) writes `qstat -Q -f -F json` output to a local
+     file every 5 minutes — no AWS credentials or S3 bucket name involved on
+     the Gadi side.
   2. The `refresh_gadi_pbs_queue_status` scheduler job (also every 5 minutes)
      submits a Globus transfer of that file into S3
      (`SEQERA_GADI_PBS_QUEUE_STATUS_S3_KEY`), reusing the existing

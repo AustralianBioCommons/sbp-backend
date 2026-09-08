@@ -1,11 +1,12 @@
 """Gadi-wide PBS queue status, pushed from Gadi rather than pulled by this backend.
 
 This backend has no direct connection to Gadi (no SSH/qstat access). Instead, a
-script running on Gadi under the yz52_workflow service account (see
-scripts/gadi/push_pbs_queue_status.sh) periodically runs `qstat -Q -f -F json`
-and overwrites one S3 object with the result - the same S3 bucket this backend
-already reads workflow outputs from (see services/s3.py). This module just
-reads and parses that object.
+script running on Gadi under the yz52_workflow service account (maintained
+outside this repo) periodically runs `qstat -Q -f -F json` and writes the
+result to a local file; a scheduler job then transfers it into S3 via Globus
+(see services/globus_transfer.sync_gadi_pbs_queue_status) - the same S3 bucket
+this backend already reads workflow outputs from (see services/s3.py). This
+module just reads and parses that object.
 """
 
 from __future__ import annotations

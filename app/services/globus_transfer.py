@@ -100,7 +100,8 @@ def _gadi_relative_path(
 
 
 def gadi_pbs_queue_status_local_path(globus_settings: GlobusSettings | None = None) -> str:
-    """Absolute Gadi path that scripts/gadi/push_pbs_queue_status.sh writes to.
+    """Absolute Gadi path that the Gadi-side PBS queue status push script writes to
+    (runs under the yz52_workflow service account, outside this repo).
 
     Placed under the existing output collection rather than a new dedicated
     Globus setting - this is just a filesystem location, not a credential, so

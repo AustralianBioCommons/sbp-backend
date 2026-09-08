@@ -32,7 +32,8 @@ REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 # is_seqera_available). Matched against SEQERA_HEALTH_CACHE_TTL_SECONDS so the
 # cache stays fresh for other readers (admin dashboard, portal banner) too.
 HEALTH_CHECK_INTERVAL = IntervalTrigger(minutes=5)
-# Matches scripts/gadi/push_pbs_queue_status.sh's own push cadence on Gadi.
+# Matches the Gadi-side push script's own cadence (runs under the
+# yz52_workflow service account, outside this repo).
 GADI_PBS_QUEUE_STATUS_SYNC_INTERVAL = IntervalTrigger(minutes=5)
 # Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
 # miscalculates day=1 across Sydney's October DST switch and skips November entirely.
