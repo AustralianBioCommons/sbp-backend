@@ -179,24 +179,24 @@ def test_refresh_seqera_health_status_refreshes_the_cache(test_db, monkeypatch):
     assert len(calls) == 1
 
 
-def test_refresh_gadi_pbs_queue_status_dry_run_does_not_sync(monkeypatch):
+def test_refresh_gadi_pbs_jobs_dry_run_does_not_sync(monkeypatch):
     def _boom(**_kwargs):
-        raise AssertionError("sync_gadi_pbs_queue_status should not run during a dry run")
+        raise AssertionError("sync_gadi_pbs_jobs should not run during a dry run")
 
-    monkeypatch.setattr(scheduler_jobs.globus_transfer, "sync_gadi_pbs_queue_status", _boom)
+    monkeypatch.setattr(scheduler_jobs.globus_transfer, "sync_gadi_pbs_jobs", _boom)
 
-    scheduler_jobs.refresh_gadi_pbs_queue_status(dry_run=True)
+    scheduler_jobs.refresh_gadi_pbs_jobs(dry_run=True)
 
 
-def test_refresh_gadi_pbs_queue_status_submits_transfer(monkeypatch):
+def test_refresh_gadi_pbs_jobs_submits_transfer(monkeypatch):
     calls = []
     monkeypatch.setattr(
         scheduler_jobs.globus_transfer,
-        "sync_gadi_pbs_queue_status",
+        "sync_gadi_pbs_jobs",
         lambda **kwargs: calls.append(kwargs.get("settings")),
     )
 
-    scheduler_jobs.refresh_gadi_pbs_queue_status()
+    scheduler_jobs.refresh_gadi_pbs_jobs()
 
     assert len(calls) == 1
 

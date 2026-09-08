@@ -99,8 +99,8 @@ def _gadi_relative_path(
     return destination_location[len(collection_root) :]
 
 
-def gadi_pbs_queue_status_local_path(globus_settings: GlobusSettings | None = None) -> str:
-    """Absolute Gadi path that the Gadi-side PBS queue status push script writes to
+def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> str:
+    """Absolute Gadi path that the Gadi-side PBS jobs push script writes to
     (runs under the yz52_workflow service account, outside this repo).
 
     Placed under the existing output collection rather than a new dedicated
@@ -108,11 +108,11 @@ def gadi_pbs_queue_status_local_path(globus_settings: GlobusSettings | None = No
     another required env var per environment isn't worth it.
     """
     globus_settings = globus_settings or get_settings().globus
-    return f"{globus_settings.output_dir}/_system-status/gadi-pbs-queue-status.json"
+    return f"{globus_settings.output_dir}/_system-status/gadi-pbs-jobs.json"
 
 
-def sync_gadi_pbs_queue_status(settings: Settings | None = None) -> None:
-    """Submit a Globus transfer of the Gadi-local queue-status file into S3.
+def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
+    """Submit a Globus transfer of the Gadi-local sbp_service jobs file into S3.
 
     Fire-and-forget by design: no DataTransfer row, no polling/retry, unlike
     job-output transfers. A failed or still-in-flight submission just gets
@@ -125,23 +125,21 @@ def sync_gadi_pbs_queue_status(settings: Settings | None = None) -> None:
     transfer_client = get_transfer_client(globus_settings)
 
     source_path = _gadi_relative_path(
-        gadi_pbs_queue_status_local_path(globus_settings), globus_settings=globus_settings
+        gadi_pbs_jobs_local_path(globus_settings), globus_settings=globus_settings
     )
-    destination_uri = (
-        f"s3://{settings.aws.s3_bucket}/{settings.seqera.gadi_pbs_queue_status_s3_key}"
-    )
+    destination_uri = f"s3://{settings.aws.s3_bucket}/{settings.seqera.gadi_pbs_jobs_s3_key}"
     destination_path = _s3_relative_path(destination_uri)
 
     transfer_data = globus_sdk.TransferData(
         source_endpoint=globus_settings.gadi_collection_id,
         destination_endpoint=globus_settings.s3_collection_id,
-        label="sbp-gadi-pbs-queue-status",
+        label="sbp-gadi-pbs-jobs",
     )
     transfer_data.add_item(source_path, destination_path)
     try:
         transfer_client.submit_transfer(transfer_data)
     except globus_sdk.GlobusAPIError as exc:
-        logger.warning("Failed to submit Gadi PBS queue status transfer: %s", exc)
+        logger.warning("Failed to submit Gadi PBS jobs transfer: %s", exc)
 
 
 @dataclass(frozen=True)
