@@ -62,10 +62,10 @@ class SeqeraSettings(NestedSettings):
     workflow_sync_batch_limit: int = 50
     # S3 key (in AWS_S3_BUCKET) that a script running on Gadi under the
     # yz52_workflow service account periodically overwrites with
-    # `qstat -Q -f -F json` output (see globus_transfer.sync_gadi_pbs_queue_status
-    # and gadi_pbs_status.py). This backend only ever reads this key; it has
-    # no direct connection to Gadi itself.
-    gadi_pbs_queue_status_s3_key: str = "system-status/gadi-pbs-queue-status.json"
+    # `qstat -u sbp_service -f -F json` output (see
+    # globus_transfer.sync_gadi_pbs_jobs and gadi_pbs_jobs.py). This backend
+    # only ever reads this key; it has no direct connection to Gadi itself.
+    gadi_pbs_jobs_s3_key: str = "system-status/gadi-pbs-jobs.json"
 
     model_config = SettingsConfigDict(env_prefix="SEQERA_")
 

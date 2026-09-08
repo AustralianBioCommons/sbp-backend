@@ -125,20 +125,18 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
     return system_status.overall_status == "healthy"
 
 
-def refresh_gadi_pbs_queue_status(
-    dry_run: bool = False, *, settings: Settings | None = None
-) -> None:
-    """Push the latest Gadi-side PBS queue status snapshot into S3 via Globus.
+def refresh_gadi_pbs_jobs(dry_run: bool = False, *, settings: Settings | None = None) -> None:
+    """Push the latest Gadi-side sbp_service jobs snapshot into S3 via Globus.
 
-    See services/globus_transfer.sync_gadi_pbs_queue_status - fire-and-forget,
+    See services/globus_transfer.sync_gadi_pbs_jobs - fire-and-forget,
     no DB row, since the source file is regenerated every cycle regardless.
     """
     if dry_run:
-        logger.info("Dry run - not submitting Gadi PBS queue status transfer")
+        logger.info("Dry run - not submitting Gadi PBS jobs transfer")
         return
     settings = settings or get_settings()
-    globus_transfer.sync_gadi_pbs_queue_status(settings=settings)
-    logger.info("Submitted Gadi PBS queue status transfer to Globus.")
+    globus_transfer.sync_gadi_pbs_jobs(settings=settings)
+    logger.info("Submitted Gadi PBS jobs transfer to Globus.")
 
 
 @with_scheduler_db_session
