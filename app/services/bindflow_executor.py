@@ -121,7 +121,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,
-        "configProfiles": get_bindflow_config_profiles(),
+        "configProfiles": get_bindflow_config_profiles(workflow_run.workflow.profile),
         "configText": get_bindflow_config_text(
             config_path,
             user_details=user_details,

@@ -15,9 +15,12 @@ def get_proteinfold_default_params(
     return {"input": samplesheet_url, "outdir": out_dir, "mode": mode}
 
 
-def get_proteinfold_config_profiles() -> list[str]:
-    """Get config profiles for proteinfold workflow."""
-    return ["singularity"]
+def get_proteinfold_config_profiles(workflow_profiles: list[str]) -> list[str]:
+    """Get config profiles for proteinfold workflow, always including singularity."""
+    profiles = list(workflow_profiles)
+    if "singularity" not in profiles:
+        profiles.append("singularity")
+    return profiles
 
 
 def get_proteinfold_config_text(

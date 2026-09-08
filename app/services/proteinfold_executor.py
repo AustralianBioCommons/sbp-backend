@@ -115,7 +115,7 @@ async def prepare_proteinfold_workflow(
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,
-        "configProfiles": get_proteinfold_config_profiles(),
+        "configProfiles": get_proteinfold_config_profiles(workflow_run.workflow.profile),
         "configText": get_proteinfold_config_text(
             config_path,
             user_details=user_details,

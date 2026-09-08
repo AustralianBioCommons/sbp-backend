@@ -19,9 +19,12 @@ def get_bindflow_default_params(
     }
 
 
-def get_bindflow_config_profiles() -> list[str]:
-    """Get config profiles for bindflow workflow."""
-    return ["singularity"]
+def get_bindflow_config_profiles(workflow_profiles: list[str]) -> list[str]:
+    """Get config profiles for bindflow workflow, always including singularity."""
+    profiles = list(workflow_profiles)
+    if "singularity" not in profiles:
+        profiles.append("singularity")
+    return profiles
 
 
 def get_bindflow_config_text(

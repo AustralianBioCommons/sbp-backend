@@ -90,7 +90,7 @@ async def prepare_wisps_workflow(
         "workspaceId": workspace_id,
         "revision": revision or "main",
         "paramsText": params_text,
-        "configProfiles": get_wisps_config_profiles(),
+        "configProfiles": get_wisps_config_profiles(workflow_run.workflow.profile),
         "configText": config_text,
         "resume": False,
     }

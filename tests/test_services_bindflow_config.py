@@ -82,13 +82,28 @@ def test_get_executor_script_loads_modules():
 
 
 def test_get_bindflow_config_profiles_returns_list():
-    assert isinstance(get_bindflow_config_profiles(), list)
+    assert isinstance(get_bindflow_config_profiles(None), list)
 
 
 def test_get_bindflow_config_profiles_contains_singularity():
-    profiles = get_bindflow_config_profiles()
+    profiles = get_bindflow_config_profiles(None)
     assert "singularity" in profiles
     assert "gadi" not in profiles
+
+
+def test_get_bindflow_config_profiles_defaults_to_singularity_only():
+    assert get_bindflow_config_profiles(None) == ["singularity"]
+
+
+def test_get_bindflow_config_profiles_appends_workflow_profiles():
+    profiles = get_bindflow_config_profiles(["mini_dbs"])
+    assert set(profiles) == {"singularity", "mini_dbs"}
+
+
+def test_get_bindflow_config_profiles_does_not_duplicate_singularity():
+    profiles = get_bindflow_config_profiles(["singularity", "prod_dbs"])
+    assert profiles.count("singularity") == 1
+    assert "prod_dbs" in profiles
 
 
 # =============================================================================
