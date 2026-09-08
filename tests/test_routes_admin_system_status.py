@@ -14,7 +14,7 @@ from app.db.admin import require_admin_access
 from app.db.models.system_status import SystemStatusIncident
 from app.routes.system_status import router as system_status_router
 from app.schemas.health import ProbeResult, SystemStatus
-from app.services import health
+from app.services import gadi_pbs_status, health, seqera
 
 DB_ADMIN_REQUIRED_ENV = {
     "AUTH_DOMAIN": "example.auth.test",
@@ -138,6 +138,120 @@ def test_system_status_not_shadowed_by_admin_mount(mocker):
 
     assert resp.status_code == 401  # our endpoint's auth gate, not the admin mount
     assert "text/html" not in resp.headers.get("content-type", "")
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/api/gadi-queue-status
+# ---------------------------------------------------------------------------
+
+
+def test_admin_gadi_queue_status_returns_occupancy(monkeypatch: MonkeyPatch):
+    async def fake_get_queue_status(**_kwargs):
+        return seqera.GadiQueueStatus(active_workflows=5, max_concurrent_workflows=25)
+
+    monkeypatch.setattr(seqera, "get_queue_status", fake_get_queue_status)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-queue-status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["activeWorkflows"] == 5
+    assert body["maxConcurrentWorkflows"] == 25
+    assert body["availableCapacity"] == 20
+    assert "checkedAt" in body
+
+
+def test_admin_gadi_queue_status_requires_admin():
+    app = FastAPI()
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-queue-status")
+
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/api/gadi-pbs-queue-status
+# ---------------------------------------------------------------------------
+
+
+def test_admin_gadi_pbs_queue_status_returns_queues(monkeypatch: MonkeyPatch):
+    async def fake_get_pbs_queue_status(**_kwargs):
+        return gadi_pbs_status.GadiPbsStatusSnapshot(
+            generated_at=datetime(2026, 6, 1, 3, 0, 0, tzinfo=UTC),
+            queues=[
+                gadi_pbs_status.PbsQueueStatus(
+                    name="normal",
+                    queue_type="Execution",
+                    enabled=True,
+                    started=True,
+                    total_jobs=5,
+                    queued=3,
+                    running=2,
+                    held=0,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gadi_pbs_status, "get_pbs_queue_status", fake_get_pbs_queue_status)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-pbs-queue-status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["generatedAt"].startswith("2026-06-01T03:00:00")
+    assert len(body["queues"]) == 1
+    queue = body["queues"][0]
+    assert queue["name"] == "normal"
+    assert queue["queued"] == 3
+    assert queue["running"] == 2
+    assert queue["enabled"] is True
+
+
+def test_admin_gadi_pbs_queue_status_requires_admin():
+    app = FastAPI()
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-pbs-queue-status")
+
+    assert resp.status_code == 401
+
+
+def test_admin_gadi_pbs_queue_status_surfaces_push_failure(monkeypatch: MonkeyPatch):
+    from app.services.gadi_pbs_status import GadiPbsStatusError
+
+    async def fake_get_pbs_queue_status(**_kwargs):
+        raise GadiPbsStatusError("Could not read Gadi PBS queue status from s3://key: NoSuchKey")
+
+    monkeypatch.setattr(gadi_pbs_status, "get_pbs_queue_status", fake_get_pbs_queue_status)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    @app.exception_handler(Exception)
+    async def handle_exception(request, exc):  # noqa: ARG001
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.get("/admin/api/gadi-pbs-queue-status")
+
+    assert resp.status_code == 500
+    assert "Could not read Gadi PBS queue status" in resp.json()["error"]
 
 
 # ---------------------------------------------------------------------------

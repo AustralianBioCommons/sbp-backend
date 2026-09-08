@@ -110,6 +110,55 @@ class SystemStatusAdminResponse(BaseModel):
     )
 
 
+class GadiQueueStatusResponse(BaseModel):
+    """SBP's current Gadi submission-queue occupancy, returned by
+    GET /admin/api/gadi-queue-status.
+
+    Reflects workflows this app has submitted to Gadi (Seqera SUBMITTED/RUNNING
+    runs) against its configured concurrency cap - not Gadi's overall PBS-wide
+    queue, which this backend has no direct visibility into.
+    """
+
+    activeWorkflows: int = Field(
+        description="Workflows this app currently has SUBMITTED or RUNNING on Gadi"
+    )
+    maxConcurrentWorkflows: int = Field(
+        description="Configured cap on concurrent workflow submissions"
+    )
+    availableCapacity: int = Field(description="Remaining submission slots before the cap is hit")
+    checkedAt: datetime
+
+
+class PbsQueueStatusEntry(BaseModel):
+    """One PBS queue's job counts, as reported by `qstat -Q -f` on Gadi."""
+
+    name: str
+    queueType: str | None = None
+    enabled: bool
+    started: bool
+    totalJobs: int
+    queued: int
+    running: int
+    held: int
+
+
+class GadiPbsQueueStatusResponse(BaseModel):
+    """Gadi-wide PBS queue status, returned by GET /admin/api/gadi-pbs-queue-status.
+
+    This backend has no direct connection to Gadi - a script running on Gadi
+    under the service account periodically pushes `qstat -Q -f` output to S3,
+    and this endpoint just reads that object back. `generatedAt` is when the
+    Gadi-side script last ran, not when this endpoint was called, so a stale
+    value here means that push script has stopped running, not that this
+    request is slow. Unlike GET /admin/api/gadi-queue-status (Seqera-tracked,
+    this app's own workflows only), this reflects the whole cluster's queue
+    congestion.
+    """
+
+    generatedAt: datetime
+    queues: list[PbsQueueStatusEntry]
+
+
 class ComponentIncident(BaseModel):
     """A single downtime period for one component (never ``healthy``)."""
 

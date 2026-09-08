@@ -21,6 +21,7 @@ from app.services.seqera import (
     WorkflowExecutorError,
     WorkflowLaunchResult,
     count_active_workflows,
+    get_queue_status,
 )
 from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
@@ -468,3 +469,30 @@ async def test_count_active_workflows_raises_on_api_error():
 
     with pytest.raises(SeqeraAPIError):
         await count_active_workflows()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_queue_status_reports_active_and_available_capacity():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        side_effect=_totals_by_status_handler({"RUNNING": 3, "SUBMITTED": 2})
+    )
+
+    status = await get_queue_status()
+
+    assert status.active_workflows == 5
+    assert status.max_concurrent_workflows == 25
+    assert status.available_capacity == 20
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_queue_status_capacity_floors_at_zero_when_over_cap():
+    respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
+        side_effect=_totals_by_status_handler({"RUNNING": 20, "SUBMITTED": 10})
+    )
+
+    status = await get_queue_status()
+
+    assert status.active_workflows == 30
+    assert status.available_capacity == 0

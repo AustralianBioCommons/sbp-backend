@@ -60,6 +60,11 @@ class SeqeraSettings(NestedSettings):
     skip_health_gate: bool = False
     max_concurrent_workflows: int = 25
     workflow_sync_batch_limit: int = 50
+    # S3 key (in AWS_S3_BUCKET) that a script running on Gadi under the
+    # service account periodically overwrites with `qstat -Q -f -F json`
+    # output - see scripts/gadi/push_pbs_queue_status.sh. This backend only
+    # ever reads this key; it has no direct connection to Gadi itself.
+    gadi_pbs_queue_status_s3_key: str = "system-status/gadi-pbs-queue-status.json"
 
     model_config = SettingsConfigDict(env_prefix="SEQERA_")
 
