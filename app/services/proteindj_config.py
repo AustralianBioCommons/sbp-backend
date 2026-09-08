@@ -29,11 +29,11 @@ def get_proteindj_default_params(
     }
 
 
-def get_proteindj_config_profiles(workflow_profiles: list[str]) -> list[str]:
+def get_proteindj_config_profiles(workflow_profile: str) -> list[str]:
     """Get config profiles for proteindj workflow, always including singularity."""
-    profiles = list(workflow_profiles)
-    if "singularity" not in profiles:
-        profiles.append("singularity")
+    profiles = ["singularity"]
+    if workflow_profile and workflow_profile not in profiles:
+        profiles.append(workflow_profile)
     return profiles
 
 

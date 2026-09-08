@@ -105,9 +105,9 @@ class Workflow(Base):
     repo_staging_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Nextflow -profile names to launch this workflow with, e.g. mini_dbs/prod_dbs
-    profile: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=lambda: ["mini_dbs"], server_default='["mini_dbs"]'
+    # Nextflow -profile name to launch this workflow with, e.g. mini_dbs/prod_dbs
+    profile: Mapped[str] = mapped_column(
+        Text, nullable=False, default="mini_dbs", server_default="mini_dbs"
     )
 
     runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")

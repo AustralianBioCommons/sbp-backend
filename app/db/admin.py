@@ -143,7 +143,7 @@ class WorkflowAdmin(ModelView):
         "default_revision",
         "config_path",
         "prerun_script_path",
-        JSONField("profile"),
+        "profile",
         # Cache of the repo checkout currently staged on Gadi via Globus for
         # this workflow (see app/services/workflow_repo_staging.py) - a single
         # slot shared by every run, not per-run history.

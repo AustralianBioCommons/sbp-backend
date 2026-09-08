@@ -196,28 +196,27 @@ def test_get_executor_script_no_path_returns_header_only():
 
 
 def test_get_wisps_config_profiles_returns_list():
-    result = get_wisps_config_profiles(None)
+    result = get_wisps_config_profiles("mini_dbs")
     assert isinstance(result, list)
 
 
 def test_get_wisps_config_profiles_contains_singularity():
-    result = get_wisps_config_profiles(None)
+    result = get_wisps_config_profiles("mini_dbs")
     assert "singularity" in result
 
 
 def test_get_wisps_config_profiles_defaults_to_singularity_only():
-    assert get_wisps_config_profiles(None) == ["singularity"]
+    assert get_wisps_config_profiles("") == ["singularity"]
 
 
-def test_get_wisps_config_profiles_appends_workflow_profiles():
-    profiles = get_wisps_config_profiles(["mini_dbs"])
+def test_get_wisps_config_profiles_appends_workflow_profile():
+    profiles = get_wisps_config_profiles("mini_dbs")
     assert set(profiles) == {"singularity", "mini_dbs"}
 
 
 def test_get_wisps_config_profiles_does_not_duplicate_singularity():
-    profiles = get_wisps_config_profiles(["singularity", "prod_dbs"])
-    assert profiles.count("singularity") == 1
-    assert "prod_dbs" in profiles
+    profiles = get_wisps_config_profiles("singularity")
+    assert profiles == ["singularity"]
 
 
 def test_get_wisps_config_text_appends_process_block():

@@ -200,27 +200,26 @@ def test_get_proteindj_default_params_missing_required_field_raises():
 
 
 def test_get_proteindj_config_profiles_returns_list():
-    profiles = get_proteindj_config_profiles(None)
+    profiles = get_proteindj_config_profiles("mini_dbs")
     assert isinstance(profiles, list)
 
 
 def test_get_proteindj_config_profiles_contains_singularity():
-    assert "singularity" in get_proteindj_config_profiles(None)
+    assert "singularity" in get_proteindj_config_profiles("mini_dbs")
 
 
 def test_get_proteindj_config_profiles_defaults_to_singularity_only():
-    assert get_proteindj_config_profiles(None) == ["singularity"]
+    assert get_proteindj_config_profiles("") == ["singularity"]
 
 
-def test_get_proteindj_config_profiles_appends_workflow_profiles():
-    profiles = get_proteindj_config_profiles(["mini_dbs"])
+def test_get_proteindj_config_profiles_appends_workflow_profile():
+    profiles = get_proteindj_config_profiles("mini_dbs")
     assert set(profiles) == {"singularity", "mini_dbs"}
 
 
 def test_get_proteindj_config_profiles_does_not_duplicate_singularity():
-    profiles = get_proteindj_config_profiles(["singularity", "prod_dbs"])
-    assert profiles.count("singularity") == 1
-    assert "prod_dbs" in profiles
+    profiles = get_proteindj_config_profiles("singularity")
+    assert profiles == ["singularity"]
 
 
 # =============================================================================
