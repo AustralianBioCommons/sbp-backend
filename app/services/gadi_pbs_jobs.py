@@ -206,9 +206,14 @@ def _parse_snapshot(raw_json: str) -> GadiPbsJobsSnapshot:
     qstat_jobs = payload.get("qstatJobs")
     if not isinstance(qstat_jobs, dict):
         raise ValueError("missing or malformed 'qstatJobs' object")
-    jobs_raw = qstat_jobs.get("Jobs")
+    # PBS's own `qstat -f -F json` omits the "Jobs" key entirely when zero
+    # jobs match the filter (confirmed against real Gadi output) - that's a
+    # legitimate "nothing running right now" state, not a malformed push, so
+    # it defaults to empty rather than raising. A non-dict value for a
+    # *present* "Jobs" key is still treated as corrupt.
+    jobs_raw = qstat_jobs.get("Jobs", {})
     if not isinstance(jobs_raw, dict):
-        raise ValueError("missing or malformed 'qstatJobs.Jobs' object")
+        raise ValueError("malformed 'qstatJobs.Jobs' object")
     jobs = _parse_jobs(jobs_raw)
 
     # Secondary: Gadi-wide queue totals, for "ours / total" context only.

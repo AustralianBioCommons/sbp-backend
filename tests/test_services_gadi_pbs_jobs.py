@@ -110,6 +110,73 @@ async def test_get_pbs_jobs_computes_queue_totals_against_own_jobs():
 
 
 @pytest.mark.asyncio
+async def test_get_pbs_jobs_parses_real_gadi_queue_output():
+    """Regression test against a real (trimmed) `qstat -Q -f -F json` capture
+    from Gadi - PBS Pro splits each submission target into a "Route" queue
+    (e.g. "normal") and a separate "Execution" queue ("normal-exec") with its
+    own counts, state_count values have a trailing space, and other fields
+    (resources_assigned, max_run, ...) are present and must be ignored rather
+    than tripping up parsing."""
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {
+                "Jobs": {
+                    "111.gadi-pbs": {
+                        "Job_Name": "nf-TASK",
+                        "job_state": "R",
+                        "queue": "normal-exec",
+                        "Account_Name": "yz52",
+                    }
+                }
+            },
+            "qstatQueues": {
+                "Queue": {
+                    "normal": {
+                        "queue_type": "Route",
+                        "total_jobs": 327,
+                        "state_count": "Transit:0 Queued:172 Held:33 Waiting:122 Running:0 "
+                        "Exiting:0 Begun:0 ",
+                        "route_destinations": "normal-exec",
+                        "enabled": "True",
+                        "started": "True",
+                    },
+                    "normal-exec": {
+                        "queue_type": "Execution",
+                        "total_jobs": 1940,
+                        "state_count": "Transit:0 Queued:91 Held:676 Waiting:0 Running:1145 "
+                        "Exiting:1 Begun:27 ",
+                        "from_route_only": "True",
+                        "resources_assigned": {
+                            "mem": "125315317760kb",
+                            "ncpus": 36077,
+                        },
+                        "enabled": "True",
+                        "started": "True",
+                    },
+                }
+            },
+        }
+    )
+    with patch(
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+    ):
+        snapshot = await get_pbs_jobs()
+
+    assert len(snapshot.jobs) == 1
+    assert snapshot.jobs[0].queue == "normal-exec"
+
+    by_name = {q.name: q for q in snapshot.queue_totals}
+    # "normal" (the Route queue) has zero sbp_service jobs directly in it -
+    # our one job is in "normal-exec" (the Execution queue) - so only
+    # "normal-exec" should survive the relevance filter.
+    assert set(by_name) == {"normal-exec"}
+    assert by_name["normal-exec"].mine_running == 1
+    assert by_name["normal-exec"].total_running == 1145
+    assert by_name["normal-exec"].total_queued == 91
+
+
+@pytest.mark.asyncio
 async def test_get_pbs_jobs_queue_totals_empty_when_qstat_queues_missing():
     """Missing/malformed queue-totals section must not affect the primary
     jobs list - it's secondary context, not required."""
@@ -211,12 +278,42 @@ async def test_get_pbs_jobs_raises_when_qstat_jobs_missing():
 
 
 @pytest.mark.asyncio
-async def test_get_pbs_jobs_raises_when_jobs_key_missing():
-    """Same as above, but for qstatJobs.Jobs specifically missing/malformed."""
+async def test_get_pbs_jobs_returns_empty_list_when_jobs_key_absent():
+    """Confirmed against real Gadi output: `qstat -u <user> -f -F json` omits
+    the "Jobs" key entirely when zero jobs match - e.g.
+    {"timestamp":..., "pbs_version":..., "pbs_server":...} with no "Jobs" key
+    at all. That's a legitimate "nothing running right now" state, not a
+    malformed push, so it must return an empty list rather than raising."""
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {
+                "timestamp": 1788909619,
+                "pbs_version": "2024.1.2.20241017100211",
+                "pbs_server": "gadi-pbs-01",
+            },
+        }
+    )
     with patch(
-        "app.services.gadi_pbs_jobs.read_s3_file",
-        new_callable=AsyncMock,
-        return_value=json.dumps({"generatedAt": "2026-06-01T03:00:00Z", "qstatJobs": {}}),
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+    ):
+        snapshot = await get_pbs_jobs()
+
+    assert snapshot.jobs == []
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_jobs_raises_when_jobs_value_is_malformed():
+    """Unlike an absent "Jobs" key (a legitimate empty state), a present but
+    non-dict "Jobs" value means the push script wrote something corrupt."""
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {"Jobs": "not-a-dict"},
+        }
+    )
+    with patch(
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
     ):
         with pytest.raises(GadiPbsJobsError, match="Could not parse"):
             await get_pbs_jobs()
