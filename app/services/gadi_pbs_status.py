@@ -100,8 +100,13 @@ def _parse_snapshot(raw_json: str) -> GadiPbsStatusSnapshot:
     if generated_at.tzinfo is None:
         generated_at = generated_at.replace(tzinfo=UTC)
 
-    qstat = payload.get("qstat", {})
-    queues_raw = qstat.get("Queue", {}) if isinstance(qstat, dict) else {}
+    qstat = payload.get("qstat")
+    if not isinstance(qstat, dict):
+        raise ValueError("missing or malformed 'qstat' object")
+    queues_raw = qstat.get("Queue")
+    if not isinstance(queues_raw, dict):
+        raise ValueError("missing or malformed 'qstat.Queue' object")
+
     return GadiPbsStatusSnapshot(generated_at=generated_at, queues=_parse_queues(queues_raw))
 
 

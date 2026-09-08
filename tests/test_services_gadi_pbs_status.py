@@ -94,3 +94,29 @@ async def test_get_pbs_queue_status_raises_when_generated_at_missing():
     ):
         with pytest.raises(GadiPbsStatusError, match="Could not parse"):
             await get_pbs_queue_status()
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_queue_status_raises_when_qstat_missing():
+    """A payload missing the 'qstat' object entirely must raise, not silently
+    report zero queues - that would read as "nothing running anywhere" instead
+    of "the push script wrote a malformed/incomplete file"."""
+    with patch(
+        "app.services.gadi_pbs_status.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=json.dumps({"generatedAt": "2026-06-01T03:00:00Z"}),
+    ):
+        with pytest.raises(GadiPbsStatusError, match="Could not parse"):
+            await get_pbs_queue_status()
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_queue_status_raises_when_queue_key_missing():
+    """Same as above, but for qstat.Queue specifically missing/malformed."""
+    with patch(
+        "app.services.gadi_pbs_status.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=json.dumps({"generatedAt": "2026-06-01T03:00:00Z", "qstat": {}}),
+    ):
+        with pytest.raises(GadiPbsStatusError, match="Could not parse"):
+            await get_pbs_queue_status()
