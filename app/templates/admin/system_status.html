@@ -69,7 +69,10 @@
     <div class="card-header d-flex align-items-center">
       <h3 class="card-title mb-0">Gadi PBS Queues</h3>
       <div class="ms-auto d-flex align-items-center gap-2 text-muted small">
-        <span>Pushed from Gadi (<code>qstat -Q -f</code>) - the whole cluster's congestion, not just SBP's own jobs. Generated: <span id="pbs-queues-generated-at">—</span></span>
+        <span>Pushed from Gadi (<code>qstat -Q -f</code>). Generated: <span id="pbs-queues-generated-at">—</span></span>
+        <select id="pbs-queue-filter" class="form-select form-select-sm" style="width:auto;">
+          <option value="__all__">All queues</option>
+        </select>
       </div>
     </div>
     <div class="table-responsive">
@@ -358,6 +361,61 @@
   var PBS_QUEUE_ENDPOINT = "/admin/api/gadi-pbs-queue-status";
   var PBS_QUEUE_REFRESH_MS = 60000;
   var PBS_QUEUE_STALE_MS = 15 * 60000;
+  // SBP's own compute jobs land in this queue - default the filter to it
+  // (falls back to "All queues" if it isn't present in a given response).
+  var PBS_QUEUE_DEFAULT_FILTER = "workflow";
+
+  var pbsQueueFilterEl = document.getElementById("pbs-queue-filter");
+  var pbsQueueSelected = PBS_QUEUE_DEFAULT_FILTER;
+  var lastPbsQueues = [];
+
+  function populatePbsQueueFilterOptions(queues) {
+    var names = queues.map(function (q) { return q.name; });
+    if (pbsQueueSelected !== "__all__" && names.indexOf(pbsQueueSelected) === -1) {
+      // Selected queue vanished from the latest response (or never existed) -
+      // fall back rather than silently showing a stale/empty selection.
+      pbsQueueSelected = "__all__";
+    }
+    pbsQueueFilterEl.innerHTML = '<option value="__all__">All queues</option>';
+    names.forEach(function (name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      if (name === pbsQueueSelected) opt.selected = true;
+      pbsQueueFilterEl.appendChild(opt);
+    });
+    if (pbsQueueSelected === "__all__") pbsQueueFilterEl.value = "__all__";
+  }
+
+  function renderPbsQueueRows(queues) {
+    var body = document.getElementById("pbs-queues-body");
+    body.innerHTML = "";
+    var filtered = pbsQueueSelected === "__all__"
+      ? queues
+      : queues.filter(function (q) { return q.name === pbsQueueSelected; });
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="6" class="text-muted">No queues reported.</td></tr>';
+      return;
+    }
+    filtered.forEach(function (q) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td><strong>" + escapeHtml(q.name) + "</strong></td>" +
+        "<td>" + (q.enabled
+          ? '<span class="badge bg-success-lt">Yes</span>'
+          : '<span class="badge bg-secondary-lt">No</span>') + "</td>" +
+        "<td>" + q.queued + "</td>" +
+        "<td>" + q.running + "</td>" +
+        "<td>" + q.held + "</td>" +
+        "<td>" + q.totalJobs + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  pbsQueueFilterEl.addEventListener("change", function () {
+    pbsQueueSelected = pbsQueueFilterEl.value;
+    renderPbsQueueRows(lastPbsQueues);
+  });
 
   function renderPbsQueues(data) {
     var generatedAtEl = document.getElementById("pbs-queues-generated-at");
@@ -371,28 +429,11 @@
       generatedAtEl.textContent = "—";
     }
 
-    var body = document.getElementById("pbs-queues-body");
-    body.innerHTML = "";
-    var queues = (data.queues || []).slice().sort(function (a, b) {
+    lastPbsQueues = (data.queues || []).slice().sort(function (a, b) {
       return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
     });
-    if (!queues.length) {
-      body.innerHTML = '<tr><td colspan="6" class="text-muted">No queues reported.</td></tr>';
-      return;
-    }
-    queues.forEach(function (q) {
-      var tr = document.createElement("tr");
-      tr.innerHTML =
-        "<td><strong>" + escapeHtml(q.name) + "</strong></td>" +
-        "<td>" + (q.enabled
-          ? '<span class="badge bg-success-lt">Yes</span>'
-          : '<span class="badge bg-secondary-lt">No</span>') + "</td>" +
-        "<td>" + q.queued + "</td>" +
-        "<td>" + q.running + "</td>" +
-        "<td>" + q.held + "</td>" +
-        "<td>" + q.totalJobs + "</td>";
-      body.appendChild(tr);
-    });
+    populatePbsQueueFilterOptions(lastPbsQueues);
+    renderPbsQueueRows(lastPbsQueues);
   }
 
   function renderPbsQueuesError(message) {

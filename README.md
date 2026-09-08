@@ -268,7 +268,10 @@ Surfaces:
 - `/admin/system-status` — the **System Status** dashboard view (requires
   `ENABLE_DB_ADMIN=true`; auto-refreshes every 30s) rendering a per-component grid
   with status pills and an optional one-click link to the backend CloudWatch log
-  group, plus a **Gadi PBS Queues** card (below).
+  group, plus a **Gadi PBS Queues** card (below) with a queue selector defaulting
+  to `workflow` (where SBP's own compute jobs run) — switchable to any other
+  queue or "All queues"; this is a client-side filter over the full response,
+  not a server-side restriction.
 - `GET /admin/api/gadi-queue-status` — admin-only JSON with `activeWorkflows`,
   `maxConcurrentWorkflows`, and `availableCapacity`. This is SBP's own view of Gadi
   load (Seqera `SUBMITTED`/`RUNNING` workflow count against `SEQERA_MAX_CONCURRENT_WORKFLOWS`),
