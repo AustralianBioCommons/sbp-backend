@@ -105,6 +105,34 @@ async def count_active_workflows(
     return total
 
 
+@dataclass
+class GadiQueueStatus:
+    """SBP's current Gadi submission-queue occupancy.
+
+    Reflects workflows this app has submitted to Gadi (Seqera SUBMITTED/RUNNING
+    runs) against its configured concurrency cap - not Gadi's overall PBS-wide
+    queue, which this backend has no direct visibility into (see
+    count_active_workflows for why Seqera is the proxy used here).
+    """
+
+    active_workflows: int
+    max_concurrent_workflows: int
+
+    @property
+    def available_capacity(self) -> int:
+        return max(0, self.max_concurrent_workflows - self.active_workflows)
+
+
+async def get_queue_status(settings: Settings | None = None) -> GadiQueueStatus:
+    """Return SBP's current Gadi submission-queue occupancy."""
+    settings = settings or get_settings()
+    active = await count_active_workflows(settings=settings)
+    return GadiQueueStatus(
+        active_workflows=active,
+        max_concurrent_workflows=settings.seqera.max_concurrent_workflows,
+    )
+
+
 def _samplesheet_url(seqera_api_url: str, workspace_id: str, dataset_id: str) -> str:
     """Build the Seqera samplesheet URL for a dataset."""
     return (

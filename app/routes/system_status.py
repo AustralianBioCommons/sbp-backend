@@ -19,8 +19,14 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db.admin import require_admin_access
-from ..schemas.health import SystemStatusAdminResponse, SystemStatusDowntimeResponse
-from ..services import health
+from ..schemas.health import (
+    GadiPbsQueueStatusResponse,
+    GadiQueueStatusResponse,
+    PbsQueueStatusEntry,
+    SystemStatusAdminResponse,
+    SystemStatusDowntimeResponse,
+)
+from ..services import gadi_pbs_status, health, seqera
 from .dependencies import get_db
 
 router = APIRouter(
@@ -44,6 +50,50 @@ async def get_admin_system_status(
     """Return verbose, admin-only runtime health of the submission components."""
     status_obj = await health.get_system_status(db, force_refresh=refresh, settings=settings)
     return SystemStatusAdminResponse.model_validate(health.to_admin_dict(status_obj, settings))
+
+
+@router.get("/gadi-queue-status", response_model=GadiQueueStatusResponse)
+async def get_admin_gadi_queue_status(
+    settings: Settings = Depends(get_settings),
+) -> GadiQueueStatusResponse:
+    """Return SBP's current Gadi submission-queue occupancy (active vs. max concurrent workflows)."""
+    queue = await seqera.get_queue_status(settings=settings)
+    return GadiQueueStatusResponse(
+        activeWorkflows=queue.active_workflows,
+        maxConcurrentWorkflows=queue.max_concurrent_workflows,
+        availableCapacity=queue.available_capacity,
+        checkedAt=datetime.now(UTC),
+    )
+
+
+@router.get("/gadi-pbs-queue-status", response_model=GadiPbsQueueStatusResponse)
+async def get_admin_gadi_pbs_queue_status(
+    settings: Settings = Depends(get_settings),
+) -> GadiPbsQueueStatusResponse:
+    """Return Gadi-wide PBS queue status, as last pushed from Gadi to S3.
+
+    Unlike /gadi-queue-status (Seqera-tracked, this app's own workflows only),
+    this reflects the whole cluster's queue congestion. Raises on a missing or
+    malformed S3 object (see GadiPbsStatusError) rather than masking it as an
+    empty result - that usually means the Gadi-side push script has stopped.
+    """
+    snapshot = await gadi_pbs_status.get_pbs_queue_status(settings=settings)
+    return GadiPbsQueueStatusResponse(
+        generatedAt=snapshot.generated_at,
+        queues=[
+            PbsQueueStatusEntry(
+                name=q.name,
+                queueType=q.queue_type,
+                enabled=q.enabled,
+                started=q.started,
+                totalJobs=q.total_jobs,
+                queued=q.queued,
+                running=q.running,
+                held=q.held,
+            )
+            for q in snapshot.queues
+        ],
+    )
 
 
 @router.get("/system-status/history", response_model=SystemStatusDowntimeResponse)

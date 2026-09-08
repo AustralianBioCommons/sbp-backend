@@ -67,6 +67,37 @@
 <div class="col-12 mt-3">
   <div class="card">
     <div class="card-header d-flex align-items-center">
+      <h3 class="card-title mb-0">Gadi PBS Queues</h3>
+      <div class="ms-auto d-flex align-items-center gap-2 text-muted small">
+        <span>Pushed from Gadi (<code>qstat -Q -f</code>). Generated: <span id="pbs-queues-generated-at">—</span></span>
+        <select id="pbs-queue-filter" class="form-select form-select-sm" style="width:auto;">
+          <option value="__all__">All queues</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table card-table table-vcenter">
+        <thead>
+          <tr>
+            <th>Queue</th>
+            <th>Enabled</th>
+            <th>Queued</th>
+            <th>Running</th>
+            <th>Held</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody id="pbs-queues-body">
+          <tr><td colspan="6" class="text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="col-12 mt-3">
+  <div class="card">
+    <div class="card-header d-flex align-items-center">
       <h3 class="card-title mb-0">History</h3>
       <div class="ms-auto btn-group" role="group" aria-label="History window">
         <button type="button" class="btn btn-sm btn-outline-secondary history-window-btn" data-hours="24">24h</button>
@@ -318,6 +349,114 @@
   initTooltips(document); // static tooltips (e.g. the Latency column header)
   load();
   setInterval(load, REFRESH_MS);
+
+  // -------------------------------------------------------------------------
+  // Gadi PBS queues: pushed periodically from Gadi to S3 by a script running
+  // under the service account (no direct connection from this backend to
+  // Gadi). Polling here just re-reads the S3 object, so this can refresh
+  // often without hitting Gadi at all - `generatedAt` is what tells you how
+  // fresh the underlying data actually is.
+  // ponytail: 15-minute staleness threshold is a guess, not tuned against the
+  // Gadi-side push script's real interval - adjust once that's known.
+  var PBS_QUEUE_ENDPOINT = "/admin/api/gadi-pbs-queue-status";
+  var PBS_QUEUE_REFRESH_MS = 60000;
+  var PBS_QUEUE_STALE_MS = 15 * 60000;
+  // SBP's own compute jobs land in this queue - default the filter to it
+  // (falls back to "All queues" if it isn't present in a given response).
+  var PBS_QUEUE_DEFAULT_FILTER = "workflow";
+
+  var pbsQueueFilterEl = document.getElementById("pbs-queue-filter");
+  var pbsQueueSelected = PBS_QUEUE_DEFAULT_FILTER;
+  var lastPbsQueues = [];
+
+  function populatePbsQueueFilterOptions(queues) {
+    var names = queues.map(function (q) { return q.name; });
+    if (pbsQueueSelected !== "__all__" && names.indexOf(pbsQueueSelected) === -1) {
+      // Selected queue vanished from the latest response (or never existed) -
+      // fall back rather than silently showing a stale/empty selection.
+      pbsQueueSelected = "__all__";
+    }
+    pbsQueueFilterEl.innerHTML = '<option value="__all__">All queues</option>';
+    names.forEach(function (name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      if (name === pbsQueueSelected) opt.selected = true;
+      pbsQueueFilterEl.appendChild(opt);
+    });
+    if (pbsQueueSelected === "__all__") pbsQueueFilterEl.value = "__all__";
+  }
+
+  function renderPbsQueueRows(queues) {
+    var body = document.getElementById("pbs-queues-body");
+    body.innerHTML = "";
+    var filtered = pbsQueueSelected === "__all__"
+      ? queues
+      : queues.filter(function (q) { return q.name === pbsQueueSelected; });
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="6" class="text-muted">No queues reported.</td></tr>';
+      return;
+    }
+    filtered.forEach(function (q) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td><strong>" + escapeHtml(q.name) + "</strong></td>" +
+        "<td>" + (q.enabled
+          ? '<span class="badge bg-success-lt">Yes</span>'
+          : '<span class="badge bg-secondary-lt">No</span>') + "</td>" +
+        "<td>" + q.queued + "</td>" +
+        "<td>" + q.running + "</td>" +
+        "<td>" + q.held + "</td>" +
+        "<td>" + q.totalJobs + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  pbsQueueFilterEl.addEventListener("change", function () {
+    pbsQueueSelected = pbsQueueFilterEl.value;
+    renderPbsQueueRows(lastPbsQueues);
+  });
+
+  function renderPbsQueues(data) {
+    var generatedAtEl = document.getElementById("pbs-queues-generated-at");
+    if (data.generatedAt) {
+      var generatedAtDate = new Date(data.generatedAt);
+      var ageMs = Date.now() - generatedAtDate.getTime();
+      var label = generatedAtDate.toLocaleString() + " " + tzAbbrev(generatedAtDate);
+      generatedAtEl.textContent = label + (ageMs > PBS_QUEUE_STALE_MS ? " (stale)" : "");
+      generatedAtEl.className = ageMs > PBS_QUEUE_STALE_MS ? "text-danger fw-semibold" : "";
+    } else {
+      generatedAtEl.textContent = "—";
+    }
+
+    lastPbsQueues = (data.queues || []).slice().sort(function (a, b) {
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    populatePbsQueueFilterOptions(lastPbsQueues);
+    renderPbsQueueRows(lastPbsQueues);
+  }
+
+  function renderPbsQueuesError(message) {
+    document.getElementById("pbs-queues-body").innerHTML =
+      '<tr><td colspan="6" class="text-danger">Failed to load Gadi queue status: ' +
+      escapeHtml(message) + "</td></tr>";
+    document.getElementById("pbs-queues-generated-at").textContent = "—";
+  }
+
+  function loadPbsQueues() {
+    fetch(PBS_QUEUE_ENDPOINT, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(renderPbsQueues)
+      .catch(function (err) {
+        renderPbsQueuesError(err.message || String(err));
+      });
+  }
+
+  loadPbsQueues();
+  setInterval(loadPbsQueues, PBS_QUEUE_REFRESH_MS);
 
   // -------------------------------------------------------------------------
   // History: per-component downtime incidents (only degraded/unhealthy

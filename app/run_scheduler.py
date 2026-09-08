@@ -14,6 +14,7 @@ load_dotenv()
 
 from app.scheduler import SCHEDULER  # noqa: E402
 from app.scheduler.jobs import (  # noqa: E402
+    refresh_gadi_pbs_queue_status,
     refresh_seqera_health_status,
     refresh_user_credits,
     submit_pending_jobs,
@@ -31,6 +32,9 @@ REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 # is_seqera_available). Matched against SEQERA_HEALTH_CACHE_TTL_SECONDS so the
 # cache stays fresh for other readers (admin dashboard, portal banner) too.
 HEALTH_CHECK_INTERVAL = IntervalTrigger(minutes=5)
+# Matches the Gadi-side push script's own cadence (runs under the
+# yz52_workflow service account, outside this repo).
+GADI_PBS_QUEUE_STATUS_SYNC_INTERVAL = IntervalTrigger(minutes=5)
 # Fixed AEST (UTC+10), no DST. Not Australia/Sydney: APScheduler 3.11.3's CronTrigger
 # miscalculates day=1 across Sydney's October DST switch and skips November entirely.
 MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisbane")
@@ -100,6 +104,21 @@ def main(dry_run: bool = False):
             trigger=REPO_STAGING_SYNC_INTERVAL,
             next_run_time=datetime.now(tz=UTC) + timedelta(minutes=1),
             id="sync_workflow_repo_staging",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
+        logger.info(
+            f"Adding refresh_gadi_pbs_queue_status to scheduler: "
+            f"trigger = {GADI_PBS_QUEUE_STATUS_SYNC_INTERVAL}"
+        )
+        SCHEDULER.add_job(
+            refresh_gadi_pbs_queue_status,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=GADI_PBS_QUEUE_STATUS_SYNC_INTERVAL,
+            next_run_time=datetime.now(tz=UTC),
+            id="refresh_gadi_pbs_queue_status",
             misfire_grace_time=60,
             max_instances=1,
             replace_existing=True,
