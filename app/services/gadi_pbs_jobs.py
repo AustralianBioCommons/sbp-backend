@@ -132,7 +132,7 @@ def _decode_account_name(raw: Any) -> str | None:
     try:
         decoded_user = base64.b64decode(user_part, validate=True).decode("utf-8")
         base64.b64decode(ip_part, validate=True)  # confirms the pattern; IP itself is discarded
-    except (binascii.Error, ValueError, UnicodeDecodeError):
+    except binascii.Error, ValueError, UnicodeDecodeError:
         return raw
     return decoded_user
 
