@@ -126,7 +126,13 @@ async def test_get_pbs_jobs_parses_real_gadi_queue_output():
                         "Job_Name": "nf-TASK",
                         "job_state": "R",
                         "queue": "normal-exec",
-                        "Account_Name": "yz52",
+                        # Real Gadi jobs have no "Account_Name" set (the
+                        # optional `-A` accounting string isn't used) - only
+                        # PBS's auto-populated "project" attribute, which is
+                        # deliberately NOT read (see gadi_pbs_jobs.py - on
+                        # some queues it holds an encoded username+IP rather
+                        # than a project code).
+                        "project": "yz52",
                     }
                 }
             },
@@ -165,6 +171,8 @@ async def test_get_pbs_jobs_parses_real_gadi_queue_output():
 
     assert len(snapshot.jobs) == 1
     assert snapshot.jobs[0].queue == "normal-exec"
+    # Not "yz52" - "project" is deliberately not read as a fallback.
+    assert snapshot.jobs[0].account is None
 
     by_name = {q.name: q for q in snapshot.queue_totals}
     # "normal" (the Route queue) has zero sbp_service jobs directly in it -
@@ -193,6 +201,54 @@ async def test_get_pbs_jobs_queue_totals_empty_when_qstat_queues_missing():
 
     assert len(snapshot.jobs) == 1
     assert snapshot.queue_totals == []
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_jobs_decodes_account_name_email_and_drops_ip():
+    """Confirmed against a real gpuhopper-queue job: Seqera sets Account_Name
+    to "<base64 email>:<base64 ip>" for per-user GPU tracking, instead of a
+    plain project code. Only the email has any diagnostic value - the IP
+    must never reach the dashboard."""
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {
+                "Jobs": {
+                    "1.gadi-pbs": {
+                        "job_state": "Q",
+                        "Account_Name": (
+                            "YW1hbmRhK2FkbWluK3NicEBiaW9jb21tb25zLm9yZy5hdQ==:"
+                            "MTIzLjI0My4yNDcuNjc="
+                        ),
+                    }
+                }
+            },
+        }
+    )
+    with patch(
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+    ):
+        snapshot = await get_pbs_jobs()
+
+    account = snapshot.jobs[0].account
+    assert account == "amanda+admin+sbp@biocommons.org.au"
+    assert "123.243.247.67" not in (account or "")
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_jobs_leaves_plain_account_name_unchanged():
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {"Jobs": {"1.gadi-pbs": {"job_state": "R", "Account_Name": "yz52"}}},
+        }
+    )
+    with patch(
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+    ):
+        snapshot = await get_pbs_jobs()
+
+    assert snapshot.jobs[0].account == "yz52"
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,8 @@ the primary thing this endpoint exists for.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass
@@ -111,6 +113,30 @@ def _parse_pbs_datetime(raw: Any) -> datetime | None:
         return None
 
 
+def _decode_account_name(raw: Any) -> str | None:
+    """Decode PBS's Account_Name attribute for display.
+
+    On most queues this is a plain project code (e.g. "yz52"), returned
+    as-is. On some queues (e.g. gpuhopper) Seqera instead sets it to
+    "<base64 email>:<base64 ip>" for per-user GPU tracking - confirmed
+    against a real job. Only the email half has any diagnostic value here;
+    the IP must never be shown, so this only decodes when the value
+    strictly matches that two-part base64 pattern, falling back to the raw
+    string otherwise (covers plain codes and anything unexpected).
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    user_part, sep, ip_part = raw.partition(":")
+    if not sep:
+        return raw
+    try:
+        decoded_user = base64.b64decode(user_part, validate=True).decode("utf-8")
+        base64.b64decode(ip_part, validate=True)  # confirms the pattern; IP itself is discarded
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return raw
+    return decoded_user
+
+
 def _parse_jobs(jobs_raw: dict[str, Any]) -> list[PbsJobStatus]:
     result = []
     for job_id, attrs in jobs_raw.items():
@@ -124,7 +150,7 @@ def _parse_jobs(jobs_raw: dict[str, Any]) -> list[PbsJobStatus]:
                 state=state,
                 state_label=_JOB_STATE_LABELS.get(state, state or "Unknown"),
                 queue=attrs.get("queue"),
-                account=attrs.get("Account_Name"),
+                account=_decode_account_name(attrs.get("Account_Name")),
                 submitted_at=_parse_pbs_datetime(attrs.get("qtime")),
                 started_at=_parse_pbs_datetime(attrs.get("stime")),
             )
