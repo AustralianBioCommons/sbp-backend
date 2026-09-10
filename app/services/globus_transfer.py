@@ -13,7 +13,7 @@ import globus_sdk
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import GlobusSettings, get_settings
+from ..config import GlobusSettings, Settings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
 from ..db.models.job_queue import QueuedJob
 from .globus_client import get_transfer_client
@@ -97,6 +97,49 @@ def _gadi_relative_path(
         )
     # The startswith check above guarantees this always begins with "/".
     return destination_location[len(collection_root) :]
+
+
+def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> str:
+    """Absolute Gadi path that the Gadi-side PBS jobs push script writes to
+    (runs under the yz52_workflow service account, outside this repo).
+
+    Placed under the existing output collection rather than a new dedicated
+    Globus setting - this is just a filesystem location, not a credential, so
+    another required env var per environment isn't worth it.
+    """
+    globus_settings = globus_settings or get_settings().globus
+    return f"{globus_settings.output_dir}/_system-status/gadi-pbs-jobs.json"
+
+
+def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
+    """Submit a Globus transfer of the Gadi-local sbp_service jobs file into S3.
+
+    Fire-and-forget by design: no DataTransfer row, no polling/retry, unlike
+    job-output transfers. A failed or still-in-flight submission just gets
+    superseded by the next scheduled tick a few minutes later - the source
+    file is regenerated every cycle by the Gadi-side push script regardless,
+    so there is nothing worth resuming.
+    """
+    settings = settings or get_settings()
+    globus_settings = settings.globus
+    transfer_client = get_transfer_client(globus_settings)
+
+    source_path = _gadi_relative_path(
+        gadi_pbs_jobs_local_path(globus_settings), globus_settings=globus_settings
+    )
+    destination_uri = f"s3://{settings.aws.s3_bucket}/{settings.seqera.gadi_pbs_jobs_s3_key}"
+    destination_path = _s3_relative_path(destination_uri)
+
+    transfer_data = globus_sdk.TransferData(
+        source_endpoint=globus_settings.gadi_collection_id,
+        destination_endpoint=globus_settings.s3_collection_id,
+        label="sbp-gadi-pbs-jobs",
+    )
+    transfer_data.add_item(source_path, destination_path)
+    try:
+        transfer_client.submit_transfer(transfer_data)
+    except globus_sdk.GlobusAPIError as exc:
+        logger.warning("Failed to submit Gadi PBS jobs transfer: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -349,6 +392,8 @@ def _try_promote_staging_job(db: Session, queued_job: QueuedJob) -> None:
         return
 
     queued_job.status = "pending"
+    # Make sure the pending job has next_attempt_at set so it gets picked up
+    queued_job.next_attempt_at = datetime.now(tz=UTC)
     db.add(queued_job)
     db.commit()
 

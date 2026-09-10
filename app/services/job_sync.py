@@ -118,6 +118,18 @@ async def sync_workflow_runs(
                 run.id,
                 exc,
             )
+            # Old runs that we can't access anymore (due to config changes etc.):
+            # Mark as UNKNOWN so they stop being checked
+            if exc.status_code == 403 and run.submission_timestamp is not None:
+                submitted_at = run.submission_timestamp
+                if submitted_at.tzinfo is None:
+                    submitted_at = submitted_at.replace(tzinfo=UTC)
+                run_age = datetime.now(tz=UTC) - submitted_at
+                if run_age.days > 30:
+                    logger.warning(f"Marking old run {run.id} as UNKNOWN")
+                    run.seqera_final_status = PipelineStatus.UNKNOWN.value
+                    db.add(run)
+                    db.commit()
             result = _error_result(run, exc)
         except Exception as exc:
             db.rollback()

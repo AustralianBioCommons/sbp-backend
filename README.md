@@ -208,6 +208,10 @@ Optional entries:
 - `SEQERA_ENABLE_AGENT_HEALTHCHECK` — Set to `true` to enable the active Tower Agent liveness probe (default `false`).
 - `SEQERA_HEALTHCHECK_AGENT_TIMEOUT_SECONDS` — Max seconds to wait for throwaway env validation (default `20`).
 - `AWS_LOG_GROUP` — Backend CloudWatch log group name for the admin System Status link.
+- `SEQERA_GADI_PBS_JOBS_S3_KEY` — S3 key (in `AWS_S3_BUCKET`) that a script
+  running on Gadi under the `yz52_workflow` service account (maintained outside
+  this repo) periodically overwrites with sbp_service's own PBS jobs
+  (default `system-status/gadi-pbs-jobs.json`).
 
 ## DB Debug UI (Starlette Admin)
 
@@ -265,7 +269,47 @@ Surfaces:
 - `/admin/system-status` — the **System Status** dashboard view (requires
   `ENABLE_DB_ADMIN=true`; auto-refreshes every 30s) rendering a per-component grid
   with status pills and an optional one-click link to the backend CloudWatch log
-  group.
+  group, plus a **Gadi Jobs** card (below) listing sbp_service's own PBS jobs.
+- `GET /admin/api/gadi-queue-status` — admin-only JSON with `activeWorkflows`,
+  `maxConcurrentWorkflows`, and `availableCapacity`. This is SBP's own view of Gadi
+  load (Seqera `SUBMITTED`/`RUNNING` workflow count against `SEQERA_MAX_CONCURRENT_WORKFLOWS`),
+  not Gadi's overall PBS-wide queue — it only reflects what the Seqera Platform API
+  reports about workflows this app launched. Not shown on the dashboard (removed
+  in favor of the PBS-sourced card below); the endpoint itself is unchanged.
+- `GET /admin/api/gadi-pbs-jobs` — admin-only JSON with `generatedAt`, plus:
+  - `jobs` (primary) — sbp_service's own PBS jobs (`jobId`/`state`/`stateLabel`/
+    `queue`/`account`/`submittedAt`/`startedAt`), via job-listing mode
+    (`qstat -u sbp_service -f -F json`). Deliberately not queue-summary mode
+    (`qstat -Q`) — a per-queue count has no per-user filter and would include
+    every other Gadi user's jobs too.
+  - `queueTotals` (secondary, best-effort context only) — per-queue
+    `mineQueued`/`totalQueued`/`mineRunning`/`totalRunning`/`mineHeld`/
+    `totalHeld`, from `qstat -Q -f -F json` cross-referenced against `jobs`
+    above (e.g. "10 of our jobs running out of 100 total in `normal`"). A
+    missing/malformed `queueTotals` section degrades to an empty list rather
+    than failing the whole response — the job list is what this endpoint
+    primarily exists for.
+
+  This backend has no direct connection to Gadi (no SSH/qstat). Instead, data
+  flows in two steps, reusing the same Globus pipeline that already moves job
+  outputs (e.g. `UsageReport.csv`) from Gadi to S3:
+  1. A script running under the `yz52_workflow` service account on Gadi
+     (maintained outside this repo, alongside the Tower Agent in its own
+     persistent tmux session) runs both `qstat -u sbp_service -f -F json` and
+     `qstat -Q -f -F json`, and writes the combined result
+     (`{generatedAt, qstatJobs, qstatQueues}`) to a local file every 5 minutes
+     — no AWS credentials or S3 bucket name involved on the Gadi side.
+  2. The `refresh_gadi_pbs_jobs` scheduler job (also every 5 minutes) submits a
+     Globus transfer of that file into S3 (`SEQERA_GADI_PBS_JOBS_S3_KEY`),
+     reusing the existing `GLOBUS_*` credentials/collections. This endpoint
+     just reads that S3 object back. Fire-and-forget by design — no DB row, no
+     retry; a failed or in-flight submission is superseded by the next tick
+     regardless.
+
+  `generatedAt` is when the push script last ran on Gadi, not when this
+  endpoint was called — a stale value means the push script or the sync job
+  has stopped, not that this request was slow. Returns `500` if the `jobs`
+  section (primary) is missing or malformed.
 - `GET /api/health/agent` — machine-only Tower Agent health for automated
   monitoring (e.g. a restart script). Authenticated by an Auth0 M2M token with
   the `read:agent-health` permission rather than a human workflow role; no

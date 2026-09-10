@@ -31,8 +31,14 @@ async def _failing_launch(**_kwargs):
 
 
 def _create_queued_job(
-    *, attempts: int = 0, workflow_name: str = "de-novo-design", tool: str | None = None
+    *,
+    attempts: int = 0,
+    workflow_name: str = "de-novo-design",
+    tool: str | None = None,
+    status: str = "launching",
+    next_attempt_at: datetime | None = None,
 ):
+    next_attempt_at = next_attempt_at or datetime.now(UTC)
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name=workflow_name)
     workflow_run = WorkflowRunFactory.create_sync(
@@ -46,12 +52,12 @@ def _create_queued_job(
         workflow_run=workflow_run,
         workflow=workflow,
         launch_payload={},
-        status="pending",
+        status=status,
         attempts=attempts,
         error=None,
         submitted_at=None,
         last_attempt_at=None,
-        next_attempt_at=datetime.now(UTC),
+        next_attempt_at=next_attempt_at,
     )
 
 
@@ -173,6 +179,28 @@ def test_refresh_seqera_health_status_refreshes_the_cache(test_db, monkeypatch):
     assert len(calls) == 1
 
 
+def test_refresh_gadi_pbs_jobs_dry_run_does_not_sync(monkeypatch):
+    def _boom(**_kwargs):
+        raise AssertionError("sync_gadi_pbs_jobs should not run during a dry run")
+
+    monkeypatch.setattr(scheduler_jobs.globus_transfer, "sync_gadi_pbs_jobs", _boom)
+
+    scheduler_jobs.refresh_gadi_pbs_jobs(dry_run=True)
+
+
+def test_refresh_gadi_pbs_jobs_submits_transfer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler_jobs.globus_transfer,
+        "sync_gadi_pbs_jobs",
+        lambda **kwargs: calls.append(kwargs.get("settings")),
+    )
+
+    scheduler_jobs.refresh_gadi_pbs_jobs()
+
+    assert len(calls) == 1
+
+
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):
     queued_job = _create_queued_job()
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
@@ -182,8 +210,13 @@ def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, mo
 
     test_db.refresh(queued_job)
     assert queued_job.attempts == 0
-    assert queued_job.status == "pending"
+    assert queued_job.status == "launching"
     assert queued_job.last_attempt_at is None
+    assert queued_job.next_attempt_at is not None
+    next_attempt_at = queued_job.next_attempt_at
+    if next_attempt_at.tzinfo is None:
+        next_attempt_at = next_attempt_at.replace(tzinfo=UTC)
+    assert next_attempt_at <= datetime.now(UTC)
 
 
 def test_launch_job_ignores_missing_job(test_db, monkeypatch):
@@ -191,6 +224,50 @@ def test_launch_job_ignores_missing_job(test_db, monkeypatch):
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
 
     scheduler_jobs.launch_job(uuid4())
+
+
+def test_launch_job_ignores_job_that_is_no_longer_launching(
+    test_db, persistent_models, monkeypatch
+):
+    queued_job = _create_queued_job(status="cancelled")
+    calls = []
+
+    async def _successful_launch(**kwargs):
+        calls.append(kwargs)
+        return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
+    monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
+
+    scheduler_jobs.launch_job(queued_job.id)
+
+    test_db.refresh(queued_job)
+    assert calls == []
+    assert queued_job.status == "cancelled"
+    assert queued_job.attempts == 0
+
+
+def test_launch_job_ignores_launch_reservation_that_is_not_due(
+    test_db, persistent_models, monkeypatch
+):
+    queued_job = _create_queued_job(next_attempt_at=datetime.now(UTC) + timedelta(minutes=5))
+    calls = []
+
+    async def _successful_launch(**kwargs):
+        calls.append(kwargs)
+        return WorkflowLaunchResult(workflow_id="seqera-run-123", status="submitted")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db, **_kwargs: True)
+    monkeypatch.setattr(scheduler_jobs, "launch_bindflow_workflow", _successful_launch)
+
+    scheduler_jobs.launch_job(queued_job.id)
+
+    test_db.refresh(queued_job)
+    assert calls == []
+    assert queued_job.status == "launching"
+    assert queued_job.attempts == 0
 
 
 def test_launch_job_submits_successful_bindflow_job(test_db, persistent_models, monkeypatch):
@@ -242,7 +319,7 @@ def test_launch_job_dry_run_does_not_update_job(test_db, persistent_models, monk
     assert calls[0]["settings"] is scheduler_jobs.get_settings()
     assert queued_job.workflow_run.seqera_run_id is None
     assert queued_job.attempts == 0
-    assert queued_job.status == "pending"
+    assert queued_job.status == "launching"
     assert queued_job.submitted_at is None
     assert queued_job.last_attempt_at is None
     assert queued_job.next_attempt_at is not None
@@ -369,7 +446,7 @@ def test_launch_job_dry_run_failure_does_not_update_job(test_db, persistent_mode
 
     test_db.refresh(queued_job)
     assert queued_job.attempts == 0
-    assert queued_job.status == "pending"
+    assert queued_job.status == "launching"
     assert queued_job.error is None
     assert queued_job.last_attempt_at is None
     assert queued_job.next_attempt_at is not None

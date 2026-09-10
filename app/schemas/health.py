@@ -110,6 +110,78 @@ class SystemStatusAdminResponse(BaseModel):
     )
 
 
+class GadiQueueStatusResponse(BaseModel):
+    """SBP's current Gadi submission-queue occupancy, returned by
+    GET /admin/api/gadi-queue-status.
+
+    Reflects workflows this app has submitted to Gadi (Seqera SUBMITTED/RUNNING
+    runs) against its configured concurrency cap - not Gadi's overall PBS-wide
+    queue, which this backend has no direct visibility into.
+    """
+
+    activeWorkflows: int = Field(
+        description="Workflows this app currently has SUBMITTED or RUNNING on Gadi"
+    )
+    maxConcurrentWorkflows: int = Field(
+        description="Configured cap on concurrent workflow submissions"
+    )
+    availableCapacity: int = Field(description="Remaining submission slots before the cap is hit")
+    checkedAt: datetime
+
+
+class PbsJobEntry(BaseModel):
+    """One PBS job owned by sbp_service, as reported by `qstat -u sbp_service -f`."""
+
+    jobId: str
+    jobName: str | None = None
+    state: str = Field(description="Raw PBS single-letter job_state code (Q, R, H, ...)")
+    stateLabel: str = Field(description="Human-readable label for `state` (Queued, Running, ...)")
+    queue: str | None = None
+    account: str | None = None
+    submittedAt: datetime | None = None
+    startedAt: datetime | None = Field(
+        default=None, description="Null until the job actually starts running"
+    )
+
+
+class QueueTotalEntry(BaseModel):
+    """Gadi-wide totals for one queue, alongside sbp_service's own share of it.
+
+    Secondary/contextual data - e.g. "10 of our jobs running out of 100 total
+    in `normal`". Best-effort: an empty list here just means that context
+    wasn't available, independent of whether `jobs` above loaded fine.
+    """
+
+    name: str
+    mineQueued: int
+    totalQueued: int
+    mineRunning: int
+    totalRunning: int
+    mineHeld: int
+    totalHeld: int
+
+
+class GadiPbsJobsResponse(BaseModel):
+    """sbp_service's own Gadi PBS jobs, returned by GET /admin/api/gadi-pbs-jobs.
+
+    This backend has no direct connection to Gadi - a script running on Gadi
+    under the service account periodically pushes qstat output to S3, and this
+    endpoint just reads that object back. `generatedAt` is when the Gadi-side
+    script last ran, not when this endpoint was called, so a stale value here
+    means that push script has stopped running, not that this request is slow.
+
+    `jobs` (primary) is scoped to sbp_service's own jobs only, via job-listing
+    mode (qstat -u) - a per-queue count (qstat -Q) has no per-user filter and
+    would include every other Gadi user's jobs too. `queueTotals` (secondary)
+    uses that per-queue mode anyway, purely for "ours vs. everyone's" context
+    alongside the job list.
+    """
+
+    generatedAt: datetime
+    jobs: list[PbsJobEntry]
+    queueTotals: list[QueueTotalEntry] = Field(default_factory=list)
+
+
 class ComponentIncident(BaseModel):
     """A single downtime period for one component (never ``healthy``)."""
 

@@ -67,6 +67,56 @@
 <div class="col-12 mt-3">
   <div class="card">
     <div class="card-header d-flex align-items-center">
+      <h3 class="card-title mb-0">Gadi Jobs</h3>
+      <div class="ms-auto text-muted small">
+        sbp_service's own jobs on Gadi (<code>qstat -u sbp_service -f</code>), not
+        cluster-wide queue congestion. Generated: <span id="pbs-jobs-generated-at">—</span>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table card-table table-vcenter">
+        <thead>
+          <tr>
+            <th>Job ID</th>
+            <th>Name</th>
+            <th>State</th>
+            <th>Queue</th>
+            <th>Account</th>
+            <th>Submitted</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody id="pbs-jobs-body">
+          <tr><td colspan="7" class="text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer">
+      <div class="text-muted small mb-2">
+        Queue totals (mine / Gadi-wide total) — secondary context only, not the primary view above.
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm card-table">
+          <thead>
+            <tr>
+              <th>Queue</th>
+              <th>Queued</th>
+              <th>Running</th>
+              <th>Held</th>
+            </tr>
+          </thead>
+          <tbody id="queue-totals-body">
+            <tr><td colspan="4" class="text-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="col-12 mt-3">
+  <div class="card">
+    <div class="card-header d-flex align-items-center">
       <h3 class="card-title mb-0">History</h3>
       <div class="ms-auto btn-group" role="group" aria-label="History window">
         <button type="button" class="btn btn-sm btn-outline-secondary history-window-btn" data-hours="24">24h</button>
@@ -318,6 +368,134 @@
   initTooltips(document); // static tooltips (e.g. the Latency column header)
   load();
   setInterval(load, REFRESH_MS);
+
+  // -------------------------------------------------------------------------
+  // Gadi jobs: sbp_service's own PBS jobs (qstat -u sbp_service), pushed
+  // periodically from Gadi to S3 by a script running under the service
+  // account (no direct connection from this backend to Gadi). Polling here
+  // just re-reads the S3 object, so this can refresh often without hitting
+  // Gadi at all - `generatedAt` is what tells you how fresh the underlying
+  // data actually is.
+  // ponytail: 15-minute staleness threshold is a guess, not tuned against the
+  // Gadi-side push script's real interval - adjust once that's known.
+  var PBS_JOBS_ENDPOINT = "/admin/api/gadi-pbs-jobs";
+  var PBS_JOBS_REFRESH_MS = 60000;
+  var PBS_JOBS_STALE_MS = 15 * 60000;
+
+  // Running/Queued first (most actionable), then everything else, each
+  // group ordered oldest-submitted first.
+  var PBS_JOB_STATE_SORT_ORDER = { R: 0, Q: 1 };
+
+  // Same badge style as the Components table's Status pills above
+  // (solid background + bold white text), and the same color meaning reused
+  // for the Queued/Running/Held columns in the Queue Totals table: green =
+  // actively progressing, blue = waiting, red = blocked/needs attention.
+  var PBS_JOB_STATE_BADGE_CLASS = {
+    R: "bg-success text-white fw-semibold", // Running
+    Q: "bg-azure text-white fw-semibold", // Queued
+    H: "bg-danger text-white fw-semibold", // Held
+    E: "bg-cyan text-white fw-semibold", // Exiting
+    S: "bg-warning text-white fw-semibold", // Suspended
+    W: "bg-warning text-white fw-semibold", // Waiting
+    F: "bg-secondary text-white fw-semibold", // Finished
+    T: "bg-secondary text-white fw-semibold", // Transiting
+    M: "bg-secondary text-white fw-semibold", // Moved
+  };
+  var PBS_JOB_STATE_DEFAULT_BADGE_CLASS = "bg-secondary text-white fw-semibold";
+
+  function pbsJobSortKey(job) {
+    return [
+      PBS_JOB_STATE_SORT_ORDER.hasOwnProperty(job.state) ? PBS_JOB_STATE_SORT_ORDER[job.state] : 2,
+      job.submittedAt || "",
+    ];
+  }
+
+  function renderPbsJobs(data) {
+    var generatedAtEl = document.getElementById("pbs-jobs-generated-at");
+    if (data.generatedAt) {
+      var generatedAtDate = new Date(data.generatedAt);
+      var ageMs = Date.now() - generatedAtDate.getTime();
+      var label = generatedAtDate.toLocaleString() + " " + tzAbbrev(generatedAtDate);
+      generatedAtEl.textContent = label + (ageMs > PBS_JOBS_STALE_MS ? " (stale)" : "");
+      generatedAtEl.className = ageMs > PBS_JOBS_STALE_MS ? "text-danger fw-semibold" : "";
+    } else {
+      generatedAtEl.textContent = "—";
+    }
+
+    renderQueueTotals(data.queueTotals);
+
+    var body = document.getElementById("pbs-jobs-body");
+    body.innerHTML = "";
+    var jobs = (data.jobs || []).slice().sort(function (a, b) {
+      var ka = pbsJobSortKey(a), kb = pbsJobSortKey(b);
+      if (ka[0] !== kb[0]) return ka[0] - kb[0];
+      return ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;
+    });
+    if (!jobs.length) {
+      body.innerHTML = '<tr><td colspan="7" class="text-muted">No jobs reported.</td></tr>';
+      return;
+    }
+    jobs.forEach(function (j) {
+      var tr = document.createElement("tr");
+      var stateClass = PBS_JOB_STATE_BADGE_CLASS[j.state] || PBS_JOB_STATE_DEFAULT_BADGE_CLASS;
+      tr.innerHTML =
+        "<td>" + escapeHtml(j.jobId) + "</td>" +
+        "<td>" + escapeHtml(j.jobName || "—") + "</td>" +
+        "<td><span class=\"badge " + stateClass + "\">" + escapeHtml(j.stateLabel) + "</span></td>" +
+        "<td>" + escapeHtml(j.queue || "—") + "</td>" +
+        "<td>" + escapeHtml(j.account || "—") + "</td>" +
+        "<td>" + (j.submittedAt ? new Date(j.submittedAt).toLocaleString() : "—") + "</td>" +
+        "<td>" + (j.startedAt ? new Date(j.startedAt).toLocaleString() : "—") + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  // Secondary/contextual only - rendered from the same response as the
+  // primary job list above, no separate fetch.
+  function renderQueueTotals(queueTotals) {
+    var body = document.getElementById("queue-totals-body");
+    body.innerHTML = "";
+    var totals = (queueTotals || []).slice().sort(function (a, b) {
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    if (!totals.length) {
+      body.innerHTML = '<tr><td colspan="4" class="text-muted">No queue totals reported.</td></tr>';
+      return;
+    }
+    totals.forEach(function (q) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + escapeHtml(q.name) + "</td>" +
+        '<td class="text-azure">' + q.mineQueued + " / " + q.totalQueued + "</td>" +
+        '<td class="text-success">' + q.mineRunning + " / " + q.totalRunning + "</td>" +
+        '<td class="text-danger">' + q.mineHeld + " / " + q.totalHeld + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  function renderPbsJobsError(message) {
+    document.getElementById("pbs-jobs-body").innerHTML =
+      '<tr><td colspan="7" class="text-danger">Failed to load Gadi jobs: ' +
+      escapeHtml(message) + "</td></tr>";
+    document.getElementById("queue-totals-body").innerHTML =
+      '<tr><td colspan="4" class="text-muted">—</td></tr>';
+    document.getElementById("pbs-jobs-generated-at").textContent = "—";
+  }
+
+  function loadPbsJobs() {
+    fetch(PBS_JOBS_ENDPOINT, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(renderPbsJobs)
+      .catch(function (err) {
+        renderPbsJobsError(err.message || String(err));
+      });
+  }
+
+  loadPbsJobs();
+  setInterval(loadPbsJobs, PBS_JOBS_REFRESH_MS);
 
   // -------------------------------------------------------------------------
   // History: per-component downtime incidents (only degraded/unhealthy

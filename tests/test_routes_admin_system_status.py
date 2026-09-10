@@ -14,7 +14,7 @@ from app.db.admin import require_admin_access
 from app.db.models.system_status import SystemStatusIncident
 from app.routes.system_status import router as system_status_router
 from app.schemas.health import ProbeResult, SystemStatus
-from app.services import health
+from app.services import gadi_pbs_jobs, health, seqera
 
 DB_ADMIN_REQUIRED_ENV = {
     "AUTH_DOMAIN": "example.auth.test",
@@ -138,6 +138,138 @@ def test_system_status_not_shadowed_by_admin_mount(mocker):
 
     assert resp.status_code == 401  # our endpoint's auth gate, not the admin mount
     assert "text/html" not in resp.headers.get("content-type", "")
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/api/gadi-queue-status
+# ---------------------------------------------------------------------------
+
+
+def test_admin_gadi_queue_status_returns_occupancy(monkeypatch: MonkeyPatch):
+    async def fake_get_queue_status(**_kwargs):
+        return seqera.GadiQueueStatus(active_workflows=5, max_concurrent_workflows=25)
+
+    monkeypatch.setattr(seqera, "get_queue_status", fake_get_queue_status)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-queue-status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["activeWorkflows"] == 5
+    assert body["maxConcurrentWorkflows"] == 25
+    assert body["availableCapacity"] == 20
+    assert "checkedAt" in body
+
+
+def test_admin_gadi_queue_status_requires_admin():
+    app = FastAPI()
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-queue-status")
+
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/api/gadi-pbs-jobs
+# ---------------------------------------------------------------------------
+
+
+def test_admin_gadi_pbs_jobs_returns_jobs_and_queue_totals(monkeypatch: MonkeyPatch):
+    async def fake_get_pbs_jobs(**_kwargs):
+        return gadi_pbs_jobs.GadiPbsJobsSnapshot(
+            generated_at=datetime(2026, 6, 1, 3, 0, 0, tzinfo=UTC),
+            jobs=[
+                gadi_pbs_jobs.PbsJobStatus(
+                    job_id="12345.gadi-pbs",
+                    job_name="nf-TASK",
+                    state="R",
+                    state_label="Running",
+                    queue="normal",
+                    account="yz52",
+                    submitted_at=datetime(2026, 6, 1, 2, 55, 0, tzinfo=UTC),
+                    started_at=datetime(2026, 6, 1, 3, 0, 0, tzinfo=UTC),
+                )
+            ],
+            queue_totals=[
+                gadi_pbs_jobs.QueueTotal(
+                    name="normal",
+                    mine_queued=0,
+                    total_queued=20,
+                    mine_running=1,
+                    total_running=100,
+                    mine_held=0,
+                    total_held=0,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gadi_pbs_jobs, "get_pbs_jobs", fake_get_pbs_jobs)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-pbs-jobs")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["generatedAt"].startswith("2026-06-01T03:00:00")
+    assert len(body["jobs"]) == 1
+    job = body["jobs"][0]
+    assert job["jobId"] == "12345.gadi-pbs"
+    assert job["state"] == "R"
+    assert job["stateLabel"] == "Running"
+    assert job["queue"] == "normal"
+    assert job["account"] == "yz52"
+
+    assert len(body["queueTotals"]) == 1
+    total = body["queueTotals"][0]
+    assert total["name"] == "normal"
+    assert total["mineRunning"] == 1
+    assert total["totalRunning"] == 100
+
+
+def test_admin_gadi_pbs_jobs_requires_admin():
+    app = FastAPI()
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/api/gadi-pbs-jobs")
+
+    assert resp.status_code == 401
+
+
+def test_admin_gadi_pbs_jobs_surfaces_push_failure(monkeypatch: MonkeyPatch):
+    from app.services.gadi_pbs_jobs import GadiPbsJobsError
+
+    async def fake_get_pbs_jobs(**_kwargs):
+        raise GadiPbsJobsError("Could not read Gadi PBS jobs from s3://key: NoSuchKey")
+
+    monkeypatch.setattr(gadi_pbs_jobs, "get_pbs_jobs", fake_get_pbs_jobs)
+
+    app = FastAPI()
+    app.dependency_overrides[require_admin_access] = lambda: {"sub": "auth0|admin"}
+    app.include_router(system_status_router, prefix="/admin/api")
+
+    @app.exception_handler(Exception)
+    async def handle_exception(request, exc):  # noqa: ARG001
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.get("/admin/api/gadi-pbs-jobs")
+
+    assert resp.status_code == 500
+    assert "Could not read Gadi PBS jobs" in resp.json()["error"]
 
 
 # ---------------------------------------------------------------------------
