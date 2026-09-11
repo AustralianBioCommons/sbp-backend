@@ -154,7 +154,9 @@ async def launch_wisps_workflow(
         f"D={shlex.quote(split_output_dir)}\n" + prerun_script
     )
     if queued_job.workflow.ref_database:
-        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(queued_job.workflow.ref_database)}\n"
+        prerun_script += (
+            f"\nexport PF_DB_BASE_DIR={shlex.quote(queued_job.workflow.ref_database)}\n"
+        )
     runtime_payload = inject_prerun_script(
         launch_payload=queued_job.launch_payload, prerun_script=prerun_script
     )
