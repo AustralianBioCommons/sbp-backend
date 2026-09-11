@@ -32,12 +32,8 @@ def get_wisps_default_params(
     return params
 
 
-def get_wisps_config_profiles(workflow_profile: str) -> list[str]:
-    """Get config profiles for wisps workflow, always including singularity."""
-    profiles = ["singularity"]
-    if workflow_profile and workflow_profile not in profiles:
-        profiles.append(workflow_profile)
-    return profiles
+def get_wisps_config_profiles() -> list[str]:
+    return ["singularity"]
 
 
 def get_wisps_config_text(

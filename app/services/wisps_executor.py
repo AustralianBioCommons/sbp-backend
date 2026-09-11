@@ -65,10 +65,6 @@ async def prepare_wisps_workflow(
     if not job_id:
         raise WorkflowLaunchError("Missing run name for workflow launch")
 
-    workflow = workflow_run.workflow
-    if workflow is None:
-        raise WorkflowLaunchError("Missing workflow for workflow launch")
-
     mode = WISPS_WORKFLOW_MODES.get(form_data.workflow, "g1-g2")
     sheet_url = staged_input_location
     params_text = params_to_yaml_text(
@@ -94,7 +90,7 @@ async def prepare_wisps_workflow(
         "workspaceId": workspace_id,
         "revision": revision or "main",
         "paramsText": params_text,
-        "configProfiles": get_wisps_config_profiles(workflow.profile),
+        "configProfiles": get_wisps_config_profiles(),
         "configText": config_text,
         "resume": False,
     }
@@ -157,6 +153,8 @@ async def launch_wisps_workflow(
         f"F={shlex.quote(staged_fasta_location)}\n"
         f"D={shlex.quote(split_output_dir)}\n" + prerun_script
     )
+    if queued_job.workflow.ref_database:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(queued_job.workflow.ref_database)}\n"
     runtime_payload = inject_prerun_script(
         launch_payload=queued_job.launch_payload, prerun_script=prerun_script
     )

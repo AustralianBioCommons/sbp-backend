@@ -60,12 +60,14 @@ def _queued_wisps_job(
     params_text: str | None = None,
     prerun_script_path: str | None = None,
     submitted_form_data: dict | None = None,
+    ref_database: str | None = None,
 ) -> QueuedJob:
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="interaction-screening",
         repo_url="https://github.com/test/repo",
         prerun_script_path=prerun_script_path,
+        ref_database=ref_database,
     )
     workflow_run = WorkflowRunFactory.create_sync(
         workflow=workflow,
@@ -196,27 +198,13 @@ def test_get_executor_script_no_path_returns_header_only():
 
 
 def test_get_wisps_config_profiles_returns_list():
-    result = get_wisps_config_profiles("mini_dbs")
+    result = get_wisps_config_profiles()
     assert isinstance(result, list)
 
 
 def test_get_wisps_config_profiles_contains_singularity():
-    result = get_wisps_config_profiles("mini_dbs")
+    result = get_wisps_config_profiles()
     assert "singularity" in result
-
-
-def test_get_wisps_config_profiles_defaults_to_singularity_only():
-    assert get_wisps_config_profiles("") == ["singularity"]
-
-
-def test_get_wisps_config_profiles_appends_workflow_profile():
-    profiles = get_wisps_config_profiles("mini_dbs")
-    assert set(profiles) == {"singularity", "mini_dbs"}
-
-
-def test_get_wisps_config_profiles_does_not_duplicate_singularity():
-    profiles = get_wisps_config_profiles("singularity")
-    assert profiles == ["singularity"]
 
 
 def test_get_wisps_config_text_appends_process_block():
@@ -440,6 +428,52 @@ async def test_launch_wisps_workflow_with_prerun_script_path(wisps_settings, per
     assert posted_payload["preRunScript"].endswith("prerun_body")
     assert "F=" in posted_payload["preRunScript"]
     assert "D=/tmp/split" in posted_payload["preRunScript"]
+
+
+@pytest.mark.anyio
+async def test_launch_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
+    wisps_settings, persistent_models
+):
+    """When the workflow has a ref_database, it's exported as PF_DB_BASE_DIR."""
+    mock_result = WorkflowLaunchResult(workflow_id="wf_refdb", status="submitted")
+
+    with (
+        patch(
+            "app.services.wisps_executor.post_seqera_launch",
+            new=AsyncMock(return_value=mock_result),
+        ) as mock_post,
+        patch("app.services.wisps_executor.get_executor_script", return_value="prerun_body"),
+    ):
+        await launch_wisps_workflow(
+            queued_job=_queued_wisps_job(ref_database="/scratch/mini_dbs"),
+            settings=wisps_settings,
+        )
+
+    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
+    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in posted_payload["preRunScript"]
+
+
+@pytest.mark.anyio
+async def test_launch_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
+    wisps_settings, persistent_models
+):
+    """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
+    mock_result = WorkflowLaunchResult(workflow_id="wf_norefdb", status="submitted")
+
+    with (
+        patch(
+            "app.services.wisps_executor.post_seqera_launch",
+            new=AsyncMock(return_value=mock_result),
+        ) as mock_post,
+        patch("app.services.wisps_executor.get_executor_script", return_value="prerun_body"),
+    ):
+        await launch_wisps_workflow(
+            queued_job=_queued_wisps_job(ref_database=None),
+            settings=wisps_settings,
+        )
+
+    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
+    assert "PF_DB_BASE_DIR" not in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio

@@ -84,9 +84,6 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
     output_key = (output_id or "").strip()
     if not output_key:
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    workflow = workflow_run.workflow
-    if workflow is None:
-        raise WorkflowLaunchError("Missing workflow for workflow launch")
     out_dir = build_gadi_output_path(
         output_key,
         "de-novo-design",
@@ -124,7 +121,7 @@ async def prepare_bindflow_workflow(  # pylint: disable=too-many-locals
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,
-        "configProfiles": get_bindflow_config_profiles(workflow.profile),
+        "configProfiles": get_bindflow_config_profiles(),
         "configText": get_bindflow_config_text(
             config_path,
             user_details=user_details,
