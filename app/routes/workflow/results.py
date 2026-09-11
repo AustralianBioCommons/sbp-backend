@@ -25,7 +25,7 @@ from ...services.job_utils import get_owned_run_by_id
 from ...services.results_utils import (
     ArchiveReadError,
     OutputCategory,
-    _format_attachment_content_disposition,
+    _format_content_disposition,
     format_log_entries,
     get_all_downloads_zipped,
     get_category_downloads_zipped,
@@ -247,7 +247,7 @@ async def get_result_file(
     return Response(
         content=content,
         media_type=_guess_result_media_type(label),
-        headers={"Content-Disposition": f'inline; filename="{Path(label).name}"'},
+        headers={"Content-Disposition": _format_content_disposition(Path(label).name, "inline")},
     )
 
 
@@ -300,7 +300,7 @@ async def get_result_download_all(
     raise_if_results_syncing_for_download(owned_run)
 
     filename = f"results-{owned_run.run_name or run_id}.zip"
-    content_disposition = _format_attachment_content_disposition(filename)
+    content_disposition = _format_content_disposition(filename)
     try:
         zipped_downloads = await get_all_downloads_zipped(db, owned_run, settings=settings)
         return StreamingResponse(
@@ -331,7 +331,7 @@ async def get_result_download_category(
     raise_if_results_syncing_for_download(owned_run)
 
     filename = f"{category}-{owned_run.run_name or run_id}.zip"
-    content_disposition = _format_attachment_content_disposition(filename)
+    content_disposition = _format_content_disposition(filename)
     try:
         zipped_category = await get_category_downloads_zipped(
             db, owned_run, category, settings=settings

@@ -12,7 +12,7 @@ from io import BytesIO, StringIO
 from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
-from zipfile import BadZipFile, LargeZipFile, ZipFile
+from zipfile import ZipFile
 
 from cachetools import TTLCache  # type: ignore[import-untyped]
 from sqlalchemy import select
@@ -252,13 +252,19 @@ def get_safe_zip_filename(folder: str, filename: str) -> str:
     return f"{safe_folder}/{safe_filename}"
 
 
-def _format_attachment_content_disposition(filename: str) -> str:
+def _format_content_disposition(filename: str, disposition: str = "attachment") -> str:
+    """Build a Content-Disposition header that is safe to send verbatim.
+
+    Headers must be Latin-1, so the name goes out as an ASCII fallback plus an
+    RFC 5987 encoded copy. Filenames can come from inside an archive, so they
+    are not assumed to be ASCII or free of quotes.
+    """
     sanitized = _sanitize_content_disposition_filename(filename)
     ascii_fallback = sanitized.encode("ascii", "ignore").decode("ascii")
     ascii_fallback = _FILENAME_FALLBACK_UNSAFE_CHARS.sub("_", ascii_fallback).strip("._")
     ascii_fallback = ascii_fallback or "download"
     encoded_filename = quote(sanitized, safe="")
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
+    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
@@ -324,7 +330,7 @@ async def resolve_fasta_form_data(
             result[key] = await generate_presigned_url(
                 file_key=file_key,
                 expiration=3600,
-                response_content_disposition=_format_attachment_content_disposition(filename),
+                response_content_disposition=_format_content_disposition(filename),
                 settings=settings,
             )
         except S3ConfigurationError, S3ServiceError:
@@ -366,7 +372,7 @@ async def resolve_pdb_presigned_urls(
         presigned_url = await generate_presigned_url(
             file_key=file_key,
             expiration=3600,
-            response_content_disposition=_format_attachment_content_disposition(filename),
+            response_content_disposition=_format_content_disposition(filename),
             settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
@@ -1409,8 +1415,7 @@ async def get_category_downloads_zipped(
 
 # Some outputs are archives we read single files out of, rather than whole.
 # ProteinDJ puts every ranked design inside one ranked_designs.tar.gz.
-_TAR_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar")
-_ARCHIVE_SUFFIXES = (*_TAR_ARCHIVE_SUFFIXES, ".zip")
+_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar")
 
 
 class ArchiveReadError(Exception):
@@ -1419,10 +1424,6 @@ class ArchiveReadError(Exception):
 
 def is_archive_output_key(key: str) -> bool:
     return key.strip().lower().endswith(_ARCHIVE_SUFFIXES)
-
-
-def _is_zip_key(key: str) -> bool:
-    return key.strip().lower().endswith(".zip")
 
 
 def _is_safe_archive_member(name: str) -> bool:
@@ -1436,13 +1437,9 @@ def _is_safe_archive_member(name: str) -> bool:
 def _list_archive_members(data: bytes, key: str) -> list[str]:
     """Lists the regular files in the archive, sorted. Directories and links are skipped."""
     try:
-        if _is_zip_key(key):
-            with ZipFile(BytesIO(data)) as zip_obj:
-                names = [info.filename for info in zip_obj.infolist() if not info.is_dir()]
-        else:
-            with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tar_obj:
-                names = [member.name for member in tar_obj.getmembers() if member.isfile()]
-    except (tarfile.TarError, BadZipFile, LargeZipFile, OSError, ValueError) as exc:
+        with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tar_obj:
+            names = [member.name for member in tar_obj.getmembers() if member.isfile()]
+    except (tarfile.TarError, OSError, ValueError) as exc:
         raise ArchiveReadError(f"Could not read the archive {key!r}") from exc
     return sorted(name for name in names if _is_safe_archive_member(name))
 
@@ -1458,16 +1455,6 @@ def _read_archive_member(data: bytes, key: str, entry: str) -> bytes:
         raise KeyError(entry)
 
     try:
-        if _is_zip_key(key):
-            with ZipFile(BytesIO(data)) as zip_obj:
-                try:
-                    info = zip_obj.getinfo(entry)
-                except KeyError as exc:
-                    raise KeyError(entry) from exc
-                if info.is_dir():
-                    raise KeyError(entry)
-                return zip_obj.read(info)
-
         with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tar_obj:
             try:
                 member = tar_obj.getmember(entry)
@@ -1480,7 +1467,7 @@ def _read_archive_member(data: bytes, key: str, entry: str) -> bytes:
             if extracted is None:
                 raise KeyError(entry)
             return extracted.read()
-    except (tarfile.TarError, BadZipFile, LargeZipFile, OSError, ValueError) as exc:
+    except (tarfile.TarError, OSError, ValueError) as exc:
         raise ArchiveReadError(f"Could not read {entry!r} from the archive {key!r}") from exc
 
 

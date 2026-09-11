@@ -1724,7 +1724,7 @@ def _tarball(members: dict[str, bytes], *, compress: bool = True) -> bytes:
 def test_is_archive_output_key_covers_the_formats_read_by_member():
     assert is_archive_output_key("run/results/ranked_designs.tar.gz")
     assert is_archive_output_key("run/results/best_designs.TGZ")
-    assert is_archive_output_key("run/results/designs.zip")
+    assert not is_archive_output_key("run/results/designs.zip")
     assert not is_archive_output_key("run/results/ranked_designs.csv")
     assert not is_archive_output_key("run/results/design.pdb")
 
@@ -1737,15 +1737,6 @@ def test_list_archive_members_skips_directories_and_sorts():
     listed = _list_archive_members(_tarball(members), "run/results/ranked_designs.tar.gz")
 
     assert listed == sorted(members)
-
-
-def test_list_archive_members_reads_a_zip_too():
-    buffer = BytesIO()
-    with ZipFile(buffer, "w") as zip_obj:
-        zip_obj.writestr("designs/a.pdb", "ATOM\n")
-        zip_obj.writestr("designs/", "")
-
-    assert _list_archive_members(buffer.getvalue(), "run/results/designs.zip") == ["designs/a.pdb"]
 
 
 def test_read_archive_member_returns_one_design():

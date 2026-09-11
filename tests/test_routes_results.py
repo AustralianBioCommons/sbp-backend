@@ -1571,7 +1571,9 @@ async def test_get_result_file_returns_structure_as_text(test_db, persistent_mod
 
     assert response.body == b"data_T1024\n"
     assert response.media_type == "text/plain; charset=utf-8"
-    assert response.headers["content-disposition"] == 'inline; filename="T1024.cif"'
+    assert response.headers["content-disposition"] == (
+        'inline; filename="T1024.cif"; ' "filename*=UTF-8''T1024.cif"
+    )
 
 
 @pytest.mark.asyncio
@@ -1803,8 +1805,9 @@ async def test_get_result_file_serves_one_design_out_of_the_tarball(
     assert response.body == _RANKED_MEMBERS[entry]
     # Typed and named after the member, not after the archive.
     assert response.media_type == "text/plain; charset=utf-8"
-    assert (
-        response.headers["content-disposition"] == 'inline; filename="2_fold_0_seq_1_af2pred.pdb"'
+    assert response.headers["content-disposition"] == (
+        'inline; filename="2_fold_0_seq_1_af2pred.pdb"; '
+        "filename*=UTF-8''2_fold_0_seq_1_af2pred.pdb"
     )
 
 
@@ -1843,3 +1846,29 @@ async def test_get_result_file_rejects_an_entry_on_an_output_that_is_not_an_arch
             )
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_encodes_an_awkward_member_name_in_the_header(
+    test_db, persistent_models, mock_settings
+):
+    user, run, _, archive_key = _make_rfdiffusion_run(test_db, "header")
+    # A pipeline is free to write a name that no header can carry verbatim.
+    entry = 'ranked_designs/desi"gn\tβ.pdb'
+    tarball = _ranked_designs_tarball({entry: b"ATOM\n"})
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=tarball),
+    ):
+        response = await get_result_file(
+            str(run.id), archive_key, user.id, test_db, mock_settings, entry=entry
+        )
+
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("inline; ")
+    # Latin-1 is all a header can carry, and a stray quote would end the value early.
+    disposition.encode("latin-1")
+    assert disposition.count('"') == 2
+    assert "\t" not in disposition
+    assert "filename*=UTF-8''" in disposition
