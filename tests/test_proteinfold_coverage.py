@@ -47,12 +47,14 @@ def _queued_proteinfold_job(
     *,
     params_text: str | None = None,
     prerun_script_path: str | None = None,
+    ref_database: str | None = None,
 ) -> QueuedJob:
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="single-prediction",
         repo_url="https://github.com/nf-core/proteinfold",
         prerun_script_path=prerun_script_path,
+        ref_database=ref_database,
     )
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
@@ -334,6 +336,60 @@ async def test_launch_proteinfold_workflow_injects_prerun_script_at_launch(
     posted_payload = mock_post.call_args.args[0]["launch"]
     assert posted_payload["preRunScript"] == "prerun_body"
     assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
+
+
+@pytest.mark.anyio
+async def test_launch_proteinfold_workflow_exports_pf_db_base_dir_from_ref_database(
+    seqera_env, persistent_models
+):
+    """When the workflow has a ref_database, it's exported as PF_DB_BASE_DIR."""
+    expected_result = WorkflowLaunchResult(workflow_id="wf_refdb", status="submitted")
+
+    with (
+        patch(
+            "app.services.proteinfold_executor.post_seqera_launch",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_post,
+        patch(
+            "app.services.proteinfold_executor.get_executor_script",
+            return_value="prerun_body",
+        ),
+    ):
+        await launch_proteinfold_workflow(
+            queued_job=_queued_proteinfold_job(ref_database="/scratch/mini_dbs"),
+            settings=seqera_env,
+        )
+
+    posted_payload = mock_post.call_args.args[0]["launch"]
+    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in posted_payload["preRunScript"]
+
+
+@pytest.mark.anyio
+async def test_launch_proteinfold_workflow_without_ref_database_omits_pf_db_base_dir(
+    seqera_env, persistent_models
+):
+    """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
+    expected_result = WorkflowLaunchResult(workflow_id="wf_norefdb", status="submitted")
+
+    with (
+        patch(
+            "app.services.proteinfold_executor.post_seqera_launch",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_post,
+        patch(
+            "app.services.proteinfold_executor.get_executor_script",
+            return_value="prerun_body",
+        ),
+    ):
+        await launch_proteinfold_workflow(
+            queued_job=_queued_proteinfold_job(ref_database=None),
+            settings=seqera_env,
+        )
+
+    posted_payload = mock_post.call_args.args[0]["launch"]
+    assert "PF_DB_BASE_DIR" not in posted_payload["preRunScript"]
 
 
 @pytest.mark.anyio
