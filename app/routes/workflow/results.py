@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import yaml
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ...config import Settings, get_settings
 from ...schemas.workflows.shared import (
     JobSettingParamsResponse,
+    ResultArchiveEntriesResponse,
     ResultDownloadsResponse,
     ResultLogsResponse,
     ResultReportResponse,
@@ -22,6 +23,7 @@ from ...schemas.workflows.shared import (
 )
 from ...services.job_utils import get_owned_run_by_id
 from ...services.results_utils import (
+    ArchiveReadError,
     OutputCategory,
     _format_attachment_content_disposition,
     format_log_entries,
@@ -30,6 +32,7 @@ from ...services.results_utils import (
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
+    list_result_archive_entries,
     read_result_output_file,
     resolve_run_form_data,
 )
@@ -199,12 +202,25 @@ async def get_result_file(
     current_user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    # Kept last so existing positional callers still work.
+    entry: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Path of a member inside the archive at `key`, to serve instead "
+                "of the archive itself (e.g. a design PDB in ranked_designs.tar.gz)"
+            )
+        ),
+    ] = None,
 ) -> Response:
-    """Serve one result artifact through the API.
+    """Serve one result artifact, or one member of an archive artifact.
 
     The portal renders some artifacts in the browser (structure files, PAE
     matrices), which needs a same-origin read. Pre-signed S3 URLs only work for
     plain downloads because the results bucket serves no CORS headers.
+
+    ProteinDJ publishes every ranked design inside one `ranked_designs.tar.gz`,
+    so `entry` lets the viewer read a single design without the whole archive.
     """
     owned_run = get_owned_run_by_id(db, current_user_id, run_id)
     if not owned_run:
@@ -212,11 +228,15 @@ async def get_result_file(
     raise_if_results_syncing_for_download(owned_run)
 
     try:
-        content, label = await read_result_output_file(db, owned_run, key, settings=settings)
+        content, label = await read_result_output_file(
+            db, owned_run, key, settings=settings, entry=entry
+        )
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found for this run"
         ) from exc
+    except ArchiveReadError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
@@ -229,6 +249,42 @@ async def get_result_file(
         media_type=_guess_result_media_type(label),
         headers={"Content-Disposition": f'inline; filename="{Path(label).name}"'},
     )
+
+
+@router.get("/{run_id}/archive", response_model=ResultArchiveEntriesResponse)
+async def get_result_archive_entries(
+    run_id: str,
+    key: str = Query(..., description="S3 object key of one of this run's archive outputs"),
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ResultArchiveEntriesResponse:
+    """Lists what is inside one archive output, so a caller can read a file back.
+
+    The names are the pipeline's own, so a caller can pair a results-table row
+    with the design structure it was written to.
+    """
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
+
+    try:
+        entries = await list_result_archive_entries(db, owned_run, key, settings=settings)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Archive not found for this run"
+        ) from exc
+    except ArchiveReadError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return ResultArchiveEntriesResponse(runId=run_id, key=key, entries=entries)
 
 
 @router.get("/{run_id}/download-all", response_class=StreamingResponse)

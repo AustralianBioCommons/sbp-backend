@@ -5,13 +5,16 @@ from __future__ import annotations
 import csv
 import logging
 import re
+import tarfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO, StringIO
+from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol, cast, get_args
 from urllib.parse import quote
-from zipfile import ZipFile
+from zipfile import BadZipFile, LargeZipFile, ZipFile
 
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -1404,19 +1407,123 @@ async def get_category_downloads_zipped(
     return zip_file
 
 
-async def read_result_output_file(
-    db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
-) -> tuple[bytes, str]:
-    """
-    Read one result file and return (content, label).
+# Some outputs are archives we read single files out of, rather than whole.
+# ProteinDJ puts every ranked design inside one ranked_designs.tar.gz.
+_TAR_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar")
+_ARCHIVE_SUFFIXES = (*_TAR_ARCHIVE_SUFFIXES, ".zip")
 
-    Only reads keys this run produced, so callers cannot reach other objects in
-    the bucket.
+
+class ArchiveReadError(Exception):
+    """We could not open the archive, or could not read the file inside it."""
+
+
+def is_archive_output_key(key: str) -> bool:
+    return key.strip().lower().endswith(_ARCHIVE_SUFFIXES)
+
+
+def _is_zip_key(key: str) -> bool:
+    return key.strip().lower().endswith(".zip")
+
+
+def _is_safe_archive_member(name: str) -> bool:
+    """Callers name the member they want, so reject anything pointing outside the archive."""
+    if not name or name.endswith("/"):
+        return False
+    path = PurePosixPath(name)
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def _list_archive_members(data: bytes, key: str) -> list[str]:
+    """Lists the regular files in the archive, sorted. Directories and links are skipped."""
+    try:
+        if _is_zip_key(key):
+            with ZipFile(BytesIO(data)) as zip_obj:
+                names = [info.filename for info in zip_obj.infolist() if not info.is_dir()]
+        else:
+            with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tar_obj:
+                names = [member.name for member in tar_obj.getmembers() if member.isfile()]
+    except (tarfile.TarError, BadZipFile, LargeZipFile, OSError, ValueError) as exc:
+        raise ArchiveReadError(f"Could not read the archive {key!r}") from exc
+    return sorted(name for name in names if _is_safe_archive_member(name))
+
+
+def _read_archive_member(data: bytes, key: str, entry: str) -> bytes:
+    """
+    Read one member out of an in-memory archive.
 
     Raises:
-        KeyError: If the key is not one of this run's outputs.
+        KeyError: If the member is missing, unsafe, or not a regular file.
     """
-    settings = settings or get_settings()
+    if not _is_safe_archive_member(entry):
+        raise KeyError(entry)
+
+    try:
+        if _is_zip_key(key):
+            with ZipFile(BytesIO(data)) as zip_obj:
+                try:
+                    info = zip_obj.getinfo(entry)
+                except KeyError as exc:
+                    raise KeyError(entry) from exc
+                if info.is_dir():
+                    raise KeyError(entry)
+                return zip_obj.read(info)
+
+        with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tar_obj:
+            try:
+                member = tar_obj.getmember(entry)
+            except KeyError as exc:
+                raise KeyError(entry) from exc
+            # Also rejects symlinks, which could point outside the archive.
+            if not member.isfile():
+                raise KeyError(entry)
+            extracted = tar_obj.extractfile(member)
+            if extracted is None:
+                raise KeyError(entry)
+            return extracted.read()
+    except (tarfile.TarError, BadZipFile, LargeZipFile, OSError, ValueError) as exc:
+        raise ArchiveReadError(f"Could not read {entry!r} from the archive {key!r}") from exc
+
+
+# The viewer reads one design per click, so keep the archive around instead of
+# downloading it again every time. A finished run's files never change, so the
+# TTL is only a safety net. Sized in bytes, since one archive can be tens of MiB.
+_ARCHIVE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_ARCHIVE_CACHE_TTL_SECONDS = 300
+
+_archive_cache: TTLCache[str, bytes] = TTLCache(
+    maxsize=_ARCHIVE_CACHE_MAX_BYTES,
+    ttl=_ARCHIVE_CACHE_TTL_SECONDS,
+    getsizeof=len,
+)
+
+
+def clear_archive_cache() -> None:
+    """Drop every cached archive. Used between tests."""
+    _archive_cache.clear()
+
+
+async def _read_archive_bytes(key: str, settings: Settings) -> bytes:
+    """Reads the archive, reusing the cached copy if we fetched it recently."""
+    cached = _archive_cache.get(key)
+    if cached is not None:
+        return cast(bytes, cached)
+
+    data = await read_s3_bytes(key, settings=settings)
+    # cachetools raises if a value is bigger than the whole cache, so skip those.
+    if len(data) <= _ARCHIVE_CACHE_MAX_BYTES:
+        _archive_cache[key] = data
+    return data
+
+
+async def _resolve_run_output(
+    db: Session, run: WorkflowRun, key: str, settings: Settings
+) -> ClassifiedOutput:
+    """
+    Look one key up among this run's own outputs.
+
+    Raises:
+        KeyError: If the key is not one of this run's readable outputs.
+    """
     results_spec = get_output_spec(run)
     outputs = await _collect_outputs_with_fallback(
         db,
@@ -1429,8 +1536,57 @@ async def read_result_output_file(
     output = outputs.get(key)
     if output is None or output.category in ("snapshot", "usage"):
         raise KeyError(key)
+    return output
 
-    return await read_s3_bytes(key, settings=settings), output.label
+
+async def read_result_output_file(
+    db: Session,
+    run: WorkflowRun,
+    key: str,
+    settings: Settings | None = None,
+    *,
+    entry: str | None = None,
+) -> tuple[bytes, str]:
+    """
+    Read one result file and return (content, label).
+
+    Only reads keys this run produced, so callers cannot reach other objects in
+    the bucket. With `entry`, reads that member out of the archive at `key`
+    instead of the archive itself, and labels it by the member's filename.
+
+    Raises:
+        KeyError: If the key is not one of this run's outputs, or the entry is
+            not a regular file inside it.
+    """
+    settings = settings or get_settings()
+    output = await _resolve_run_output(db, run, key, settings)
+
+    if entry is None:
+        # A plain download happens once, so it is not worth the cache space.
+        return await read_s3_bytes(key, settings=settings), output.label
+    if not is_archive_output_key(key):
+        raise KeyError(entry)
+
+    content = await _read_archive_bytes(key, settings)
+    return _read_archive_member(content, key, entry), PurePosixPath(entry).name
+
+
+async def list_result_archive_entries(
+    db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
+) -> list[str]:
+    """
+    List the readable members of one of this run's archive outputs.
+
+    Raises:
+        KeyError: If the key is not one of this run's outputs, or is not an archive.
+    """
+    settings = settings or get_settings()
+    await _resolve_run_output(db, run, key, settings)
+    if not is_archive_output_key(key):
+        raise KeyError(key)
+
+    data = await _read_archive_bytes(key, settings)
+    return _list_archive_members(data, key)
 
 
 async def get_result_report_download(

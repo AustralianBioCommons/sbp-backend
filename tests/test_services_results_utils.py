@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import tarfile
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -12,12 +14,17 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models.core import AppUser, DataTransfer, RunOutput, S3Object, Workflow, WorkflowRun
+from app.services import results_utils
 from app.services.results_utils import (
     WORKFLOW_OUTPUT_SPECS,
+    ArchiveReadError,
     ClassifiedOutput,
     OutputTransferItem,
     WorkflowResultsSpec,
     _build_s3_uri,
+    _list_archive_members,
+    _read_archive_bytes,
+    _read_archive_member,
     build_alphafold2_proteinfold_output_listing_prefixes,
     build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
@@ -47,6 +54,7 @@ from app.services.results_utils import (
     get_sample_id_for_result,
     get_tool_name,
     get_wisps_score_file,
+    is_archive_output_key,
     list_workflow_outputs_from_s3,
     make_wisps_classifier,
     read_result_output_file,
@@ -1700,3 +1708,159 @@ def test_workflow_results_spec_classify_output_uses_shared_outputs():
 
     assert result == ClassifiedOutput(category="usage", label="UsageReport.csv")
     classifier.assert_not_called()
+
+
+def _tarball(members: dict[str, bytes], *, compress: bool = True) -> bytes:
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz" if compress else "w") as tar:
+        for name, body in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, BytesIO(body))
+        tar.addfile(tarfile.TarInfo("ranked_designs/"))
+    return buffer.getvalue()
+
+
+def test_is_archive_output_key_covers_the_formats_read_by_member():
+    assert is_archive_output_key("run/results/ranked_designs.tar.gz")
+    assert is_archive_output_key("run/results/best_designs.TGZ")
+    assert is_archive_output_key("run/results/designs.zip")
+    assert not is_archive_output_key("run/results/ranked_designs.csv")
+    assert not is_archive_output_key("run/results/design.pdb")
+
+
+def test_list_archive_members_skips_directories_and_sorts():
+    members = {
+        "ranked_designs/2_fold_0_seq_1_af2pred.pdb": b"ATOM 2\n",
+        "ranked_designs/1_fold_3_seq_0_af2pred.pdb": b"ATOM 1\n",
+    }
+    listed = _list_archive_members(_tarball(members), "run/results/ranked_designs.tar.gz")
+
+    assert listed == sorted(members)
+
+
+def test_list_archive_members_reads_a_zip_too():
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as zip_obj:
+        zip_obj.writestr("designs/a.pdb", "ATOM\n")
+        zip_obj.writestr("designs/", "")
+
+    assert _list_archive_members(buffer.getvalue(), "run/results/designs.zip") == ["designs/a.pdb"]
+
+
+def test_read_archive_member_returns_one_design():
+    members = {"ranked_designs/1_fold_3_seq_0_af2pred.pdb": b"ATOM 1\n"}
+    key = "run/results/ranked_designs.tar.gz"
+
+    assert (
+        _read_archive_member(_tarball(members), key, "ranked_designs/1_fold_3_seq_0_af2pred.pdb")
+        == b"ATOM 1\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "../escape.pdb",
+        "ranked_designs/../../escape.pdb",
+        "/etc/passwd",
+        "ranked_designs/",
+        "",
+        "ranked_designs/missing.pdb",
+    ],
+)
+def test_read_archive_member_rejects_unsafe_or_missing_entries(entry):
+    members = {"ranked_designs/1_fold_3_seq_0_af2pred.pdb": b"ATOM 1\n"}
+
+    with pytest.raises(KeyError):
+        _read_archive_member(_tarball(members), "run/results/ranked_designs.tar.gz", entry)
+
+
+def test_read_archive_member_rejects_a_symlink_out_of_the_archive():
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        link = tarfile.TarInfo("ranked_designs/link.pdb")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../../etc/passwd"
+        tar.addfile(link)
+
+    with pytest.raises(KeyError):
+        _read_archive_member(
+            buffer.getvalue(), "run/results/ranked_designs.tar.gz", "ranked_designs/link.pdb"
+        )
+
+
+def test_archive_helpers_raise_archive_read_error_on_corrupt_data():
+    key = "run/results/ranked_designs.tar.gz"
+
+    with pytest.raises(ArchiveReadError):
+        _list_archive_members(b"not a tarball", key)
+    with pytest.raises(ArchiveReadError):
+        _read_archive_member(b"not a tarball", key, "ranked_designs/a.pdb")
+
+
+def test_archive_cache_serves_a_second_read_without_refetching():
+    key = "run/results/ranked_designs.tar.gz"
+    members = {"ranked_designs/1_fold_0_seq_0_af2pred.pdb": b"ATOM 1\n"}
+    data = _tarball(members)
+
+    async def scenario():
+        with patch(
+            "app.services.results_utils.read_s3_bytes",
+            new_callable=AsyncMock,
+            return_value=data,
+        ) as read_bytes:
+            first = await _read_archive_bytes(key, None)
+            second = await _read_archive_bytes(key, None)
+        return first, second, read_bytes
+
+    first, second, read_bytes = asyncio.run(scenario())
+
+    assert first == second == data
+    # The listing pays for the download; the click after it does not.
+    read_bytes.assert_awaited_once()
+
+
+def test_archive_cache_keeps_runs_apart():
+    first_key = "run-a/results/ranked_designs.tar.gz"
+    second_key = "run-b/results/ranked_designs.tar.gz"
+    first_data = _tarball({"ranked_designs/1_fold_0_seq_0_af2pred.pdb": b"RUN A\n"})
+    second_data = _tarball({"ranked_designs/1_fold_0_seq_0_af2pred.pdb": b"RUN B\n"})
+
+    async def scenario():
+        with patch(
+            "app.services.results_utils.read_s3_bytes",
+            new_callable=AsyncMock,
+            side_effect=[first_data, second_data],
+        ):
+            return await _read_archive_bytes(first_key, None), await _read_archive_bytes(
+                second_key, None
+            )
+
+    first, second = asyncio.run(scenario())
+
+    assert first != second
+    assert _read_archive_member(
+        second, second_key, "ranked_designs/1_fold_0_seq_0_af2pred.pdb"
+    ) == (b"RUN B\n")
+
+
+def test_archive_cache_does_not_hold_an_archive_larger_than_its_cap():
+    key = "run/results/huge.tar.gz"
+    oversized = b"x" * (results_utils._ARCHIVE_CACHE_MAX_BYTES + 1)
+
+    async def scenario():
+        with patch(
+            "app.services.results_utils.read_s3_bytes",
+            new_callable=AsyncMock,
+            return_value=oversized,
+        ) as read_bytes:
+            first = await _read_archive_bytes(key, None)
+            second = await _read_archive_bytes(key, None)
+        return first, second, read_bytes
+
+    first, second, read_bytes = asyncio.run(scenario())
+
+    # Storing it would raise rather than evict, so it is fetched each time.
+    assert first == second == oversized
+    assert read_bytes.await_count == 2

@@ -359,6 +359,14 @@ class ResultDownloadsResponse(BaseModel):
     zipCategories: list[str] = Field(default_factory=list)
 
 
+class ResultArchiveEntriesResponse(BaseModel):
+    """Readable members of one archive output, e.g. ranked_designs.tar.gz."""
+
+    runId: str
+    key: str
+    entries: list[str] = Field(default_factory=list)
+
+
 class ResultSnapshotsResponse(BaseModel):
     """Snapshot download links for a result view."""
 

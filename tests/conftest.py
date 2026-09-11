@@ -347,6 +347,17 @@ def mock_settings():
 
 
 @pytest.fixture(autouse=True)
+def reset_archive_cache():
+    """Archive bytes are cached in-process; a leftover entry would let one
+    test's stubbed S3 content answer another test's read."""
+    from app.services.results_utils import clear_archive_cache
+
+    clear_archive_cache()
+    yield
+    clear_archive_cache()
+
+
+@pytest.fixture(autouse=True)
 def override_settings(mock_settings):
     fastapi_app.dependency_overrides[get_settings] = lambda: mock_settings
     yield

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tarfile
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
 from zipfile import ZipFile
@@ -19,6 +20,7 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.routes.workflow.results import (
+    get_result_archive_entries,
     get_result_download_all,
     get_result_download_category,
     get_result_downloads,
@@ -1671,7 +1673,9 @@ async def test_get_result_file_maps_s3_service_error_to_502(
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "s3 upstream error"
-    mock_read.assert_awaited_once_with(test_db, run, structure_key, settings=mock_settings)
+    mock_read.assert_awaited_once_with(
+        test_db, run, structure_key, settings=mock_settings, entry=None
+    )
 
 
 @pytest.mark.asyncio
@@ -1689,3 +1693,153 @@ async def test_get_result_file_maps_s3_configuration_error_to_500(
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "s3 config missing"
+
+
+def _make_rfdiffusion_run(test_db, suffix: str) -> tuple[AppUser, WorkflowRun, str, str]:
+    """Create a ProteinDJ run whose designs live inside one ranked tarball."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=workflow,
+        tool="rfdiffusion",
+        seqera_run_id=f"wf-archive-{suffix}",
+    )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
+
+    csv_key = f"{run.id}/results/ranked_designs.csv"
+    archive_key = f"{run.id}/results/ranked_designs.tar.gz"
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in (csv_key, archive_key)]
+    test_db.add_all(outputs)
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    return user, run, csv_key, archive_key
+
+
+def _ranked_designs_tarball(members: dict[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, body in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, BytesIO(body))
+    return buffer.getvalue()
+
+
+_RANKED_MEMBERS = {
+    "ranked_designs/1_fold_3_seq_0_af2pred.pdb": b"ATOM      1  N   MET A   1\n",
+    "ranked_designs/2_fold_0_seq_1_af2pred.pdb": b"ATOM      1  N   ALA A   1\n",
+}
+
+
+@pytest.mark.asyncio
+async def test_get_result_archive_entries_lists_the_ranked_designs(
+    test_db, persistent_models, mock_settings
+):
+    user, run, _, archive_key = _make_rfdiffusion_run(test_db, "list")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=_ranked_designs_tarball(_RANKED_MEMBERS)),
+    ):
+        response = await get_result_archive_entries(
+            str(run.id), archive_key, user.id, test_db, mock_settings
+        )
+
+    assert response.key == archive_key
+    assert response.entries == sorted(_RANKED_MEMBERS)
+
+
+@pytest.mark.asyncio
+async def test_get_result_archive_entries_rejects_a_non_archive_output(
+    test_db, persistent_models, mock_settings
+):
+    user, run, csv_key, _ = _make_rfdiffusion_run(test_db, "not-archive")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_result_archive_entries(str(run.id), csv_key, user.id, test_db, mock_settings)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Archive not found for this run"
+
+
+@pytest.mark.asyncio
+async def test_get_result_archive_entries_maps_a_corrupt_archive_to_502(
+    test_db, persistent_models, mock_settings
+):
+    user, run, _, archive_key = _make_rfdiffusion_run(test_db, "corrupt")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=b"not a tarball"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_archive_entries(
+                str(run.id), archive_key, user.id, test_db, mock_settings
+            )
+
+    assert exc_info.value.status_code == 502
+    assert "Could not read the archive" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_serves_one_design_out_of_the_tarball(
+    test_db, persistent_models, mock_settings
+):
+    user, run, _, archive_key = _make_rfdiffusion_run(test_db, "member")
+    entry = "ranked_designs/2_fold_0_seq_1_af2pred.pdb"
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=_ranked_designs_tarball(_RANKED_MEMBERS)),
+    ):
+        response = await get_result_file(
+            str(run.id), archive_key, user.id, test_db, mock_settings, entry=entry
+        )
+
+    assert response.body == _RANKED_MEMBERS[entry]
+    # Typed and named after the member, not after the archive.
+    assert response.media_type == "text/plain; charset=utf-8"
+    assert (
+        response.headers["content-disposition"] == 'inline; filename="2_fold_0_seq_1_af2pred.pdb"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_rejects_an_entry_that_escapes_the_archive(
+    test_db, persistent_models, mock_settings
+):
+    user, run, _, archive_key = _make_rfdiffusion_run(test_db, "traversal")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=_ranked_designs_tarball(_RANKED_MEMBERS)),
+    ):
+        for entry in ("../../etc/passwd", "/etc/passwd", "ranked_designs/missing.pdb"):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_result_file(
+                    str(run.id), archive_key, user.id, test_db, mock_settings, entry=entry
+                )
+            assert exc_info.value.status_code == 404
+            assert exc_info.value.detail == "File not found for this run"
+
+
+@pytest.mark.asyncio
+async def test_get_result_file_rejects_an_entry_on_an_output_that_is_not_an_archive(
+    test_db, persistent_models, mock_settings
+):
+    user, run, csv_key, _ = _make_rfdiffusion_run(test_db, "entry-on-csv")
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(return_value=b"rank,description\n1,first\n"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_result_file(
+                str(run.id), csv_key, user.id, test_db, mock_settings, entry="anything.pdb"
+            )
+
+    assert exc_info.value.status_code == 404
