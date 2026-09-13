@@ -1021,6 +1021,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_score_file=get_rfdiffusion_score_file,
             extract_max_score=extract_rfdiffusion_max_score,
             classifier=classify_rfdiffusion_output_key,
+            hidden_download_categories=frozenset({"pdb"}),
         ),
     },
     "single-prediction": {
