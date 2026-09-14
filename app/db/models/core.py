@@ -105,6 +105,9 @@ class Workflow(Base):
     repo_staging_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Base directory of the reference database this workflow's prerun script
+    # should export as PF_DB_BASE_DIR when launching, e.g. /path/to/mini_dbs
+    ref_database: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     runs: Mapped[list[WorkflowRun]] = relationship(back_populates="workflow")
 

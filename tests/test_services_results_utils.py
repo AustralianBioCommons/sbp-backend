@@ -494,6 +494,13 @@ def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
         "pdb",
         "ranked_designs.tar.gz",
     )
+    assert classify_rfdiffusion_output_key(
+        f"{run.id}/results/ranked_designs/1_fold_0_seq_5_af2pred.pdb"
+    ) == ClassifiedOutput(
+        "pdb",
+        "1_fold_0_seq_5_af2pred.pdb",
+    )
+    assert classify_rfdiffusion_output_key(f"{run.id}/results/ranked_designs/notes.txt") is None
 
     assert build_rfdiffusion_output_listing_prefixes(run) == [
         f"{run.id}/",
