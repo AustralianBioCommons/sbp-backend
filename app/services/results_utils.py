@@ -93,10 +93,7 @@ class WorkflowResultsSpec:
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
         prefixes = _non_root_output_prefixes(run, self.get_prefixes(run))
-        # UsageReport.csv is published straight to the run root by every workflow's
-        # `gadi.publishTo` (see e.g. bindflow.config), so it's excluded by the check
-        # above along with the rest of the root/work dir. Transfer it individually
-        # (non-recursive, since it doesn't end in "/") or NCI SU never reaches S3.
+        # Also include the UsageReport.csv
         if run.id:
             prefixes.append(f"{run.id}/UsageReport.csv")
         return prefixes
