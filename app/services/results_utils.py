@@ -929,11 +929,14 @@ def classify_rfdiffusion_output_key(
     if not normalized or normalized.endswith("/"):
         return None
     basename = normalized.rsplit("/", 1)[-1]
-    if "/results/" not in normalized.lower():
+    lowered = normalized.lower()
+    if "/results/" not in lowered:
         return None
     if basename == "ranked_designs.csv":
         return ClassifiedOutput(category="stats_csv", label=basename)
     if basename == "ranked_designs.tar.gz":
+        return ClassifiedOutput(category="pdb", label=basename)
+    if "/ranked_designs/" in lowered and basename.lower().endswith(".pdb"):
         return ClassifiedOutput(category="pdb", label=basename)
     return None
 
@@ -1018,6 +1021,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_score_file=get_rfdiffusion_score_file,
             extract_max_score=extract_rfdiffusion_max_score,
             classifier=classify_rfdiffusion_output_key,
+            hidden_download_categories=frozenset({"pdb"}),
         ),
     },
     "single-prediction": {
