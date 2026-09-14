@@ -295,10 +295,17 @@ def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_sett
             destination_location=f"s3://test-s3-bucket/{run.id}/generate/report.html",
             recursive=False,
         ),
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
+        ),
     ]
 
 
-def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
+def test_builtin_specs_get_transfer_prefixes_excludes_run_root_but_keeps_usage_report(
+    mock_settings,
+):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
     bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
@@ -312,23 +319,27 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/ranker/",
         f"{run.id}/generate/",
         f"{run.id}/bindcraft/T1024_0_output/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert boltz_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/boltz/top_ranked_structures/",
         f"{run.id}/mmseqs/",
         f"{run.id}/boltz/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert alphafold2_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
         f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert colabfold_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/colabfold/top_ranked_structures/",
         f"{run.id}/mmseqs/",
         f"{run.id}/colabfold/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert wisps_spec.get_transfer_prefixes(run) == [
         f"{run.id}/multiqc/",
@@ -338,9 +349,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/boltz_predictions/pae/",
         f"{run.id}/colabfold_predictions/pdb/",
         f"{run.id}/colabfold_predictions/pae/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
         f"{run.id}/results/",
+        f"{run.id}/UsageReport.csv",
     ]
 
     assert boltz_spec.get_transfer_items(run, settings=mock_settings) == [
@@ -366,6 +379,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
             destination_location=f"s3://test-s3-bucket/{run.id}/boltz/T1024/",
             recursive=True,
         ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
+        ),
     ]
 
     assert colabfold_spec.get_transfer_items(run, settings=mock_settings) == [
@@ -390,6 +408,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
             source_location=f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
             destination_location=f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
             recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
         ),
     ]
 
@@ -423,16 +446,21 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
             DataTransfer.direction == "output",
         )
     ).all()
-    assert len(first_result) == 4
-    assert len(second_result) == 4
-    assert len(output_transfers) == 4
+    assert len(first_result) == 5
+    assert len(second_result) == 5
+    assert len(output_transfers) == 5
     assert first_result[0].id == existing_transfer.id
     assert first_result[0].status == "in_progress"
     assert first_result[0].transfer_id == "task-existing"
     assert first_result[0].recursive is True
     assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
-    assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
-    assert [transfer.recursive for transfer in first_result] == [True, True, True, True]
+    assert [transfer.status for transfer in first_result[1:]] == [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
+    assert [transfer.recursive for transfer in first_result] == [True, True, True, True, False]
 
 
 def test_colabfold_create_output_transfers_creates_expected_rows(
@@ -451,10 +479,10 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
             DataTransfer.direction == "output",
         )
     ).all()
-    assert len(result) == 4
-    assert len(output_transfers) == 4
-    assert [transfer.status for transfer in result] == ["pending"] * 4
-    assert [transfer.recursive for transfer in result] == [True] * 4
+    assert len(result) == 5
+    assert len(output_transfers) == 5
+    assert [transfer.status for transfer in result] == ["pending"] * 5
+    assert [transfer.recursive for transfer in result] == [True, True, True, True, False]
     assert [(transfer.source_location, transfer.destination_location) for transfer in result] == [
         (
             f"/test/output/single-prediction/{run.id}/reports/",
@@ -471,6 +499,10 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
         (
             f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
             f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
+        ),
+        (
+            f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
         ),
     ]
 
