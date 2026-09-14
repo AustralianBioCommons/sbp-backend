@@ -92,7 +92,11 @@ class WorkflowResultsSpec:
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
-        return _non_root_output_prefixes(run, self.get_prefixes(run))
+        prefixes = _non_root_output_prefixes(run, self.get_prefixes(run))
+        # Also include the UsageReport.csv
+        if run.id:
+            prefixes.append(f"{run.id}/UsageReport.csv")
+        return prefixes
 
     def get_transfer_items(
         self,
