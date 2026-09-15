@@ -31,6 +31,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ..config import Settings, get_settings
 from .s3 import read_s3_file
@@ -54,6 +55,13 @@ _JOB_STATE_LABELS: dict[str, str] = {
 # -F json - PBS wraps the same string, doesn't reformat it), e.g.
 # "Mon Jun  1 03:00:00 2026".
 _PBS_DATETIME_FORMAT = "%a %b %d %H:%M:%S %Y"
+
+# qtime/stime are the Gadi server's local wall-clock time, not UTC - confirmed
+# against real values that only made sense as Australia/Sydney (Gadi/Canberra
+# share the same zone and DST rules). Labeling them UTC directly, as this used
+# to do, left every timestamp off by the Sydney UTC offset once the dashboard
+# converted them to Sydney time for display a second time.
+_PBS_TIMEZONE = ZoneInfo("Australia/Sydney")
 
 
 class GadiPbsJobsError(RuntimeError):
@@ -108,9 +116,10 @@ def _parse_pbs_datetime(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     try:
-        return datetime.strptime(raw.strip(), _PBS_DATETIME_FORMAT).replace(tzinfo=UTC)
+        naive = datetime.strptime(raw.strip(), _PBS_DATETIME_FORMAT)
     except ValueError:
         return None
+    return naive.replace(tzinfo=_PBS_TIMEZONE).astimezone(UTC)
 
 
 def _decode_account_name(raw: Any) -> str | None:
