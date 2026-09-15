@@ -466,9 +466,7 @@ async def test_workflow_run_admin_force_resync_row_action_rejects_non_succeeded_
     test_db.add_all([user, run])
     test_db.commit()
 
-    force_resync = mocker.patch(
-        "app.db.admin.force_resync_run_outputs", new_callable=AsyncMock
-    )
+    force_resync = mocker.patch("app.db.admin.force_resync_run_outputs", new_callable=AsyncMock)
 
     request = _admin_action_request(RequestAction.ROW_ACTION)
     request.state.session = test_db
@@ -515,9 +513,7 @@ async def test_workflow_run_admin_force_resync_batch_action_reports_counts(test_
         work_dir="/tmp/force-resync-batch-running",
         seqera_final_status="RUNNING",
     )
-    test_db.add_all(
-        [user, succeeded_ok, succeeded_err, succeeded_new_transfer, still_running]
-    )
+    test_db.add_all([user, succeeded_ok, succeeded_err, succeeded_new_transfer, still_running])
     test_db.commit()
 
     async def fake_force_resync(db, run, *, suppress_s3_errors=True, settings=None):
