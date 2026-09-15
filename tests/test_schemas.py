@@ -493,7 +493,7 @@ def _protein(sequence="ACDEFGHIK", copy_number=1):
 def test_size_limit_defaults_and_boltz_potentials():
     assert single_prediction_size_limit("colabfold", False) == 4000
     assert single_prediction_size_limit("boltz", False) == 4000
-    assert single_prediction_size_limit("alphafold2", False) == 2000
+    assert single_prediction_size_limit("alphafold2", False) == 1000
     assert single_prediction_size_limit("boltz", True) == 2000
     assert single_prediction_size_limit("colabfold", True) == 4000
 
@@ -550,9 +550,9 @@ def test_validate_single_prediction_ligand_uses_fixed_size():
 
 
 def test_validate_single_prediction_size_limit_is_exclusive():
-    with pytest.raises(ValueError, match="less than 2000"):
-        validate_single_prediction_entities([_protein(sequence="A" * 2000)], "alphafold2")
-    validate_single_prediction_entities([_protein(sequence="A" * 1999)], "alphafold2")
+    with pytest.raises(ValueError, match="less than 1000"):
+        validate_single_prediction_entities([_protein(sequence="A" * 1000)], "alphafold2")
+    validate_single_prediction_entities([_protein(sequence="A" * 999)], "alphafold2")
 
 
 # Short lists of valid/invalid examples per molecule type. Parametrized below

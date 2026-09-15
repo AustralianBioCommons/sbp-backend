@@ -18,7 +18,7 @@ MoleculeType = Literal["protein", "rna", "dna", "ligand", "ccd"]
 SINGLE_PREDICTION_MAX_ENTITIES = 52
 SINGLE_PREDICTION_LIGAND_SIZE = 30
 SINGLE_PREDICTION_SIZE_LIMITS: dict[str, int] = {
-    "alphafold2": 2000,
+    "alphafold2": 1000,
     "colabfold": 4000,
     "boltz": 4000,
 }

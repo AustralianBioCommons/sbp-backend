@@ -891,10 +891,10 @@ def test_launch_single_prediction_requires_protein(client: TestClient, test_engi
 
 def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClient, test_engine):
     _add_proteinfold_workflow(test_engine)
-    payload = _single_prediction_payload([_protein_entity(sequence="A" * 2000)], tool="alphafold2")
+    payload = _single_prediction_payload([_protein_entity(sequence="A" * 1000)], tool="alphafold2")
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 422
-    assert "less than 2000" in response.json()["detail"]
+    assert "less than 1000" in response.json()["detail"]
 
 
 @patch("app.routes.workflows.upload_csv_to_s3")
@@ -1319,7 +1319,7 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 
     single = by_category["single-prediction"]
     assert single["basis"] == CreditBasis.CONSTANT.value
-    assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 200}
+    assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 50}
 
     bulk = by_category["bulk-prediction"]
     assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
