@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 import secrets
 from datetime import UTC, datetime
@@ -36,8 +37,10 @@ from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..config import Settings, get_settings
 from ..routes.dependencies import get_db
+from ..schemas.workflows.shared import PipelineStatus
 from ..services.credits import launch_credit_cost
 from ..services.globus_transfer import reset_failed_output_transfers
+from ..services.job_sync import force_resync_run_outputs
 from . import engine
 from .models import job_queue
 from .models.core import (
@@ -50,6 +53,8 @@ from .models.core import (
     Workflow,
     WorkflowRun,
 )
+
+logger = logging.getLogger(__name__)
 
 _ADMIN_TEMPLATES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
@@ -288,6 +293,94 @@ class WorkflowRunAdmin(ModelView):
             ),
         )
         return or_(base_clause, owner_clause)
+
+    @action(
+        name="force_resync_outputs",
+        text="Force resync outputs",
+        confirmation=(
+            "Re-scan S3 and resync result outputs for the selected completed "
+            "runs, even though they're already marked as synced? Submits a "
+            "new output transfer first for any prefix the current spec "
+            "requires but hasn't been transferred yet. Use this after a "
+            "results-utils change adds a new output category or classifier, "
+            "so existing runs pick up newly recognised files."
+        ),
+        submit_btn_text="Force resync",
+        submit_btn_class="btn-warning",
+        icon_class="fa-solid fa-arrows-rotate",
+    )
+    async def force_resync_outputs_action(self, request: Request, pks: list[Any]) -> str:
+        runs = await self.find_by_pks(request, pks)
+        return await _force_resync_workflow_runs(request.state.session, runs)
+
+    @row_action(
+        name="force_resync_outputs",
+        text="Force resync outputs",
+        confirmation=(
+            "Re-scan S3 and resync result outputs for this run, even though "
+            "it's already marked as synced? Submits a new output transfer "
+            "first if the current spec requires a prefix that hasn't been "
+            "transferred yet."
+        ),
+        submit_btn_text="Force resync",
+        submit_btn_class="btn-warning",
+        action_btn_class="btn-warning",
+        icon_class="fa-solid fa-arrows-rotate",
+    )
+    async def row_action_force_resync_outputs(self, request: Request, pk: Any) -> str:
+        run = await self.find_by_pk(request, pk)
+        if run is None:
+            raise ActionFailed("Workflow run not found.")
+        return await _force_resync_workflow_runs(request.state.session, [run])
+
+
+async def _force_resync_workflow_runs(db: Session, runs: list[WorkflowRun]) -> str:
+    """Force-resync result outputs for the given completed workflow runs.
+
+    Bypasses the usual sync_completed_at short-circuit so runs pick up any
+    S3 keys that a *new* results-utils category/classifier now recognises but
+    didn't exist (from this run's perspective) at the time it last synced -
+    submitting a new output transfer first if the spec now requires a prefix
+    that was never transferred out in the first place (see
+    force_resync_run_outputs).
+    """
+    processed = 0
+    submitted = 0
+    skipped = 0
+    errored = 0
+    outputs_synced = 0
+
+    for run in runs:
+        if run.seqera_final_status != PipelineStatus.SUCCEEDED.value:
+            skipped += 1
+            continue
+        try:
+            outcome = await force_resync_run_outputs(db, run)
+        except Exception:
+            db.rollback()
+            logger.exception("Force resync of outputs failed for workflow run %s", run.id)
+            errored += 1
+            continue
+
+        if outcome.ready:
+            processed += 1
+            outputs_synced += outcome.outputs_synced
+        else:
+            submitted += 1
+
+    if processed == 0 and submitted == 0 and errored == 0:
+        raise ActionFailed(
+            "No completed runs were selected - only SUCCEEDED runs can be force-resynced."
+        )
+
+    summary = [f"{processed} run(s) resynced ({outputs_synced} output(s) found)"]
+    if submitted:
+        summary.append(f"{submitted} submitted new output transfer(s), not yet ready to resync")
+    if skipped:
+        summary.append(f"{skipped} skipped (not completed)")
+    if errored:
+        summary.append(f"{errored} errored")
+    return ", ".join(summary) + "."
 
 
 def _build_workflow_runs_csv(session: Session) -> str:

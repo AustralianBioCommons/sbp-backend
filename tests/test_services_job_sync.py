@@ -220,6 +220,59 @@ async def test_sync_workflow_run_sync_completed_reflects_finalized_state(
 
 
 @pytest.mark.asyncio
+async def test_force_resync_run_outputs_submits_new_transfer_before_resyncing(
+    test_db, persistent_models, monkeypatch
+):
+    """A results-utils spec update that now requires a prefix never
+    transferred before must submit that transfer, not just re-list whatever
+    is already in S3."""
+    run = _create_run(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime.now(tz=UTC),
+    )
+    ensure_transfers = MagicMock(return_value=job_sync.OutputTransferState(ready=False))
+    finalize = AsyncMock(return_value=0)
+
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+    monkeypatch.setattr(job_sync, "finalize_completed_workflow_run", finalize)
+
+    outcome = await job_sync.force_resync_run_outputs(test_db, run)
+
+    ensure_transfers.assert_called_once_with(test_db, run, settings=None)
+    finalize.assert_not_awaited()
+    assert outcome.ready is False
+    assert outcome.outputs_synced == 0
+
+
+@pytest.mark.asyncio
+async def test_force_resync_run_outputs_resyncs_once_transfers_are_ready(
+    test_db, persistent_models, monkeypatch
+):
+    run = _create_run(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime.now(tz=UTC),
+    )
+    ensure_transfers = MagicMock(return_value=job_sync.OutputTransferState(ready=True))
+    finalize = AsyncMock(return_value=4)
+
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+    monkeypatch.setattr(job_sync, "finalize_completed_workflow_run", finalize)
+
+    outcome = await job_sync.force_resync_run_outputs(test_db, run)
+
+    ensure_transfers.assert_called_once_with(test_db, run, settings=None)
+    finalize.assert_awaited_once_with(
+        test_db,
+        run,
+        force=True,
+        suppress_s3_errors=True,
+        settings=None,
+    )
+    assert outcome.ready is True
+    assert outcome.outputs_synced == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("seqera_status", ["FAILED", "CANCELLED"])
 async def test_sync_workflow_run_terminal_non_success_records_status_without_result_sync(
     test_db, persistent_models, monkeypatch, seqera_status
