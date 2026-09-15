@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -34,6 +35,7 @@ from app.db.admin import (
 )
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
+from app.services.job_sync import ForceResyncOutcome
 from tests.conftest import SettingsNoEnv
 
 DB_ADMIN_REQUIRED_ENV = {
@@ -388,6 +390,166 @@ def test_workflow_run_admin_sbp_credit_not_sortable() -> None:
     # header must not offer to sort by it (that would 500 — starlette-admin
     # would try to build an ORDER BY clause against a nonexistent column).
     assert "sbp_credit" not in WorkflowRunAdmin.sortable_fields
+
+
+def _admin_action_request(action: RequestAction) -> Request:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.action = action
+    return request
+
+
+async def test_workflow_run_admin_force_resync_row_action_resyncs_succeeded_run(
+    test_db, mocker
+) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-row",
+        name="Force Resync Row",
+        email="force-resync-row@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-row-run",
+        work_dir="/tmp/force-resync-row-run",
+        seqera_final_status="SUCCEEDED",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    force_resync = mocker.patch(
+        "app.db.admin.force_resync_run_outputs",
+        new_callable=AsyncMock,
+        return_value=ForceResyncOutcome(ready=True, outputs_synced=3),
+    )
+
+    request = _admin_action_request(RequestAction.ROW_ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    message = await view.handle_row_action(request, str(run.id), "force_resync_outputs")
+
+    assert message == "1 run(s) resynced (3 output(s) found)."
+    force_resync.assert_called_once()
+    args, _kwargs = force_resync.call_args
+    assert args[0] is test_db
+    assert args[1].id == run.id
+
+
+async def test_workflow_run_admin_force_resync_row_action_rejects_non_succeeded_run(
+    test_db, mocker
+) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-row-reject",
+        name="Force Resync Row Reject",
+        email="force-resync-row-reject@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-row-reject-run",
+        work_dir="/tmp/force-resync-row-reject-run",
+        seqera_final_status="RUNNING",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    force_resync = mocker.patch("app.db.admin.force_resync_run_outputs", new_callable=AsyncMock)
+
+    request = _admin_action_request(RequestAction.ROW_ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    with pytest.raises(ActionFailed, match="only SUCCEEDED runs"):
+        await view.handle_row_action(request, str(run.id), "force_resync_outputs")
+
+    force_resync.assert_not_called()
+
+
+async def test_workflow_run_admin_force_resync_batch_action_reports_counts(test_db, mocker) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-batch",
+        name="Force Resync Batch",
+        email="force-resync-batch@example.com",
+    )
+    succeeded_ok = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-ok",
+        work_dir="/tmp/force-resync-batch-ok",
+        seqera_final_status="SUCCEEDED",
+    )
+    succeeded_err = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-err",
+        work_dir="/tmp/force-resync-batch-err",
+        seqera_final_status="SUCCEEDED",
+    )
+    succeeded_new_transfer = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-new-transfer",
+        work_dir="/tmp/force-resync-batch-new-transfer",
+        seqera_final_status="SUCCEEDED",
+    )
+    still_running = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-running",
+        work_dir="/tmp/force-resync-batch-running",
+        seqera_final_status="RUNNING",
+    )
+    test_db.add_all([user, succeeded_ok, succeeded_err, succeeded_new_transfer, still_running])
+    test_db.commit()
+
+    async def fake_force_resync(db, run, *, suppress_s3_errors=True, settings=None):
+        if run.id == succeeded_ok.id:
+            return ForceResyncOutcome(ready=True, outputs_synced=2)
+        if run.id == succeeded_err.id:
+            raise RuntimeError("s3 boom")
+        if run.id == succeeded_new_transfer.id:
+            return ForceResyncOutcome(ready=False, outputs_synced=0)
+        raise AssertionError("force_resync_run_outputs called for a skipped run")
+
+    mocker.patch(
+        "app.db.admin.force_resync_run_outputs",
+        new=AsyncMock(side_effect=fake_force_resync),
+    )
+
+    request = _admin_action_request(RequestAction.ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    message = await view.handle_action(
+        request,
+        [
+            str(succeeded_ok.id),
+            str(succeeded_err.id),
+            str(succeeded_new_transfer.id),
+            str(still_running.id),
+        ],
+        "force_resync_outputs",
+    )
+
+    assert message == (
+        "1 run(s) resynced (2 output(s) found), "
+        "1 submitted new output transfer(s), not yet ready to resync, "
+        "1 skipped (not completed), 1 errored."
+    )
 
 
 @pytest.mark.parametrize(
