@@ -72,8 +72,11 @@ async def test_get_pbs_jobs_parses_pushed_snapshot():
     assert running.state_label == "Running"
     assert running.queue == "normal"
     assert running.account == "yz52"
-    assert running.submitted_at == datetime(2026, 6, 1, 2, 55, 0, tzinfo=UTC)
-    assert running.started_at == datetime(2026, 6, 1, 3, 0, 0, tzinfo=UTC)
+    # qtime/stime are Gadi's local (Australia/Sydney) wall-clock time, not
+    # UTC - "02:55:00"/"03:00:00" on 1 Jun (AEST, UTC+10, no DST) is
+    # 16:55:00/17:00:00 UTC on 31 May.
+    assert running.submitted_at == datetime(2026, 5, 31, 16, 55, 0, tzinfo=UTC)
+    assert running.started_at == datetime(2026, 5, 31, 17, 0, 0, tzinfo=UTC)
 
     queued = by_id["12346.gadi-pbs"]
     assert queued.state == "Q"
@@ -284,6 +287,28 @@ async def test_get_pbs_jobs_tolerates_unparseable_timestamps():
         snapshot = await get_pbs_jobs()
 
     assert snapshot.jobs[0].submitted_at is None
+
+
+@pytest.mark.asyncio
+async def test_get_pbs_jobs_converts_local_sydney_time_across_dst():
+    """qtime/stime are Gadi's local Australia/Sydney wall-clock time, not
+    UTC - this must apply the correct offset on both sides of DST (AEST in
+    winter, AEDT in summer), not a fixed one."""
+    payload = json.dumps(
+        {
+            "generatedAt": "2026-06-01T03:00:00Z",
+            "qstatJobs": {
+                "Jobs": {"1.gadi-pbs": {"job_state": "Q", "qtime": "Thu Jan 15 10:00:00 2026"}}
+            },
+        }
+    )
+    with patch(
+        "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+    ):
+        snapshot = await get_pbs_jobs()
+
+    # 10:00 AEDT (UTC+11, daylight saving in January) -> 23:00 UTC the prior day.
+    assert snapshot.jobs[0].submitted_at == datetime(2026, 1, 14, 23, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
