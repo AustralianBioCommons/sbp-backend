@@ -139,8 +139,8 @@ async def test_sync_workflow_run_succeeded_finalizes_after_output_transfers_comp
         spec=spec,
         suppress_s3_errors=True,
     )
-    ensure_score.assert_awaited_once_with(test_db, run, "Completed")
-    sync_usage.assert_awaited_once_with(test_db, run, "Completed")
+    ensure_score.assert_awaited_once_with(test_db, run, "Completed", force=False)
+    sync_usage.assert_awaited_once_with(test_db, run, "Completed", force=False)
     assert result.terminal is True
     assert result.sync_completed is True
     assert result.outputs_synced == 2

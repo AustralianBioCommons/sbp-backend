@@ -311,6 +311,7 @@ async def finalize_completed_workflow_run(
         run,
         suppress_s3_errors=suppress_s3_errors,
         settings=settings,
+        force=force,
     )
     run.sync_completed_at = datetime.now(tz=UTC)
     db.add(run)
@@ -381,6 +382,7 @@ async def _sync_completed_run_results(
     *,
     suppress_s3_errors: bool,
     settings: Settings | None = None,
+    force: bool = False,
 ) -> int:
     try:
         spec = get_output_spec(run)
@@ -395,8 +397,8 @@ async def _sync_completed_run_results(
             spec=spec,
             suppress_s3_errors=suppress_s3_errors,
         )
-        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value)
-        await sync_service_usage(db, run, UIStatus.COMPLETED.value)
+        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value, force=force)
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value, force=force)
     else:
         synced_keys = await sync_workflow_outputs(
             db,
@@ -405,8 +407,12 @@ async def _sync_completed_run_results(
             suppress_s3_errors=suppress_s3_errors,
             settings=settings,
         )
-        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value, settings=settings)
-        await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings)
+        await ensure_completed_run_score(
+            db, run, UIStatus.COMPLETED.value, settings=settings, force=force
+        )
+        await sync_service_usage(
+            db, run, UIStatus.COMPLETED.value, settings=settings, force=force
+        )
     return len(synced_keys)
 
 
