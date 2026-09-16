@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -210,22 +211,42 @@ def test_s3_object_relation_fields_use_safe_relation_template() -> None:
 
 def test_safe_relation_template_renders_href_from_detail_url_not_raw_pk() -> None:
     """Must build the href from the pre-computed _meta.detailUrl, not the
-    foreign model's raw (slash-containing) pk."""
+    foreign model's raw (slash-containing) pk. A long repr (a full S3 key)
+    must be truncated with CSS, not left to overflow the page - full value
+    stays reachable via the title attribute."""
     env = Environment(loader=FileSystemLoader(_ADMIN_TEMPLATES_DIR))
     template = env.get_template(_SAFE_RELATION_TEMPLATE)
 
+    long_key = "run-id/colabfold/job/some_very_long_descriptive_output_filename.tsv"
     data = {
-        "object_key": "run-id/colabfold/job/job_report.tsv",
+        "object_key": long_key,
         "_meta": {
-            "repr": "job_report.tsv",
+            "repr": long_key,
             "detailUrl": "http://testserver/admin/s3-object/detail/ENCODED",
         },
     }
     html = template.render(field=SimpleNamespace(multiple=False), data=data)
 
     assert 'href="http://testserver/admin/s3-object/detail/ENCODED"' in html
-    assert "job_report.tsv" in html
-    assert "run-id/colabfold/job/job_report.tsv" not in html
+    assert "text-truncate" in html
+    assert f'title="{long_key}"' in html
+    # text-truncate alone doesn't clip inside a flex container (the item's
+    # default min-width:auto keeps it at full content width) - min-width:0
+    # is required for max-width to actually take effect.
+    assert "min-width: 0" in html
+
+
+def test_detail_template_truncates_card_title_pk() -> None:
+    """Overridden from starlette_admin's own detail.html: the page heading
+    (`#{{ obj[pk] }}`) is a flex item next to the Edit/Delete actions and
+    used to render a long pk (e.g. a composite RunOutput pk with an S3 key
+    in it) unbounded, pushing those actions out of frame."""
+    detail_template_path = Path(_ADMIN_TEMPLATES_DIR) / "detail.html"
+    html = detail_template_path.read_text()
+
+    assert 'class="card-title text-truncate"' in html
+    assert "min-width: 0" in html
+    assert 'title="{{ obj[pk] }}"' in html
 
 
 def test_data_transfer_admin_includes_expected_columns() -> None:

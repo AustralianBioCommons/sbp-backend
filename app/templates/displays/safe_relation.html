@@ -3,7 +3,9 @@ the pre-computed url-safe _meta.detailUrl instead of the foreign model's raw
 pk - which 500s for a pk containing "/" (e.g. an S3 object key). -->
 <div class="d-flex flex-wrap">
     {% for v in (data if field.multiple else [data]) %}
-        <a class="m-1 py-1 px-2 badge bg-blue-lt lead"
+        <a class="m-1 py-1 px-2 badge bg-blue-lt lead text-truncate"
+           style="max-width: 320px; min-width: 0;"
+           title="{{ v['_meta']['repr'] }}"
            href="{{ v['_meta']['detailUrl'] }}">{{ v["_meta"]["repr"] }}</a>
     {% endfor %}
 </div>
