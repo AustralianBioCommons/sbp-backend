@@ -60,6 +60,12 @@ _ADMIN_TEMPLATES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
 )
 
+# The built-in displays/relation.html builds its href from the foreign model's
+# raw pk, which 500s ("May not contain path separators") for a pk containing
+# "/" (e.g. an S3 object key). Use for any field pointing at
+# S3ObjectAdmin/RunInputAdmin/RunOutputAdmin.
+_SAFE_RELATION_TEMPLATE = "displays/safe_relation.html"
+
 DEFAULT_DB_ADMIN_REQUIRED_ROLE = "biocommons/role/sbp/admin"
 DEFAULT_DB_ADMIN_ROLES_CLAIM = "https://biocommons.org.au/roles"
 DEFAULT_DB_ADMIN_SESSION_COOKIE = "sbp_admin_session"
@@ -337,12 +343,9 @@ class WorkflowRunAdmin(ModelView):
 async def _force_resync_workflow_runs(db: Session, runs: list[WorkflowRun]) -> str:
     """Force-resync result outputs for the given completed workflow runs.
 
-    Bypasses the usual sync_completed_at short-circuit so runs pick up any
-    S3 keys that a *new* results-utils category/classifier now recognises but
-    didn't exist (from this run's perspective) at the time it last synced -
-    submitting a new output transfer first if the spec now requires a prefix
-    that was never transferred out in the first place (see
-    force_resync_run_outputs).
+    See force_resync_run_outputs: bypasses the usual "already synced"
+    short-circuit and submits any output transfer still missing, so runs
+    pick up categories/files results-utils didn't recognise before.
     """
     processed = 0
     submitted = 0
@@ -565,8 +568,8 @@ class S3ObjectAdmin(UrlSafePrimaryKeyModelView):
     fields = [
         "object_key",
         "uri",
-        HasMany("run_inputs", identity="run-input"),
-        HasMany("run_outputs", identity="run-output"),
+        HasMany("run_inputs", identity="run-input", display_template=_SAFE_RELATION_TEMPLATE),
+        HasMany("run_outputs", identity="run-output", display_template=_SAFE_RELATION_TEMPLATE),
         "version_id",
         "size_bytes",
     ]
@@ -578,15 +581,25 @@ class S3ObjectAdmin(UrlSafePrimaryKeyModelView):
 class RunInputAdmin(UrlSafePrimaryKeyModelView):
     fields = [
         HasOne("run", identity="workflow-run"),
-        HasOne("s3_object", identity="s3-object"),
+        HasOne("s3_object", identity="s3-object", display_template=_SAFE_RELATION_TEMPLATE),
     ]
 
 
 class RunOutputAdmin(UrlSafePrimaryKeyModelView):
     fields = [
         HasOne("run", identity="workflow-run"),
-        HasOne("s3_object", identity="s3-object"),
+        HasOne("s3_object", identity="s3-object", display_template=_SAFE_RELATION_TEMPLATE),
     ]
+
+    def get_search_query(self, request: Request, term: str) -> Any:
+        # `run` is a relationship, not a column, so the default search only
+        # matches the raw run_id UUID. Add job name via a correlated EXISTS.
+        base_clause = super().get_search_query(request, term)
+        run_name_clause = exists().where(
+            WorkflowRun.id == RunOutput.run_id,
+            WorkflowRun.run_name.ilike(f"%{term}%"),
+        )
+        return or_(base_clause, run_name_clause)
 
 
 class DataTransferAdmin(ModelView):

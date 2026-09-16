@@ -11,6 +11,8 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jinja2 import Environment, FileSystemLoader
+from sqlalchemy import select
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -20,9 +22,12 @@ from starlette_admin.exceptions import ActionFailed
 
 from app.config import get_settings
 from app.db.admin import (
+    _ADMIN_TEMPLATES_DIR,
+    _SAFE_RELATION_TEMPLATE,
     AppUserAdmin,
     DataTransferAdmin,
     NciServiceUnitsField,
+    RunInputAdmin,
     RunOutputAdmin,
     S3ObjectAdmin,
     SbpCreditField,
@@ -126,6 +131,101 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit" in field_names
     assert "credit_updated_at" in field_names
     assert "credit_updated_by" in field_names
+
+
+def test_run_output_admin_search_matches_by_job_run_name(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|run-output-search",
+        name="Run Output Search",
+        email="run-output-search@example.com",
+    )
+    matching_run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="run-output-search-match",
+        work_dir="/tmp/run-output-search-match",
+        run_name="anne-staging-wf-sp",
+    )
+    other_run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="run-output-search-other",
+        work_dir="/tmp/run-output-search-other",
+        run_name="someone-else-job",
+    )
+    matching_object = S3Object(
+        object_key="run-output-search-match/results/report.html",
+        uri="s3://bucket/run-output-search-match/results/report.html",
+    )
+    other_object = S3Object(
+        object_key="run-output-search-other/results/report.html",
+        uri="s3://bucket/run-output-search-other/results/report.html",
+    )
+    test_db.add_all([user, matching_run, other_run, matching_object, other_object])
+    test_db.flush()
+    test_db.add_all(
+        [
+            RunOutput(run_id=matching_run.id, s3_object_id=matching_object.object_key),
+            RunOutput(run_id=other_run.id, s3_object_id=other_object.object_key),
+        ]
+    )
+    test_db.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.action = RequestAction.LIST
+
+    view = RunOutputAdmin(RunOutput)
+    query = view.get_search_query(request, "staging-wf-sp")
+    rows = test_db.scalars(select(RunOutput).where(query)).all()
+
+    assert {row.s3_object_id for row in rows} == {matching_object.object_key}
+
+
+def test_s3_object_relation_fields_use_safe_relation_template() -> None:
+    """Any field pointing at S3Object/RunInput/RunOutput (pks contain "/")
+    must use the safe template - the default one 500s on those."""
+
+    def _field(fields: list, name: str):
+        return next(f for f in fields if getattr(f, "name", None) == name)
+
+    assert _field(RunOutputAdmin.fields, "s3_object").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(RunInputAdmin.fields, "s3_object").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(S3ObjectAdmin.fields, "run_inputs").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(S3ObjectAdmin.fields, "run_outputs").display_template == _SAFE_RELATION_TEMPLATE
+    # WorkflowRun's pk is a plain UUID, so it doesn't need the override.
+    assert _field(RunOutputAdmin.fields, "run").display_template != _SAFE_RELATION_TEMPLATE
+
+
+def test_safe_relation_template_renders_href_from_detail_url_not_raw_pk() -> None:
+    """Must build the href from the pre-computed _meta.detailUrl, not the
+    foreign model's raw (slash-containing) pk."""
+    env = Environment(loader=FileSystemLoader(_ADMIN_TEMPLATES_DIR))
+    template = env.get_template(_SAFE_RELATION_TEMPLATE)
+
+    data = {
+        "object_key": "run-id/colabfold/job/job_report.tsv",
+        "_meta": {
+            "repr": "job_report.tsv",
+            "detailUrl": "http://testserver/admin/s3-object/detail/ENCODED",
+        },
+    }
+    html = template.render(field=SimpleNamespace(multiple=False), data=data)
+
+    assert 'href="http://testserver/admin/s3-object/detail/ENCODED"' in html
+    assert "job_report.tsv" in html
+    assert "run-id/colabfold/job/job_report.tsv" not in html
 
 
 def test_data_transfer_admin_includes_expected_columns() -> None:

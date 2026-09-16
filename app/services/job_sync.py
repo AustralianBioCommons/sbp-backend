@@ -323,8 +323,8 @@ async def finalize_completed_workflow_run(
 class ForceResyncOutcome:
     """Outcome of a force-resync attempt for one completed run."""
 
-    # False if a new output transfer was just submitted (or an existing one is
-    # still in flight) and results weren't re-synced this pass.
+    # False if a transfer was just submitted (or still in flight) and
+    # results weren't re-synced this pass.
     ready: bool
     outputs_synced: int
 
@@ -336,16 +336,12 @@ async def force_resync_run_outputs(
     suppress_s3_errors: bool = True,
     settings: Settings | None = None,
 ) -> ForceResyncOutcome:
-    """
-    Force a completed run to pick up results-utils spec changes: submit any
-    output transfer a prefix added since this run last synced now requires
-    (`_ensure_completed_run_output_transfers` is idempotent - it only creates
-    a transfer for a source/destination pair that doesn't already have one),
-    then re-scan S3 and resync result metadata even if already synced.
+    """Force a completed run to pick up results-utils spec changes.
 
-    Unlike `sync_workflow_run(..., force=True)`, this never re-polls Seqera -
-    callers must have already confirmed `run.seqera_final_status` is
-    SUCCEEDED.
+    Submits any output transfer a spec change now requires but hasn't
+    happened yet, then re-scans S3 and resyncs metadata even if already
+    synced. Unlike sync_workflow_run(force=True), never re-polls Seqera -
+    callers must confirm seqera_final_status is SUCCEEDED first.
     """
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
     if not output_transfer_state.ready:

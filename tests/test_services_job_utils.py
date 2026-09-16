@@ -277,9 +277,7 @@ async def test_ensure_completed_run_score_branches():
 
 @pytest.mark.asyncio
 async def test_ensure_completed_run_score_force_recomputes_despite_existing_value():
-    """force=True must re-derive the score even though a cached one already
-    exists - e.g. after a results-utils change, the underlying result file's
-    content may have changed since the score was first computed."""
+    """force=True must re-derive the score even though one is already cached."""
     run = SimpleNamespace(
         id="rid",
         seqera_run_id="wf-1",

@@ -223,9 +223,7 @@ async def test_sync_workflow_run_sync_completed_reflects_finalized_state(
 async def test_force_resync_run_outputs_submits_new_transfer_before_resyncing(
     test_db, persistent_models, monkeypatch
 ):
-    """A results-utils spec update that now requires a prefix never
-    transferred before must submit that transfer, not just re-list whatever
-    is already in S3."""
+    """Must submit a newly-required transfer, not just re-list what's in S3."""
     run = _create_run(
         seqera_final_status="SUCCEEDED",
         sync_completed_at=datetime.now(tz=UTC),
