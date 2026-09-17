@@ -510,9 +510,7 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
     ]
 
 
-def test_run_has_missing_required_categories_true_when_category_absent(
-    test_db, persistent_models
-):
+def test_run_has_missing_required_categories_true_when_category_absent(test_db, persistent_models):
     """A required category with no recorded output at all must be detected as missing."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")

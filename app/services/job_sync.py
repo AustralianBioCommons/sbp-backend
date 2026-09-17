@@ -417,9 +417,7 @@ async def _sync_completed_run_results(
         await ensure_completed_run_score(
             db, run, UIStatus.COMPLETED.value, settings=settings, force=force
         )
-        await sync_service_usage(
-            db, run, UIStatus.COMPLETED.value, settings=settings, force=force
-        )
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings, force=force)
     return len(synced_keys)
 
 
