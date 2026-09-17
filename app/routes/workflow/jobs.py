@@ -26,6 +26,8 @@ from ...schemas.workflows.shared import (
     JobDetailsResponse,
     JobListItem,
     JobListResponse,
+    PipelineStatus,
+    UIStatus,
     map_pipeline_status_to_ui,
 )
 from ...services.job_utils import (
@@ -80,12 +82,25 @@ def _resolve_stored_score(owned_run: WorkflowRun | None) -> float | None:
 
 
 def _get_stored_terminal_ui_status(run: WorkflowRun) -> str | None:
+    """Resolve UI status from stored columns alone, no live Seqera call needed.
+
+    A run isn't "Completed" just because Seqera succeeded - it's only Completed
+    once output transfers have synced too (see `WorkflowRun.results_sync_status`).
+    Still syncing -> In progress; a permanently failed output transfer -> Failed.
+    """
     if run.seqera_final_status is None:
         return None
     status = run.seqera_final_status.strip().upper()
     if status not in TERMINAL_SEQERA_STATUSES:
         return None
-    return map_pipeline_status_to_ui(status)
+    if status != PipelineStatus.SUCCEEDED.value:
+        return map_pipeline_status_to_ui(status)
+    sync_status = run.results_sync_status
+    if sync_status == "syncing":
+        return UIStatus.IN_PROGRESS.value
+    if sync_status == "partial":
+        return UIStatus.FAILED.value
+    return UIStatus.COMPLETED.value
 
 
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
