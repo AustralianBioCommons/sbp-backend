@@ -268,8 +268,9 @@ async def test_force_resync_run_outputs_resets_transfers_when_still_missing_requ
     reset_transfers.assert_called_once_with(test_db, run)
     assert outcome.ready is False
     assert outcome.outputs_synced == 3
-    # Must re-enter the scheduler's normal pipeline once the reset transfer completes.
-    assert run.sync_completed_at is None
+    # Deliberately untouched - clearing it would hide other, already-synced
+    # outputs from every results route while the reset transfer is in flight.
+    assert run.sync_completed_at is not None
 
 
 @pytest.mark.asyncio

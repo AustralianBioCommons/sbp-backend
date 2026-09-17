@@ -363,12 +363,12 @@ async def force_resync_run_outputs(
     )
 
     if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
-        # Undo the "fully synced" mark finalize_completed_workflow_run just set,
-        # so the run re-enters the scheduler's normal sync pipeline once the
-        # transfer we just reset completes - otherwise nothing else would notice.
-        run.sync_completed_at = None
-        db.add(run)
-        db.commit()
+        # Deliberately does NOT clear run.sync_completed_at: every results
+        # route treats a null sync_completed_at as "nothing is ready yet"
+        # (is_syncing_results), which would hide this run's other, already-
+        # synced outputs while the reset transfer is in flight. The tradeoff
+        # is that this run won't reappear in the scheduler's own queue -
+        # force-resync must be run again once that transfer completes.
         return ForceResyncOutcome(ready=False, outputs_synced=outputs_synced)
 
     return ForceResyncOutcome(ready=True, outputs_synced=outputs_synced)
