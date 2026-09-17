@@ -21,7 +21,12 @@ from ..schemas.workflows.shared import (
     map_pipeline_status_to_ui,
 )
 from .job_utils import ensure_completed_run_score, extract_pipeline_status, sync_service_usage
-from .results_utils import get_output_spec, sync_workflow_outputs
+from .results_utils import (
+    get_output_spec,
+    reset_completed_output_transfers,
+    run_has_missing_required_categories,
+    sync_workflow_outputs,
+)
 from .seqera import describe_workflow
 from .seqera_errors import SeqeraAPIError
 
@@ -340,8 +345,13 @@ async def force_resync_run_outputs(
 
     Submits any output transfer a spec change now requires but hasn't
     happened yet, then re-scans S3 and resyncs metadata even if already
-    synced. Unlike sync_workflow_run(force=True), never re-polls Seqera -
-    callers must confirm seqera_final_status is SUCCEEDED first.
+    synced. If a required category is still missing afterwards - e.g. a file
+    was deleted directly from S3, bypassing this app, so its "completed"
+    Globus transfer was never told to redo it - every completed output
+    transfer for the run is reset to pending so the scheduler resubmits a
+    fresh copy from source. Unlike sync_workflow_run(force=True), never
+    re-polls Seqera - callers must confirm seqera_final_status is SUCCEEDED
+    first.
     """
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
     if not output_transfer_state.ready:
@@ -354,6 +364,10 @@ async def force_resync_run_outputs(
         suppress_s3_errors=suppress_s3_errors,
         settings=settings,
     )
+
+    if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
+        return ForceResyncOutcome(ready=False, outputs_synced=outputs_synced)
+
     return ForceResyncOutcome(ready=True, outputs_synced=outputs_synced)
 
 

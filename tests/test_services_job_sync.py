@@ -243,6 +243,65 @@ async def test_force_resync_run_outputs_submits_new_transfer_before_resyncing(
 
 
 @pytest.mark.asyncio
+async def test_force_resync_run_outputs_resets_transfers_when_still_missing_required_category(
+    test_db, persistent_models, monkeypatch
+):
+    """If a required category is still missing after resyncing - e.g. a file
+    was deleted directly from S3, so its "completed" Globus transfer was
+    never told to redo it - every completed output transfer must be reset
+    so the scheduler resubmits a fresh copy, and the outcome reports
+    not-ready so callers know to check back later."""
+    run = _create_run(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime.now(tz=UTC),
+    )
+    ensure_transfers = MagicMock(return_value=job_sync.OutputTransferState(ready=True))
+    finalize = AsyncMock(return_value=3)
+    missing_categories = MagicMock(return_value=True)
+    reset_transfers = MagicMock(return_value=2)
+
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+    monkeypatch.setattr(job_sync, "finalize_completed_workflow_run", finalize)
+    monkeypatch.setattr(job_sync, "run_has_missing_required_categories", missing_categories)
+    monkeypatch.setattr(job_sync, "reset_completed_output_transfers", reset_transfers)
+
+    outcome = await job_sync.force_resync_run_outputs(test_db, run)
+
+    finalize.assert_awaited_once()
+    missing_categories.assert_called_once_with(test_db, run)
+    reset_transfers.assert_called_once_with(test_db, run)
+    assert outcome.ready is False
+    assert outcome.outputs_synced == 3
+
+
+@pytest.mark.asyncio
+async def test_force_resync_run_outputs_stays_ready_when_nothing_to_reset(
+    test_db, persistent_models, monkeypatch
+):
+    """A required category can be missing with no completed transfer left to
+    retry (e.g. the source itself is gone) - nothing more force-resync can
+    do, so it must not report not-ready forever."""
+    run = _create_run(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime.now(tz=UTC),
+    )
+    ensure_transfers = MagicMock(return_value=job_sync.OutputTransferState(ready=True))
+    finalize = AsyncMock(return_value=3)
+    missing_categories = MagicMock(return_value=True)
+    reset_transfers = MagicMock(return_value=0)
+
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+    monkeypatch.setattr(job_sync, "finalize_completed_workflow_run", finalize)
+    monkeypatch.setattr(job_sync, "run_has_missing_required_categories", missing_categories)
+    monkeypatch.setattr(job_sync, "reset_completed_output_transfers", reset_transfers)
+
+    outcome = await job_sync.force_resync_run_outputs(test_db, run)
+
+    assert outcome.ready is True
+    assert outcome.outputs_synced == 3
+
+
+@pytest.mark.asyncio
 async def test_force_resync_run_outputs_resyncs_once_transfers_are_ready(
     test_db, persistent_models, monkeypatch
 ):

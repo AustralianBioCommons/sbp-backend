@@ -444,6 +444,44 @@ def s3_uri_to_key(uri: str | None) -> str | None:
     return parts[3].strip() or None
 
 
+def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
+    """Whether this run is still missing a required output category, using
+    whatever's currently recorded as its RunOutput keys."""
+    try:
+        spec = get_output_spec(run)
+    except ValueError:
+        return False
+    outputs = collect_classified_outputs(db, run, spec)
+    return bool(missing_required_categories(outputs, spec))
+
+
+def reset_completed_output_transfers(db: Session, run: WorkflowRun) -> int:
+    """Reset every completed Globus output transfer for this run to pending.
+
+    A "completed" status only proves a transfer copied successfully at the
+    time it ran - if a file was later deleted directly from S3 (bypassing
+    this app), nothing else would ever notice or retry it, since
+    create_output_transfers reuses any existing transfer for the same
+    source/destination regardless of status. Force-resync calls this when a
+    required category is still missing after a resync attempt, so the
+    scheduler resubmits a fresh copy of each output folder from its source.
+    Returns the number of transfers reset.
+    """
+    completed_transfers = db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+            DataTransfer.status == "completed",
+        )
+    ).all()
+    for transfer in completed_transfers:
+        transfer.reset_to_pending(session=db, commit=False)
+    if completed_transfers:
+        db.commit()
+    return len(completed_transfers)
+
+
 def _non_root_output_prefixes(run: WorkflowRun, prefixes: list[str]) -> list[str]:
     """Return run-scoped output prefixes, excluding the broad run root prefix."""
     if not run.id:
