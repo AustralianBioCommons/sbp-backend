@@ -363,6 +363,12 @@ async def force_resync_run_outputs(
     )
 
     if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
+        # Undo the "fully synced" mark finalize_completed_workflow_run just set,
+        # so the run re-enters the scheduler's normal sync pipeline once the
+        # transfer we just reset completes - otherwise nothing else would notice.
+        run.sync_completed_at = None
+        db.add(run)
+        db.commit()
         return ForceResyncOutcome(ready=False, outputs_synced=outputs_synced)
 
     return ForceResyncOutcome(ready=True, outputs_synced=outputs_synced)
