@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.db.models.core import RunMetric
+from app.db.models.core import DataTransfer, RunMetric
 from app.main import create_app
 from app.routes.workflow.jobs import get_job_details, list_jobs
 from app.services.job_utils import UserJobListRow
@@ -590,6 +590,56 @@ async def test_list_jobs_stored_terminal_status_skips_seqera_lookup(mock_db, moc
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_permanently_failed_output_transfer_shows_failed(mock_db, mock_user_id):
+    """Seqera succeeded and sync finished, but a permanently failed output transfer
+    means the job is Failed overall, not Completed."""
+    run = WorkflowRunFactory.build(
+        seqera_run_id="wf-partial-sync",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime(2026, 2, 1, 11, 0, tzinfo=UTC),
+        binder_name=None,
+        run_name="Partially Synced Job",
+        submission_timestamp=datetime(2026, 2, 1, 10, 0, tzinfo=UTC),
+    )
+    run.metrics = None
+    run.data_transfers = [
+        DataTransfer(
+            workflow_run_id=run.id,
+            direction="output",
+            provider="globus",
+            source_location="a",
+            destination_location="b",
+            status="failed",
+        )
+    ]
+    user_run = UserJobListRowFactory.build(
+        run=run,
+        run_id="run-partial-sync",
+        seqera_run_id="wf-partial-sync",
+        score=0.91,
+    )
+    describe = AsyncMock()
+
+    with (
+        patch("app.routes.workflow.jobs.get_user_job_list_page", return_value=([user_run], 1)),
+        patch("app.routes.workflow.jobs.describe_workflow", describe),
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
+    assert len(response.jobs) == 1
+    assert response.jobs[0].status == "Failed"
+    assert response.jobs[0].score is None
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_synced_completed_run_skips_score_and_usage_sync(mock_db, mock_user_id):
     """Completed runs already marked synced don't sync score and usage"""
     run = WorkflowRunFactory.build(
@@ -1133,6 +1183,37 @@ async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
             db=mock_db,
         )
 
+    assert response.status == "In progress"
+    assert response.score is None
+
+
+@pytest.mark.asyncio
+async def test_get_job_details_succeeded_but_output_sync_pending_shows_in_progress(
+    mock_db, mock_user_id
+):
+    """Seqera succeeded, but output transfers haven't finished syncing yet - job
+    should read In progress, not Completed, and needs no live Seqera call."""
+    owned_run = WorkflowRunFactory.build(
+        seqera_run_id="seqera-wf-999",
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=None,
+    )
+    owned_run.metrics = None
+    owned_run.data_transfers = []
+
+    describe = AsyncMock()
+
+    with (
+        patch("app.routes.workflow.jobs.get_owned_run_by_id", return_value=owned_run),
+        patch("app.routes.workflow.jobs.describe_workflow", describe),
+    ):
+        response = await get_job_details(
+            run_id="wf-999",
+            current_user_id=mock_user_id,
+            db=mock_db,
+        )
+
+    describe.assert_not_awaited()
     assert response.status == "In progress"
     assert response.score is None
 
