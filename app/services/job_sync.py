@@ -343,15 +343,12 @@ async def force_resync_run_outputs(
 ) -> ForceResyncOutcome:
     """Force a completed run to pick up results-utils spec changes.
 
-    Submits any output transfer a spec change now requires but hasn't
-    happened yet, then re-scans S3 and resyncs metadata even if already
-    synced. If a required category is still missing afterwards - e.g. a file
-    was deleted directly from S3, bypassing this app, so its "completed"
-    Globus transfer was never told to redo it - every completed output
-    transfer for the run is reset to pending so the scheduler resubmits a
-    fresh copy from source. Unlike sync_workflow_run(force=True), never
-    re-polls Seqera - callers must confirm seqera_final_status is SUCCEEDED
-    first.
+    Submits any output transfer a spec change now requires, then re-scans
+    S3 and resyncs metadata even if already synced. If a required category
+    is still missing afterwards (e.g. a file was deleted directly from S3),
+    every completed output transfer is reset to pending for the scheduler
+    to redo. Unlike sync_workflow_run(force=True), never re-polls Seqera -
+    callers must confirm seqera_final_status is SUCCEEDED first.
     """
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
     if not output_transfer_state.ready:

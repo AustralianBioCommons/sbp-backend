@@ -449,7 +449,7 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
     assert output_transfer.provider == "s3"
     assert output_transfer.source_location == f"s3://test-s3-bucket/{run_id}"
     assert output_transfer.destination_location == persisted.uri
-    assert output_transfer.status == "pending"
+    assert output_transfer.status == "completed"
     link = (
         test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
     )

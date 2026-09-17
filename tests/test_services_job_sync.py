@@ -246,11 +246,7 @@ async def test_force_resync_run_outputs_submits_new_transfer_before_resyncing(
 async def test_force_resync_run_outputs_resets_transfers_when_still_missing_required_category(
     test_db, persistent_models, monkeypatch
 ):
-    """If a required category is still missing after resyncing - e.g. a file
-    was deleted directly from S3, so its "completed" Globus transfer was
-    never told to redo it - every completed output transfer must be reset
-    so the scheduler resubmits a fresh copy, and the outcome reports
-    not-ready so callers know to check back later."""
+    """Missing category after resync -> reset completed transfers, report not-ready."""
     run = _create_run(
         seqera_final_status="SUCCEEDED",
         sync_completed_at=datetime.now(tz=UTC),
@@ -278,9 +274,7 @@ async def test_force_resync_run_outputs_resets_transfers_when_still_missing_requ
 async def test_force_resync_run_outputs_stays_ready_when_nothing_to_reset(
     test_db, persistent_models, monkeypatch
 ):
-    """A required category can be missing with no completed transfer left to
-    retry (e.g. the source itself is gone) - nothing more force-resync can
-    do, so it must not report not-ready forever."""
+    """Nothing left to reset -> must not report not-ready forever."""
     run = _create_run(
         seqera_final_status="SUCCEEDED",
         sync_completed_at=datetime.now(tz=UTC),

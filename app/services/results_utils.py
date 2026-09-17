@@ -445,8 +445,7 @@ def s3_uri_to_key(uri: str | None) -> str | None:
 
 
 def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
-    """Whether this run is still missing a required output category, using
-    whatever's currently recorded as its RunOutput keys."""
+    """Whether this run's currently recorded RunOutputs miss a required category."""
     try:
         spec = get_output_spec(run)
     except ValueError:
@@ -456,16 +455,11 @@ def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
 
 
 def reset_completed_output_transfers(db: Session, run: WorkflowRun) -> int:
-    """Reset every completed Globus output transfer for this run to pending.
+    """Reset this run's completed Globus output transfers to pending.
 
-    A "completed" status only proves a transfer copied successfully at the
-    time it ran - if a file was later deleted directly from S3 (bypassing
-    this app), nothing else would ever notice or retry it, since
-    create_output_transfers reuses any existing transfer for the same
-    source/destination regardless of status. Force-resync calls this when a
-    required category is still missing after a resync attempt, so the
-    scheduler resubmits a fresh copy of each output folder from its source.
-    Returns the number of transfers reset.
+    Used when a required category is still missing after a resync - a
+    "completed" transfer only proves it copied successfully at the time,
+    not that the file is still there now. Returns the number reset.
     """
     completed_transfers = db.scalars(
         select(DataTransfer).where(
@@ -1174,6 +1168,8 @@ def _sync_run_output_records(
             source_location=run_outdir,
             destination_location=s3_object.uri,
             recursive=False,
+            # Bookkeeping link, not a real job - the key was just found in S3.
+            status="completed",
         )
         db.add(output_transfer)
         db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))

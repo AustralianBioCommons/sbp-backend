@@ -513,9 +513,7 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
 def test_run_has_missing_required_categories_true_when_category_absent(
     test_db, persistent_models
 ):
-    """A required category (e.g. 'report') with no recorded output at all -
-    such as when its only source file was deleted directly from S3 along
-    with its RunOutput row - must be detected as missing."""
+    """A required category with no recorded output at all must be detected as missing."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")
     run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
@@ -529,9 +527,7 @@ def test_run_has_missing_required_categories_true_when_category_absent(
         s3_object_id=stats_object.object_key,
         data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
     )
-    # required_categories for bindcraft also includes "report" and "pdb" -
-    # neither has any recorded output, so the run stays incomplete.
-
+    # "report" and "pdb" are also required but have no output here.
     assert run_has_missing_required_categories(test_db, run) is True
 
 
@@ -789,6 +785,7 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
     data_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
     assert data_transfer is not None
     assert data_transfer.provider == "s3"
+    assert data_transfer.status == "completed"
     assert data_transfer.destination_location.endswith(report_key)
 
 
