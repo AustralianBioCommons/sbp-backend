@@ -710,6 +710,11 @@ def classify_proteinfold_output_key(
         return None
     filename = normalized.rsplit("/", 1)[-1]
 
+    # plddt.tsv is no longer surfaced to the portal; plddt is already
+    # captured in the per-model report/structure outputs.
+    if filename.lower().endswith("_plddt.tsv"):
+        return None
+
     if re.search(report_pattern, normalized):
         return ClassifiedOutput(category="report", label=filename)
     if re.search(pdb_pattern, normalized):
@@ -1108,6 +1113,40 @@ def missing_required_categories(
     return set(spec.required_categories) - found
 
 
+_PAE_TSV_RANK_PATTERN = re.compile(r"^(?P<prefix>.*)_(?P<rank>\d+)_pae\.tsv$", re.IGNORECASE)
+
+
+def _drop_non_lowest_rank_pae(outputs: dict[str, ClassifiedOutput]) -> dict[str, ClassifiedOutput]:
+    """Keep only the lowest-ranked ``*_pae.tsv`` per sample directory.
+
+    Proteinfold tools publish one PAE file per predicted model rank, but the
+    portal only needs the top-ranked model's PAE. Different tools number
+    their lowest rank 0 or 1, so pick the minimum found rather than a fixed
+    number.
+    """
+    lowest_rank_by_group: dict[str, tuple[int, str]] = {}
+    pae_keys: set[str] = set()
+    for key, output in outputs.items():
+        if output.category != "stats_csv":
+            continue
+        match = _PAE_TSV_RANK_PATTERN.match(output.label)
+        if not match:
+            continue
+        pae_keys.add(key)
+        directory = key.rsplit("/", 1)[0] if "/" in key else ""
+        group = f"{directory}::{match.group('prefix')}"
+        rank = int(match.group("rank"))
+        current = lowest_rank_by_group.get(group)
+        if current is None or rank < current[0]:
+            lowest_rank_by_group[group] = (rank, key)
+
+    keep_keys = {key for _, key in lowest_rank_by_group.values()}
+    drop_keys = pae_keys - keep_keys
+    if not drop_keys:
+        return outputs
+    return {key: output for key, output in outputs.items() if key not in drop_keys}
+
+
 def collect_classified_outputs(
     db: Session,
     run: WorkflowRun,
@@ -1119,7 +1158,7 @@ def collect_classified_outputs(
         classified = spec.classify_output(key, sample_id)
         if classified:
             outputs[key] = classified
-    return outputs
+    return _drop_non_lowest_rank_pae(outputs)
 
 
 def _filter_outputs_by_category(
@@ -1220,7 +1259,7 @@ async def list_workflow_outputs_from_s3(
             if classified is not None:
                 outputs[key] = classified
 
-    return outputs
+    return _drop_non_lowest_rank_pae(outputs)
 
 
 async def sync_workflow_outputs(

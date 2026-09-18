@@ -731,6 +731,56 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
 
 
 @pytest.mark.asyncio
+async def test_get_all_downloads_zipped_keeps_only_lowest_rank_pae_and_drops_plddt(
+    test_db, persistent_models
+):
+    """Single-prediction proteinfold runs publish one *_pae.tsv per model rank
+    and a *_plddt.tsv summary; the portal should only ever surface the
+    top-ranked model's PAE and never the plddt.tsv file.
+    """
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="single-prediction",
+            repo_url="https://github.com/test/single-prediction",
+            default_revision="main",
+            config_path="/config/single-prediction.config",
+        ),
+        tool="boltz",
+        sample_id="T1024",
+        seqera_run_id="wf-boltz-pae-ranks",
+    )
+
+    output_contents = {
+        f"{run.id}/boltz/T1024/paes/T1024_0_pae.tsv": b"rank-0-pae\n",
+        f"{run.id}/boltz/T1024/paes/T1024_1_pae.tsv": b"rank-1-pae\n",
+        f"{run.id}/boltz/T1024/T1024_plddt.tsv": b"plddt\n",
+        f"{run.id}/boltz/T1024/T1024_ptm.tsv": b"0\t0.9\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(side_effect=read_bytes),
+    ):
+        zip_buffer = await get_all_downloads_zipped(test_db, run)
+
+    with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
+        assert set(zip_file.namelist()) == {
+            "stats_csv/T1024_0_pae.tsv",
+            "stats_csv/T1024_ptm.tsv",
+        }
+
+
+@pytest.mark.asyncio
 async def test_get_result_report_download_persists_result_found_only_on_retry(
     test_db, persistent_models
 ):
@@ -1104,6 +1154,11 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
     assert classify_boltz_proteinfold_output(
         f"{run.id}/mmseqs/T1024.a3m", "T1024"
     ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # plddt.tsv is never surfaced, regardless of sample_id
+    assert (
+        classify_boltz_proteinfold_output(f"{run.id}/boltz/T1024/T1024_plddt.tsv", "T1024") is None
+    )
 
     # "single_prediction" paths do not match when sample_id is set
     assert (
