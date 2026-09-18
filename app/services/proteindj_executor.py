@@ -1,4 +1,4 @@
-"""ProteinDJ workflow executor for Seqera Platform (modeled after bindflow)."""
+"""ProteinDJ workflow executor for Seqera Platform."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from .proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
     get_proteindj_default_params,
+    get_proteindj_design_mode,
 )
 from .results_utils import s3_uri_to_key
 from .seqera import (
@@ -125,6 +126,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         hotspot_residues=proteindj_fields.target_hotspot_residues,
         num_designs=proteindj_fields.number_of_final_designs,
         design_length=_design_length(proteindj_fields),
+        design_mode=get_proteindj_design_mode(form_data.tool),
     )
 
     # Serialize to YAML
