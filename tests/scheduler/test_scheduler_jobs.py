@@ -350,7 +350,9 @@ def test_launch_job_dispatches_proteindj_for_rfdiffusion_tool(
     assert queued_job.status == "submitted"
 
 
-def test_launch_job_dispatches_proteindj_for_bindcraft_tool(test_db, persistent_models, monkeypatch):
+def test_launch_job_dispatches_proteindj_for_bindcraft_tool(
+    test_db, persistent_models, monkeypatch
+):
     """The BindCraft tool also dispatches through the proteindj executor now."""
     queued_job = _create_queued_job(tool="bindcraft")
     calls = []

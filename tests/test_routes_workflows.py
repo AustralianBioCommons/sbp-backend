@@ -96,9 +96,7 @@ def role_check_client(test_engine):
         yield c
 
 
-@patch(
-    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
-)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
     payload = {
@@ -835,9 +833,7 @@ _LAUNCH_PAYLOAD = {
 }
 
 
-@patch(
-    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
-)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_allowed_with_workflow_role(mock_prepare, role_check_client, monkeypatch):
     """Users holding the workflow execution role can launch."""
     monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
@@ -1229,9 +1225,7 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-@patch(
-    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
-)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_deducts_credits_when_enabled(
     mock_prepare,
     client,
@@ -1266,9 +1260,7 @@ def test_launch_deducts_credits_when_enabled(
     assert credit == 70  # 100 − (10 × 3)
 
 
-@patch(
-    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
-)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_rejected_when_insufficient_credits(
     mock_prepare, client, test_engine, monkeypatch, mock_settings
 ):
@@ -1299,10 +1291,10 @@ def test_launch_rejected_when_insufficient_credits(
     assert credit == 10  # unchanged
 
 
-@patch(
-    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
-)
-def test_launch_does_not_deduct_when_credits_disabled(mock_prepare, client, test_engine, monkeypatch):
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_does_not_deduct_when_credits_disabled(
+    mock_prepare, client, test_engine, monkeypatch
+):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
     with Session(test_engine) as db:
