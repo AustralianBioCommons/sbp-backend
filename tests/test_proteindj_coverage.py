@@ -16,6 +16,7 @@ from app.services.proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
     get_proteindj_default_params,
+    get_proteindj_design_mode,
 )
 from app.services.proteindj_executor import (
     _design_length,
@@ -179,6 +180,7 @@ def test_get_proteindj_default_params_all_fields():
         hotspot_residues="A20,A21",
         num_designs=5,
         design_length="100-150",
+        design_mode="binder_denovo",
     )
     assert params == {
         "out_dir": "s3://bucket/out",
@@ -186,12 +188,30 @@ def test_get_proteindj_default_params_all_fields():
         "hotspot_residues": "A20,A21",
         "num_designs": 5,
         "design_length": "100-150",
+        "design_mode": "binder_denovo",
     }
 
 
 def test_get_proteindj_default_params_missing_required_field_raises():
     with pytest.raises(TypeError):
         get_proteindj_default_params("s3://bucket/out", num_designs=3)  # type: ignore[call-arg]
+
+
+# =============================================================================
+# Tests for get_proteindj_design_mode()
+# =============================================================================
+
+
+def test_get_proteindj_design_mode_bindcraft():
+    assert get_proteindj_design_mode("bindcraft") == "bindcraft_denovo"
+
+
+def test_get_proteindj_design_mode_rfdiffusion():
+    assert get_proteindj_design_mode("rfdiffusion") == "binder_denovo"
+
+
+def test_get_proteindj_design_mode_is_case_insensitive():
+    assert get_proteindj_design_mode("BindCraft") == "bindcraft_denovo"
 
 
 # =============================================================================
@@ -334,6 +354,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert "hotspot_residues: A20,A21" in params_text
     assert "num_designs: 5" in params_text
     assert "design_length: 100-150" in params_text
+    assert "design_mode: binder_denovo" in params_text
 
     # The uploaded starting-pdb file gets its own Globus staging record, separate
     # from the main samplesheet input handled in the workflows route.
@@ -357,6 +378,51 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     s3_object = test_db.get(S3Object, "inputs/test.pdb")
     assert s3_object is not None
     assert s3_object.uri == "s3://my-bucket/inputs/test.pdb"
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_mode(
+    test_db, persistent_models, seqera_env
+):
+    """The BindCraft toggle launches ProteinDJ with design_mode=bindcraft_denovo."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+
+    form = _make_launch_form(tool="bindcraft", runName="queued-bindcraft-run")
+    form_data = WorkflowFormData(
+        workflow="de-novo-design",
+        tool="bindcraft",
+        starting_pdb="s3://my-bucket/inputs/test.pdb",
+        target_hotspot_residues="A20,A21",
+        number_of_final_designs=5,
+        min_length=100,
+        max_length=150,
+    )
+
+    with (
+        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch(
+            "app.services.proteindj_executor.get_proteindj_config_profiles",
+            return_value=["singularity"],
+        ),
+    ):
+        await prepare_proteindj_workflow(
+            form=form,
+            settings=seqera_env,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=form_data,
+            user_details=_USER_DETAILS,
+        )
+
+    queued_job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
+    )
+    assert "design_mode: bindcraft_denovo" in queued_job.launch_payload["paramsText"]
 
 
 @pytest.mark.anyio

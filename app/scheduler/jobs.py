@@ -17,7 +17,6 @@ from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
 from ..services import globus_transfer, health, seqera, workflow_repo_staging
-from ..services.bindflow_executor import launch_bindflow_workflow
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
@@ -198,12 +197,9 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
     elif workflow_name in ("single-prediction", "proteinfold"):
         launch_func = launch_proteinfold_workflow
     elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-        # de-novo-design covers two algorithms (bindcraft vs rfdiffusion), each
-        # with its own executor; workflow_run.tool holds the one selected at launch.
-        tool = (job.workflow_run.tool or "").lower()
-        launch_func = (
-            launch_proteindj_workflow if tool == "rfdiffusion" else launch_bindflow_workflow
-        )
+        # de-novo-design covers two algorithms (bindcraft vs rfdiffusion), both
+        # via the proteindj executor - it derives design_mode from workflow_run.tool.
+        launch_func = launch_proteindj_workflow
     else:
         raise ValueError(f"Unsupported workflow: {job.workflow.name}")
     try:
