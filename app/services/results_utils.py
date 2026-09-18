@@ -1112,8 +1112,8 @@ def _sync_run_output_records(
     changed = False
 
     # Every workflow config publishes its results under this same run-scoped
-    # prefix, whether the pipeline calls the param "outdir" (bindflow,
-    # proteinfold, wisps) or "out_dir" (proteindj) - the value is identical.
+    # prefix, whether the pipeline calls the param "outdir" (proteinfold,
+    # wisps) or "out_dir" (proteindj) - the value is identical.
     run_outdir = _build_s3_uri(str(run.id), settings=settings)
 
     for key in keys:

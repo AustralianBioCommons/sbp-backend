@@ -1,8 +1,8 @@
 """Schemas for the de-novo-design workflow.
 
-BindCraft's form data is schema-driven from a remote JSON schema (see the
-frontend's ``de-novo-design`` workflow), so the only concrete schema here is
-for ProteinDJ (the rfdiffusion tool).
+Both the rfdiffusion and bindcraft tools launch ProteinDJ (see
+``proteindj_executor.py``) and share this same form shape - only the
+design_mode passed to the pipeline differs between them.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ MAX_DESIGN_LENGTH = 150
 
 
 class ProteinDjFormData(WorkflowFormData):
-    """Form data for the ProteinDJ (rfdiffusion) de-novo-design workflow."""
+    """Form data for the ProteinDJ de-novo-design workflow (rfdiffusion or bindcraft tool)."""
 
     starting_pdb: str = Field(..., description="S3 URI of the uploaded starting PDB file")
     target_hotspot_residues: str = Field(

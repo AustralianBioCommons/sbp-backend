@@ -223,7 +223,7 @@ def app(test_engine):
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
-            config_path="/some/bindflow.config",
+            config_path="/some/proteindj.config",
         )
     )
     setup_session.commit()

@@ -63,22 +63,22 @@ BULK_PREDICTION_BASE_PATH = "/g/data/yz52/sbp-service/input/bulk_prediction"
 def _apply_bindcraft_design_target(
     form_data: dict[str, Any], workflow: str | None, tool: str | None
 ) -> None:
-    """BindCraft's bindflow samplesheet requires number_of_final_designs, but
-    the de-novo-design form only collects max_trajectories ("Number of
+    """BindCraft's samplesheet requires number_of_final_designs, but the
+    de-novo-design form only collects max_trajectories ("Number of
     Trajectories") — this derives the QC-pass target as 2x the trajectory
     count so the run isn't QC-gated below what was requested, without ever
     exposing it to the user. Scoped to workflow=de-novo-design AND
     tool=bindcraft specifically — de-novo-design also covers rfdiffusion,
-    which has no bindflow samplesheet or trajectory-retry concept and must
-    never have this derivation applied. Also protects other callers of this
-    generic samplesheet builder (e.g. single-prediction), even if their own
-    form data happened to contain a field with this name.
+    which has no samplesheet or trajectory-retry concept and must never have
+    this derivation applied. Also protects other callers of this generic
+    samplesheet builder (e.g. single-prediction), even if their own form data
+    happened to contain a field with this name.
     """
     if workflow != "de-novo-design" or tool != "bindcraft" or "max_trajectories" not in form_data:
         return
     try:
         max_trajectories = int(str(form_data["max_trajectories"]).strip())
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return
     form_data["number_of_final_designs"] = max_trajectories * 2
 
