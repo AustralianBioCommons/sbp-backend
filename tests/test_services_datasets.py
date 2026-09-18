@@ -253,9 +253,9 @@ def test_apply_bindcraft_design_target_noop_for_other_workflows():
 
 
 def test_apply_bindcraft_design_target_noop_for_rfdiffusion():
-    """de-novo-design also covers rfdiffusion, which has no bindflow
-    samplesheet or trajectory-retry concept — the derivation must never
-    apply to it, even though it shares the same workflow name as bindcraft."""
+    """de-novo-design also covers rfdiffusion, which has no samplesheet or
+    trajectory-retry concept — the derivation must never apply to it, even
+    though it shares the same workflow name as bindcraft."""
     form_data = {"max_trajectories": 5}
     _apply_bindcraft_design_target(form_data, "de-novo-design", "rfdiffusion")
     assert "number_of_final_designs" not in form_data

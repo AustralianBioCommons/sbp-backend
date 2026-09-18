@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import QueuedJob
-from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
