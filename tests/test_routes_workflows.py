@@ -1229,13 +1229,11 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+@patch(
+    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
+)
 def test_launch_deducts_credits_when_enabled(
     mock_prepare,
-    mock_read_csv,
-    mock_upload_csv,
     client,
     test_engine,
     monkeypatch,
@@ -1244,9 +1242,6 @@ def test_launch_deducts_credits_when_enabled(
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     mock_settings.enable_credits = True
     client.app.dependency_overrides[get_settings] = lambda: mock_settings
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1271,7 +1266,9 @@ def test_launch_deducts_credits_when_enabled(
     assert credit == 70  # 100 − (10 × 3)
 
 
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+@patch(
+    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
+)
 def test_launch_rejected_when_insufficient_credits(
     mock_prepare, client, test_engine, monkeypatch, mock_settings
 ):
@@ -1302,17 +1299,12 @@ def test_launch_rejected_when_insufficient_credits(
     assert credit == 10  # unchanged
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_does_not_deduct_when_credits_disabled(
-    mock_prepare, mock_read_csv, mock_upload_csv, client, test_engine, monkeypatch
-):
+@patch(
+    "app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare
+)
+def test_launch_does_not_deduct_when_credits_disabled(mock_prepare, client, test_engine, monkeypatch):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
         db.commit()
