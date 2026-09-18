@@ -50,9 +50,11 @@ from app.services.results_utils import (
     list_workflow_outputs_from_s3,
     make_wisps_classifier,
     read_result_output_file,
+    reset_completed_output_transfers,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
+    run_has_missing_required_categories,
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
@@ -61,6 +63,7 @@ from tests.datagen import (
     DataTransferFactory,
     RunOutputFactory,
     S3ObjectFactory,
+    WorkflowFactory,
     WorkflowRunFactory,
 )
 
@@ -507,6 +510,93 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
     ]
 
 
+def test_run_has_missing_required_categories_true_when_category_absent(test_db, persistent_models):
+    """A required category with no recorded output at all must be detected as missing."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")
+    run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
+
+    stats_object = S3ObjectFactory.create_sync(
+        object_key=f"{run.id}/ranker/{run.id}_final_design_stats.csv",
+        uri=f"s3://bucket/{run.id}/ranker/{run.id}_final_design_stats.csv",
+    )
+    RunOutputFactory.create_sync(
+        run_id=run.id,
+        s3_object_id=stats_object.object_key,
+        data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
+    )
+    # "report" and "pdb" are also required but have no output here.
+    assert run_has_missing_required_categories(test_db, run) is True
+
+
+def test_run_has_missing_required_categories_false_when_satisfied(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")
+    run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
+
+    outputs = {
+        "report": f"{run.id}/generate/{run.id}_report.html",
+        "pdb": f"{run.id}/ranker/{run.id}_ranked/{run.id}.pdb",
+        "stats_csv": f"{run.id}/ranker/{run.id}_final_design_stats.csv",
+    }
+    for key in outputs.values():
+        s3_object = S3ObjectFactory.create_sync(object_key=key, uri=f"s3://bucket/{key}")
+        RunOutputFactory.create_sync(
+            run_id=run.id,
+            s3_object_id=s3_object.object_key,
+            data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
+        )
+
+    assert run_has_missing_required_categories(test_db, run) is False
+
+
+def test_reset_completed_output_transfers_resets_only_completed_globus_rows(
+    test_db, persistent_models
+):
+    run = WorkflowRunFactory.create_sync()
+    completed_one = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        transfer_id="task-1",
+    )
+    completed_two = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        transfer_id="task-2",
+    )
+    failed = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="failed",
+        transfer_id="task-3",
+    )
+    s3_provider = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        status="pending",
+    )
+
+    reset_count = reset_completed_output_transfers(test_db, run)
+
+    assert reset_count == 2
+    test_db.refresh(completed_one)
+    test_db.refresh(completed_two)
+    test_db.refresh(failed)
+    test_db.refresh(s3_provider)
+    assert completed_one.status == "pending"
+    assert completed_one.transfer_id is None
+    assert completed_two.status == "pending"
+    assert completed_two.transfer_id is None
+    assert failed.status == "failed"
+    assert s3_provider.status == "pending"
+
+
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
@@ -693,6 +783,7 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
     data_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
     assert data_transfer is not None
     assert data_transfer.provider == "s3"
+    assert data_transfer.status == "completed"
     assert data_transfer.destination_location.endswith(report_key)
 
 

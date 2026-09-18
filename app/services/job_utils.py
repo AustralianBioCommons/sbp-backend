@@ -304,13 +304,18 @@ def _get_sample_id_for_score(run: WorkflowRun) -> str | None:
 
 
 async def ensure_completed_run_score(
-    db: Session, run: WorkflowRun, ui_status: str, settings: Settings | None = None
+    db: Session,
+    run: WorkflowRun,
+    ui_status: str,
+    settings: Settings | None = None,
+    *,
+    force: bool = False,
 ) -> float | None:
     if ui_status != "Completed":
         return None
 
     existing = db.execute(select(RunMetric).where(RunMetric.run_id == run.id)).scalar_one_or_none()
-    if existing and existing.max_score is not None:
+    if not force and existing and existing.max_score is not None:
         return _round_score(existing.max_score)
 
     # Score computation is best-effort: a run with an unknown workflow/tool (e.g. a
@@ -346,11 +351,16 @@ async def ensure_completed_run_score(
 
 
 async def sync_service_usage(
-    db: Session, run: WorkflowRun, ui_status: str, settings: Settings | None = None
+    db: Session,
+    run: WorkflowRun,
+    ui_status: str,
+    settings: Settings | None = None,
+    *,
+    force: bool = False,
 ) -> float | None:
     if ui_status != "Completed":
         return None
-    if run.service_usage is not None:
+    if not force and run.service_usage is not None:
         return run.service_usage
 
     try:

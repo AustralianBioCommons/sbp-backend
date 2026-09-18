@@ -276,6 +276,53 @@ async def test_ensure_completed_run_score_branches():
 
 
 @pytest.mark.asyncio
+async def test_ensure_completed_run_score_force_recomputes_despite_existing_value():
+    """force=True must re-derive the score even though one is already cached."""
+    run = SimpleNamespace(
+        id="rid",
+        seqera_run_id="wf-1",
+        workflow=SimpleNamespace(name="de-novo-design"),
+        tool="bindcraft",
+    )
+    db = _DB(scalar=SimpleNamespace(max_score=0.5))
+    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.95))
+
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        score = await job_utils.ensure_completed_run_score(db, run, "Completed", force=True)
+
+    assert score == 0.95
+    fake_spec.get_max_score.assert_awaited_once_with(db, run)
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
+async def test_sync_service_usage_force_recomputes_despite_existing_value():
+    run = SimpleNamespace(
+        id="rid",
+        seqera_run_id="wf-1",
+        workflow=SimpleNamespace(name="de-novo-design"),
+        tool="bindcraft",
+        service_usage=1.0,
+    )
+    db = _DB()
+    fake_spec = SimpleNamespace(get_service_units=AsyncMock(return_value=2.5))
+
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        usage = await job_utils.sync_service_usage(db, run, "Completed", force=True)
+
+    assert usage == 2.5
+    assert run.service_usage == 2.5
+    fake_spec.get_service_units.assert_awaited_once_with(db, run)
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
 async def test_ensure_completed_run_score_persists_spec_score(test_db):
     user = AppUser(
         auth0_user_id="auth0|score-user",
@@ -402,7 +449,7 @@ async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(t
     assert output_transfer.provider == "s3"
     assert output_transfer.source_location == f"s3://test-s3-bucket/{run_id}"
     assert output_transfer.destination_location == persisted.uri
-    assert output_transfer.status == "pending"
+    assert output_transfer.status == "completed"
     link = (
         test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
     )

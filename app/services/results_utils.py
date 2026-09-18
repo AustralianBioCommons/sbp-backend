@@ -444,6 +444,38 @@ def s3_uri_to_key(uri: str | None) -> str | None:
     return parts[3].strip() or None
 
 
+def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
+    """Whether this run's currently recorded RunOutputs miss a required category."""
+    try:
+        spec = get_output_spec(run)
+    except ValueError:
+        return False
+    outputs = collect_classified_outputs(db, run, spec)
+    return bool(missing_required_categories(outputs, spec))
+
+
+def reset_completed_output_transfers(db: Session, run: WorkflowRun) -> int:
+    """Reset this run's completed Globus output transfers to pending.
+
+    Used when a required category is still missing after a resync - a
+    "completed" transfer only proves it copied successfully at the time,
+    not that the file is still there now. Returns the number reset.
+    """
+    completed_transfers = db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+            DataTransfer.status == "completed",
+        )
+    ).all()
+    for transfer in completed_transfers:
+        transfer.reset_to_pending(session=db, commit=False)
+    if completed_transfers:
+        db.commit()
+    return len(completed_transfers)
+
+
 def _non_root_output_prefixes(run: WorkflowRun, prefixes: list[str]) -> list[str]:
     """Return run-scoped output prefixes, excluding the broad run root prefix."""
     if not run.id:
@@ -1136,6 +1168,8 @@ def _sync_run_output_records(
             source_location=run_outdir,
             destination_location=s3_object.uri,
             recursive=False,
+            # Bookkeeping link, not a real job - the key was just found in S3.
+            status="completed",
         )
         db.add(output_transfer)
         db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))
