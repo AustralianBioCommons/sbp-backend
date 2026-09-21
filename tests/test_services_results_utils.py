@@ -19,25 +19,21 @@ from app.services.results_utils import (
     WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,
-    build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
     build_colabfold_proteinfold_output_listing_prefixes,
     build_rfdiffusion_output_listing_prefixes,
     build_wisps_output_listing_prefixes,
     classify_alphafold2_proteinfold_output,
-    classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
     classify_rfdiffusion_output_key,
     classify_shared_outputs,
     classify_wisps_output_key,
-    extract_bindcraft_max_score,
     extract_proteinfold_max_score,
     extract_rfdiffusion_max_score,
     extract_wisps_max_score,
     format_log_entries,
     get_all_downloads_zipped,
-    get_bindcraft_score_file,
     get_category_downloads_zipped,
     get_proteinfold_score_file,
     get_result_output_downloads,
@@ -213,52 +209,21 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
     assert get_sample_id_for_result(run_empty) is None
 
 
-def test_bindcraft_helpers_classify_keys_and_build_prefixes(mock_settings):
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+def test_bindcraft_spec_reuses_rfdiffusion_output_collection():
+    """BindCraft and RFdiffusion are both fold-design front ends for the same
+    downstream ProteinDJ pipeline, so their output collection must be identical."""
+    bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
+    rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
 
-    assert classify_bindcraft_output_key(" ") is None
-    assert classify_bindcraft_output_key("folder/") is None
-    assert classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
-    assert classify_bindcraft_output_key(
-        f"{run.id}/generate/bindcraft_report.html"
-    ) == ClassifiedOutput(
-        "report",
-        "bindcraft_report.html",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/bindcraft/sampleZ_0_output/preview.png"
-    ) == ClassifiedOutput(
-        "snapshot",
-        "preview.png",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/ranker/sampleZ_ranked/model.pdb"
-    ) == ClassifiedOutput(
-        "pdb",
-        "model.pdb",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/ranker/sampleZ_final_design_stats.csv"
-    ) == ClassifiedOutput(
-        "stats_csv",
-        "sampleZ_final_design_stats.csv",
-    )
+    assert bindcraft_spec.get_prefixes is rfdiffusion_spec.get_prefixes
+    assert bindcraft_spec.classifier is rfdiffusion_spec.classifier
+    assert bindcraft_spec.get_score_file is rfdiffusion_spec.get_score_file
+    assert bindcraft_spec.extract_max_score is rfdiffusion_spec.extract_max_score
+    assert bindcraft_spec.required_categories == rfdiffusion_spec.required_categories
+    assert bindcraft_spec.supports_snapshots == rfdiffusion_spec.supports_snapshots
 
-    prefixes = build_bindcraft_output_listing_prefixes(run)
-    assert prefixes == [
-        f"{run.id}/",
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-        f"{run.id}/bindcraft/sampleZ_0_output/",
-    ]
 
-    run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
-    assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
-        f"{run.id}/",
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-    ]
-
+def test_build_s3_uri_uses_bucket_when_configured(mock_settings):
     mock_settings.aws.s3_bucket = "test-bucket"
     assert (
         _build_s3_uri("path/to/file.txt", settings=mock_settings)
@@ -319,9 +284,7 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root_but_keeps_usage_r
     rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
 
     assert bindcraft_spec.get_transfer_prefixes(run) == [
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-        f"{run.id}/bindcraft/T1024_0_output/",
+        f"{run.id}/results/",
         f"{run.id}/UsageReport.csv",
     ]
     assert boltz_spec.get_transfer_prefixes(run) == [
@@ -517,15 +480,15 @@ def test_run_has_missing_required_categories_true_when_category_absent(test_db, 
     run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
 
     stats_object = S3ObjectFactory.create_sync(
-        object_key=f"{run.id}/ranker/{run.id}_final_design_stats.csv",
-        uri=f"s3://bucket/{run.id}/ranker/{run.id}_final_design_stats.csv",
+        object_key=f"{run.id}/results/ranked_designs.csv",
+        uri=f"s3://bucket/{run.id}/results/ranked_designs.csv",
     )
     RunOutputFactory.create_sync(
         run_id=run.id,
         s3_object_id=stats_object.object_key,
         data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
     )
-    # "report" and "pdb" are also required but have no output here.
+    # "pdb" is also required but has no output here.
     assert run_has_missing_required_categories(test_db, run) is True
 
 
@@ -535,9 +498,8 @@ def test_run_has_missing_required_categories_false_when_satisfied(test_db, persi
     run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
 
     outputs = {
-        "report": f"{run.id}/generate/{run.id}_report.html",
-        "pdb": f"{run.id}/ranker/{run.id}_ranked/{run.id}.pdb",
-        "stats_csv": f"{run.id}/ranker/{run.id}_final_design_stats.csv",
+        "pdb": f"{run.id}/results/ranked_designs/{run.id}.pdb",
+        "stats_csv": f"{run.id}/results/ranked_designs.csv",
     }
     for key in outputs.values():
         s3_object = S3ObjectFactory.create_sync(object_key=key, uri=f"s3://bucket/{key}")
@@ -648,7 +610,7 @@ def test_get_rfdiffusion_score_file_uses_ranked_designs_csv():
 
 @pytest.mark.asyncio
 async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
-    csv_text = "design,af2_plddt_overall\nsampleZ_0,91.3\nsampleZ_1,88.1\n"
+    csv_text = "rank,design,af2_iptm\n1,sampleZ_0,0.913\n2,sampleZ_1,0.881\n"
 
     with patch(
         "app.services.results_utils.read_s3_file",
@@ -664,12 +626,12 @@ async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
 @pytest.mark.asyncio
 async def test_extract_rfdiffusion_max_score_returns_none_without_score_value():
     """
-    Test extract_rfdiffusion_max_score returns None when no af2_plddt_overall score is available
+    Test extract_rfdiffusion_max_score returns None when no af2_iptm score is available
     """
     for csv_text in [
-        "design,af2_plddt_overall\n",
-        "design,af2_plddt_overall\nsampleZ_0, \n",
-        "design,other_score\nsampleZ_0,91.3\n",
+        "rank,design,af2_iptm\n",
+        "rank,design,af2_iptm\n1,sampleZ_0, \n",
+        "rank,design,other_score\n1,sampleZ_0,0.913\n",
     ]:
         with patch(
             "app.services.results_utils.read_s3_file",
@@ -697,9 +659,8 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     )
 
     output_contents = {
-        f"{run.id}/generate/result.html": b"<html>result</html>",
-        f"{run.id}/ranker/sampleZ_final_design_stats.csv": b"score\n0.9\n",
-        f"{run.id}/ranker/sampleZ_ranked/model.pdb": b"ATOM\n",
+        f"{run.id}/results/ranked_designs.csv": b"score\n0.9\n",
+        f"{run.id}/results/ranked_designs/model.pdb": b"ATOM\n",
     }
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all([user, run, *outputs])
@@ -718,12 +679,10 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
 
     with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
         assert set(zip_file.namelist()) == {
-            "report/result.html",
-            "stats_csv/sampleZ_final_design_stats.csv",
+            "stats_csv/ranked_designs.csv",
             "pdb/model.pdb",
         }
-        assert zip_file.read("report/result.html") == b"<html>result</html>"
-        assert zip_file.read("stats_csv/sampleZ_final_design_stats.csv") == b"score\n0.9\n"
+        assert zip_file.read("stats_csv/ranked_designs.csv") == b"score\n0.9\n"
         assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
 
     assert mock_read_s3_bytes.await_count == len(output_contents)
@@ -792,24 +751,25 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
     run = WorkflowRunFactory.create_sync(
         owner=user,
         workflow=Workflow(
-            name="de-novo-design",
-            repo_url="https://github.com/test/de-novo-design",
+            name="single-prediction",
+            repo_url="https://github.com/test/single-prediction",
             default_revision="main",
-            config_path="/config/de-novo-design.config",
+            config_path="/config/single-prediction.config",
         ),
-        tool="bindcraft",
+        tool="boltz",
+        sample_id="T1024",
         seqera_run_id="wf-report-retry",
     )
     test_db.commit()
 
-    report_key = f"{run.id}/generate/result.html"
-    generate_prefix = f"{run.id}/generate/"
+    report_key = f"{run.id}/reports/T1024_report.html"
+    reports_prefix = f"{run.id}/reports/"
     calls_per_prefix: dict[str, int] = {}
 
     async def fake_list_s3_files(prefix: str, settings=None):
         calls_per_prefix[prefix] = calls_per_prefix.get(prefix, 0) + 1
         # Only found on the second (loud, suppress_s3_errors=False) listing pass.
-        if prefix == generate_prefix and calls_per_prefix[prefix] >= 2:
+        if prefix == reports_prefix and calls_per_prefix[prefix] >= 2:
             return [{"key": report_key}]
         return []
 
@@ -857,11 +817,11 @@ async def test_read_result_output_file_persists_newly_discovered_output(test_db,
     )
     test_db.commit()
 
-    stats_key = f"{run.id}/ranker/sampleZ_final_design_stats.csv"
-    ranker_prefix = f"{run.id}/ranker/"
+    stats_key = f"{run.id}/results/ranked_designs.csv"
+    results_prefix = f"{run.id}/results/"
 
     async def fake_list_s3_files(prefix: str, settings=None):
-        if prefix == ranker_prefix:
+        if prefix == results_prefix:
             return [{"key": stats_key}]
         return []
 
@@ -878,44 +838,10 @@ async def test_read_result_output_file_persists_newly_discovered_output(test_db,
         content, label = await read_result_output_file(test_db, run, stats_key)
 
     assert content == b"score\n0.9\n"
-    assert label == "sampleZ_final_design_stats.csv"
+    assert label == "ranked_designs.csv"
 
     run_output = test_db.scalars(select(RunOutput).where(RunOutput.run_id == run.id)).one()
     assert run_output.s3_object_id == stats_key
-
-
-def test_get_bindcraft_score_file_uses_final_design_stats():
-    keys = [
-        "run/ranker/model.pdb",
-        "run/ranker/s1_final_design_stats.csv",
-        "run/generate/report.html",
-    ]
-
-    assert get_bindcraft_score_file(keys, "s1") == "run/ranker/s1_final_design_stats.csv"
-
-
-def test_get_bindcraft_score_file_returns_none_without_stats():
-    keys = [
-        "run/ranker/model.pdb",
-        "run/generate/report.html",
-    ]
-
-    assert get_bindcraft_score_file(keys, "s1") is None
-
-
-@pytest.mark.asyncio
-async def test_extract_bindcraft_max_score_reads_average_i_ptm():
-    csv_text = "design_id,Average_i_pTM\nA,0.12\nB,0.91\nC,\n"
-
-    with patch(
-        "app.services.results_utils.read_s3_file",
-        new_callable=AsyncMock,
-        return_value=csv_text,
-    ) as read_file:
-        score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
-
-    assert score == 0.91
-    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv", settings=ANY)
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,7 @@ def get_proteindj_design_mode(tool: str) -> str:
     BindCraft uses ProteinDJ's own bindcraft_denovo fold-design mode;
     everything else (rfdiffusion) uses standalone binder design.
     """
-    return "bindcraft_denovo" if tool.lower() == "bindcraft" else "binder_denovo"
+    return "bindcraft_denovo" if tool.lower() == "bindcraft" else "rfd_denovo"
 
 
 def get_proteindj_default_params(

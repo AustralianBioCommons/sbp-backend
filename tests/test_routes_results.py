@@ -44,6 +44,18 @@ def _configure_bindcraft_run(run: WorkflowRun) -> None:
     run.submitted_form_data = {"mode": "bindcraft"}
 
 
+def _configure_boltz_run(run: WorkflowRun) -> None:
+    """BindCraft no longer has its own report output (see WORKFLOW_OUTPUT_SPECS),
+    so report tests exercise that generic behaviour via a tool that still has one."""
+    run.workflow = Workflow(
+        name="single-prediction",
+        repo_url="https://github.com/test/single-prediction",
+        default_revision="main",
+        config_path="/config/single-prediction.config",
+    )
+    run.submitted_form_data = {"mode": "boltz"}
+
+
 def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
     """Build a RunOutput row linked to a throwaway DataTransfer for test fixtures."""
     transfer = DataTransfer(
@@ -355,25 +367,19 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
         sample_id="demo2",
         work_dir="/tmp/wf-downloads-1",
     )
+    test_db.add_all([user, workflow, run])
+    test_db.flush()
     outputs = [
         S3Object(
-            object_key="demo2/ranker/demo2_final_design_stats.csv",
-            uri="s3://bucket/demo2/ranker/demo2_final_design_stats.csv",
+            object_key=f"{run.id}/results/ranked_designs.csv",
+            uri=f"s3://bucket/{run.id}/results/ranked_designs.csv",
         ),
         S3Object(
-            object_key="demo2/ranker/demo2_Ranked/1_PDL1_model1.pdb",
-            uri="s3://bucket/demo2/ranker/demo2_Ranked/1_PDL1_model1.pdb",
-        ),
-        S3Object(
-            object_key=f"{run.id}/generate/PDL1_l100_s975117.html",
-            uri=f"s3://bucket/{run.id}/generate/PDL1_l100_s975117.html",
-        ),
-        S3Object(
-            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
-            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
+            object_key=f"{run.id}/results/ranked_designs/1_PDL1_model1.pdb",
+            uri=f"s3://bucket/{run.id}/results/ranked_designs/1_PDL1_model1.pdb",
         ),
     ]
-    test_db.add_all([user, run, workflow, *outputs])
+    test_db.add_all(outputs)
     test_db.commit()
     test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
     test_db.commit()
@@ -395,22 +401,17 @@ async def test_get_result_downloads_returns_presigned_links_for_tracked_outputs(
     assert result.runId == str(run.id)
     # pdb is flagged hidden but still returned individually.
     assert [item.category for item in result.downloads] == [
-        "report",
         "stats_csv",
         "pdb",
     ]
     assert [item.label for item in result.downloads] == [
-        "PDL1_l100_s975117.html",
-        "demo2_final_design_stats.csv",
+        "ranked_designs.csv",
         "1_PDL1_model1.pdb",
     ]
     assert all(item.category != "snapshot" for item in result.downloads)
     assert result.zipCategories == ["pdb"]
-    assert (
-        result.downloads[1].url
-        == "https://signed.example/demo2/ranker/demo2_final_design_stats.csv"
-    )
-    assert mock_presign.await_count == 3
+    assert result.downloads[0].url == f"https://signed.example/{run.id}/results/ranked_designs.csv"
+    assert mock_presign.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -491,9 +492,8 @@ async def test_get_result_download_all_returns_valid_zip_file(
     test_db.flush()
 
     output_contents = {
-        f"{run.id}/generate/result.html": b"<html>report</html>",
-        f"{run.id}/ranker/download-all_final_design_stats.csv": b"score\n0.9\n",
-        f"{run.id}/ranker/download-all_Ranked/model.pdb": b"ATOM\n",
+        f"{run.id}/results/ranked_designs.csv": b"score\n0.9\n",
+        f"{run.id}/results/ranked_designs/model.pdb": b"ATOM\n",
     }
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all(outputs)
@@ -518,12 +518,10 @@ async def test_get_result_download_all_returns_valid_zip_file(
     )
     with ZipFile(returned_zip) as zip_file:
         assert set(zip_file.namelist()) == {
-            "report/result.html",
-            "stats_csv/download-all_final_design_stats.csv",
+            "stats_csv/ranked_designs.csv",
             "pdb/model.pdb",
         }
-        assert zip_file.read("report/result.html") == b"<html>report</html>"
-        assert zip_file.read("stats_csv/download-all_final_design_stats.csv") == b"score\n0.9\n"
+        assert zip_file.read("stats_csv/ranked_designs.csv") == b"score\n0.9\n"
         assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
 
 
@@ -545,9 +543,8 @@ async def test_get_result_download_category_returns_valid_zip_file(
     test_db.flush()
 
     output_contents = {
-        f"{run.id}/generate/result.html": b"<html>report</html>",
-        f"{run.id}/ranker/download-category_final_design_stats.csv": b"score\n0.9\n",
-        f"{run.id}/ranker/download-category_Ranked/model.pdb": b"ATOM\n",
+        f"{run.id}/results/ranked_designs.csv": b"score\n0.9\n",
+        f"{run.id}/results/ranked_designs/model.pdb": b"ATOM\n",
     }
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all(outputs)
@@ -927,9 +924,11 @@ async def test_get_result_downloads_maps_s3_service_error_to_502(test_db, mock_s
 
 
 @pytest.mark.asyncio
-async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
+async def test_get_result_snapshots_returns_empty_for_bindcraft_without_snapshot_support(
     test_db, mock_settings
 ):
+    """BindCraft now shares RFdiffusion's output collection, which has no
+    snapshot category, so no S3 lookup is attempted even with tracked PNGs."""
     user = AppUser(
         auth0_user_id="auth0|results-user-snapshots-1",
         name="Results User Snapshots 1",
@@ -949,38 +948,18 @@ async def test_get_result_snapshots_returns_presigned_links_for_tracked_outputs(
         sample_id="demo2",
         work_dir="/tmp/wf-snapshots-1",
     )
-    outputs = [
-        S3Object(
-            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
-            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview.png",
-        ),
-        S3Object(
-            object_key=f"{run.id}/bindcraft/demo2_0_output/demo2_preview_2.png",
-            uri=f"s3://bucket/{run.id}/bindcraft/demo2_0_output/demo2_preview_2.png",
-        ),
-    ]
-    test_db.add_all([user, run, workflow, *outputs])
-    test_db.commit()
-    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.add_all([user, run, workflow])
     test_db.commit()
 
-    with (
-        patch(
-            "app.services.results_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
-        ),
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-    ):
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new_callable=AsyncMock,
+    ) as mocked_list:
         result = await get_result_snapshots(str(run.id), user.id, test_db, mock_settings)
 
     assert result.runId == str(run.id)
-    assert [item.category for item in result.snapshots] == ["snapshot", "snapshot"]
-    assert [item.label for item in result.snapshots] == ["demo2_preview.png", "demo2_preview_2.png"]
+    assert result.snapshots == []
+    mocked_list.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1098,8 +1077,8 @@ async def test_get_result_report_returns_single_presigned_html_for_tracked_outpu
         sample_id="demo2",
         work_dir="/tmp/wf-report-1",
     )
-    _configure_bindcraft_run(run)
-    report_key = f"{run.id}/generate/PDL1_l100_s975117.html"
+    _configure_boltz_run(run)
+    report_key = f"{run.id}/reports/PDL1_l100_s975117_report.html"
     report = S3Object(
         object_key=report_key,
         uri=f"s3://bucket/{report_key}",
@@ -1178,15 +1157,15 @@ async def test_get_result_report_syncs_run_uuid_prefixed_animation_output(test_d
         sample_id="s1",
         work_dir="/tmp/wf-report-3",
     )
-    _configure_bindcraft_run(run)
+    _configure_boltz_run(run)
     test_db.add_all([user, run])
     test_db.commit()
     run_id = run.id
 
-    real_key = f"{run_id}/generate/PDL1_l79_s800698.html"
+    real_key = f"{run_id}/reports/PDL1_l79_s800698_report.html"
 
     def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
-        if prefix == f"{run_id}/generate/":
+        if prefix == f"{run_id}/reports/":
             return [
                 {
                     "key": real_key,
