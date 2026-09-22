@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
 
 from app.db.models.core import (
     AppUser,
@@ -73,6 +72,20 @@ def _configure_bindcraft_run(run: WorkflowRun) -> None:
     )
     run.tool = "bindcraft"
     run.submitted_form_data = {"mode": "bindcraft"}
+
+
+def _configure_boltz_run(run: WorkflowRun) -> None:
+    """BindCraft no longer has its own report output (see WORKFLOW_OUTPUT_SPECS),
+    so report-download tests exercise that generic behaviour via a tool that
+    still has one."""
+    run.workflow = Workflow(
+        name="single-prediction",
+        repo_url="https://github.com/test/single-prediction",
+        default_revision="main",
+        config_path="/config/single-prediction.config",
+    )
+    run.tool = "boltz"
+    run.submitted_form_data = {"mode": "boltz"}
 
 
 def test_coerce_and_extract_helpers():
@@ -395,159 +408,6 @@ async def test_ensure_completed_run_score_returns_none_when_spec_has_no_score(te
 
 
 @pytest.mark.asyncio
-async def test_sync_bindcraft_outputs_discovers_run_uuid_prefixed_snapshot_png(test_db):
-    user = AppUser(
-        auth0_user_id="auth0|snapshot-user",
-        name="Snapshot User",
-        email="snapshot-user@example.com",
-    )
-    run = WorkflowRun(
-        owner=user,
-        seqera_run_id="seqera-snapshot-1",
-        sample_id="sampleA",
-        work_dir="workdir-snapshot-1",
-    )
-    test_db.add_all([user, run])
-    test_db.commit()
-    run_id = run.id
-
-    snapshot_key = f"{run_id}/bindcraft/sampleA_0_output/sampleA_preview.png"
-
-    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
-        if prefix == f"{run_id}/bindcraft/sampleA_0_output/":
-            return [
-                {
-                    "key": snapshot_key,
-                    "size": 2048,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        return []
-
-    with patch(
-        "app.services.results_utils.list_s3_files",
-        new_callable=AsyncMock,
-        side_effect=_list_side_effect,
-    ):
-        discovered = await results_utils.sync_bindcraft_outputs(test_db, run)
-
-    assert snapshot_key in discovered
-    persisted = test_db.get(S3Object, snapshot_key)
-    assert persisted is not None
-    assert persisted.uri.endswith(snapshot_key)
-
-    run_output = test_db.scalar(
-        select(RunOutput).where(RunOutput.run_id == run_id, RunOutput.s3_object_id == snapshot_key)
-    )
-    assert run_output is not None
-    assert run_output.data_transfer_id is not None
-    output_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
-    assert output_transfer is not None
-    assert output_transfer.workflow_run_id == run_id
-    assert output_transfer.direction == "output"
-    assert output_transfer.provider == "s3"
-    assert output_transfer.source_location == f"s3://test-s3-bucket/{run_id}"
-    assert output_transfer.destination_location == persisted.uri
-    assert output_transfer.status == "completed"
-    link = (
-        test_db.query(RunOutput).filter_by(run_id=run.id, s3_object_id=snapshot_key).one_or_none()
-    )
-    assert link is not None
-
-
-@pytest.mark.asyncio
-async def test_get_result_snapshot_downloads_returns_tracked_snapshots(test_db):
-    user = AppUser(
-        auth0_user_id="auth0|snapshot-download-user",
-        name="Snapshot Download User",
-        email="snapshot-download-user@example.com",
-    )
-    run = WorkflowRun(
-        owner=user,
-        seqera_run_id="seqera-snapshot-download-1",
-        sample_id="sampleB",
-        work_dir="workdir-snapshot-download-1",
-    )
-    _configure_bindcraft_run(run)
-    test_db.add_all([user, run])
-    test_db.flush()
-    run_id = run.id
-
-    snapshot_keys = [
-        f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview.png",
-        f"{run_id}/bindcraft/sampleB_0_output/sampleB_preview_2.png",
-    ]
-    snapshots = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in snapshot_keys]
-    test_db.add_all(snapshots)
-    test_db.add_all([_make_run_output(run, key) for key in snapshot_keys])
-    test_db.commit()
-
-    with (
-        patch("app.services.results_utils.list_s3_files", new_callable=AsyncMock, return_value=[]),
-        patch(
-            "app.services.results_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
-        ) as mocked_presign,
-    ):
-        result = await results_utils.get_result_snapshot_downloads(test_db, run)
-
-    assert [item.category for item in result] == ["snapshot", "snapshot"]
-    assert [item.key for item in result] == snapshot_keys
-    assert mocked_presign.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_get_result_snapshot_downloads_discovers_snapshot_from_s3(test_db):
-    user = AppUser(
-        auth0_user_id="auth0|snapshot-discovery-user",
-        name="Snapshot Discovery User",
-        email="snapshot-discovery-user@example.com",
-    )
-    run = WorkflowRun(
-        owner=user,
-        seqera_run_id="seqera-snapshot-download-2",
-        sample_id="sampleC",
-        work_dir="workdir-snapshot-download-2",
-    )
-    _configure_bindcraft_run(run)
-    test_db.add_all([user, run])
-    test_db.commit()
-
-    snapshot_key = f"{run.id}/bindcraft/sampleC_0_output/sampleC_preview.png"
-
-    def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
-        if prefix == f"{run.id}/bindcraft/sampleC_0_output/":
-            return [
-                {
-                    "key": snapshot_key,
-                    "size": 2048,
-                    "last_modified": "2026-03-12T00:00:00Z",
-                    "bucket": "test-bucket",
-                }
-            ]
-        return []
-
-    with (
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            side_effect=_list_side_effect,
-        ),
-        patch(
-            "app.services.results_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
-        ),
-    ):
-        result = await results_utils.get_result_snapshot_downloads(test_db, run)
-
-    assert [item.key for item in result] == [snapshot_key]
-    assert [item.category for item in result] == ["snapshot"]
-
-
-@pytest.mark.asyncio
 async def test_get_result_snapshot_downloads_returns_empty_when_missing(test_db):
     user = AppUser(
         auth0_user_id="auth0|snapshot-missing-user",
@@ -614,11 +474,11 @@ async def test_get_result_report_download_returns_tracked_report(test_db):
         sample_id="sampleE",
         work_dir="workdir-report-download-1",
     )
-    _configure_bindcraft_run(run)
+    _configure_boltz_run(run)
     test_db.add_all([user, run])
     test_db.flush()
     run_id = run.id
-    report_key = f"{run_id}/generate/sampleE_report.html"
+    report_key = f"{run_id}/reports/sampleE_report.html"
     report = S3Object(
         object_key=report_key,
         uri=f"s3://bucket/{report_key}",
@@ -661,12 +521,12 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
         sample_id="sampleFast",
         work_dir="workdir-report-fast-path-1",
     )
-    _configure_bindcraft_run(run)
-    report_key = f"{run.id}/generate/sampleFast_report.html"
+    _configure_boltz_run(run)
+    report_key = f"{run.id}/reports/sampleFast_report.html"
 
     with (
         patch("app.services.results_utils._get_run_output_keys", return_value=[report_key]),
-        patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock()) as mocked_sync,
+        patch("app.services.results_utils.list_s3_files", new_callable=AsyncMock) as mocked_list,
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
@@ -677,7 +537,7 @@ async def test_get_result_report_download_skips_sync_when_report_is_already_trac
 
     assert result is not None
     assert result.key == report_key
-    mocked_sync.assert_not_awaited()
+    mocked_list.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -689,14 +549,13 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
     )
     _configure_bindcraft_run(run)
     tracked_keys = [
-        f"{run.id}/generate/sampleTracked_report.html",
-        f"{run.id}/ranker/sampleTracked_final_design_stats.csv",
-        f"{run.id}/ranker/sampleTracked_ranked/sampleTracked_model_1.pdb",
+        f"{run.id}/results/ranked_designs.csv",
+        f"{run.id}/results/ranked_designs/sampleTracked_model_1.pdb",
     ]
 
     with (
         patch("app.services.results_utils._get_run_output_keys", return_value=tracked_keys),
-        patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock()) as mocked_sync,
+        patch("app.services.results_utils.list_s3_files", new_callable=AsyncMock) as mocked_list,
         patch(
             "app.services.results_utils.generate_presigned_url",
             new_callable=AsyncMock,
@@ -706,9 +565,9 @@ async def test_get_result_output_downloads_skips_sync_when_required_outputs_are_
         result = await results_utils.get_result_output_downloads(test_db, run)
 
     # pdb is still returned individually, just flagged as hidden.
-    assert [item.category for item in result.downloads] == ["report", "stats_csv", "pdb"]
+    assert [item.category for item in result.downloads] == ["stats_csv", "pdb"]
     assert result.zip_categories == ["pdb"]
-    mocked_sync.assert_not_awaited()
+    mocked_list.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -726,13 +585,13 @@ async def test_get_result_report_download_discovers_report_from_s3(test_db):
     )
     test_db.add_all([user, run])
     test_db.flush()
-    _configure_bindcraft_run(run)
+    _configure_boltz_run(run)
     test_db.commit()
 
-    report_key = f"{run.id}/generate/sampleF_report.html"
+    report_key = f"{run.id}/reports/sampleF_report.html"
 
     def _list_side_effect(prefix: str, file_extension=None, **_kwargs):
-        if prefix == f"{run.id}/generate/":
+        if prefix == f"{run.id}/reports/":
             return [
                 {
                     "key": report_key,
@@ -771,17 +630,16 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
         sample_id="sampleG",
         work_dir="workdir-report-fallback-1",
     )
-    _configure_bindcraft_run(run)
+    _configure_boltz_run(run)
     test_db.commit()
-    report_key = f"{run.id}/generate/sampleG_report.html"
+    report_key = f"{run.id}/reports/sampleG_report.html"
 
     with (
-        patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock(return_value=[])),
         patch(
             "app.services.results_utils.list_s3_files",
             new_callable=AsyncMock,
             side_effect=lambda prefix, **_kwargs: (
-                [{"key": report_key}] if prefix.endswith("generate/") else []
+                [{"key": report_key}] if prefix.endswith("reports/") else []
             ),
         ),
         patch(
@@ -795,37 +653,6 @@ async def test_get_result_report_download_falls_back_to_listing_when_sync_finds_
     assert result is not None
     assert result.key == report_key
     assert result.category == "report"
-
-
-@pytest.mark.asyncio
-async def test_get_result_snapshot_downloads_fall_back_to_listing_when_sync_finds_nothing(test_db):
-    run = WorkflowRunFactory.build(
-        seqera_run_id="seqera-snapshot-fallback-1",
-        sample_id="sampleH",
-        work_dir="workdir-snapshot-fallback-1",
-    )
-    _configure_bindcraft_run(run)
-    snapshot_key = f"{run.id}/bindcraft/sampleH_0_output/sampleH_preview.png"
-
-    with (
-        patch("app.services.results_utils.sync_bindcraft_outputs", new=AsyncMock(return_value=[])),
-        patch(
-            "app.services.results_utils.list_s3_files",
-            new_callable=AsyncMock,
-            side_effect=lambda prefix, **_kwargs: (
-                [{"key": snapshot_key}] if prefix.endswith("sampleH_0_output/") else []
-            ),
-        ),
-        patch(
-            "app.services.results_utils.generate_presigned_url",
-            new_callable=AsyncMock,
-            side_effect=lambda key, **_kwargs: f"https://signed.example/{key}",
-        ),
-    ):
-        result = await results_utils.get_result_snapshot_downloads(test_db, run)
-
-    assert [item.key for item in result] == [snapshot_key]
-    assert [item.category for item in result] == ["snapshot"]
 
 
 @pytest.mark.asyncio

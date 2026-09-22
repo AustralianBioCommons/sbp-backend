@@ -629,54 +629,6 @@ def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
     )
 
 
-def classify_bindcraft_output_key(
-    key: str, sample_id: str | None = None
-) -> ClassifiedOutput | None:
-    normalized = key.strip()
-    if not normalized or normalized.endswith("/"):
-        return None
-
-    basename = normalized.rsplit("/", 1)[-1]
-    lowered = normalized.lower()
-
-    if basename.endswith("_final_design_stats.csv"):
-        return ClassifiedOutput(category="stats_csv", label=basename)
-    if "/generate/" in lowered and basename.lower().endswith(".html"):
-        return ClassifiedOutput(category="report", label=basename)
-    if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
-        return ClassifiedOutput(category="snapshot", label=basename)
-    if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
-        return ClassifiedOutput(category="pdb", label=basename)
-    return None
-
-
-def get_bindcraft_score_file(keys: list[str], sample_id: str | None) -> str | None:
-    for key in keys:
-        normalized = key.strip()
-        if not normalized:
-            continue
-        basename = normalized.rsplit("/", 1)[-1]
-        if basename.endswith("_final_design_stats.csv"):
-            return normalized
-    return None
-
-
-async def extract_bindcraft_max_score(
-    score_file: str, settings: Settings | None = None
-) -> float | None:
-    settings = settings or get_settings()
-    content = await read_s3_file(score_file, settings=settings)
-    csv_reader = csv.DictReader(StringIO(content))
-    values: list[float] = []
-
-    for row in csv_reader:
-        value = row.get("Average_i_pTM")
-        if value and value.strip():
-            values.append(float(value))
-
-    return max(values) if values else None
-
-
 def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single-prediction"
     score_pattern = rf"/{sample_id_pattern}/.*{sample_id_pattern}_ptm\.(tsv|csv)"
@@ -760,30 +712,6 @@ def classify_colabfold_proteinfold_output(
         stats_pattern=rf"/colabfold/{sample_id_pattern}/.+\.tsv",
         alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
     )
-
-
-def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
-    run_uuid = str(getattr(run, "id", "") or "").strip()
-    if not run_uuid:
-        return []
-
-    # Always include run-UUID-only prefixes; these do not depend on sample_id.
-    prefixes: list[str] = [
-        f"{run_uuid}/",
-        f"{run_uuid}/ranker/",
-        f"{run_uuid}/generate/",
-    ]
-
-    # Append bindcraft sample-specific prefixes only when a sample_id is available.
-    sample_id = get_sample_id_for_result(run)
-    if sample_id:
-        prefixes.extend(
-            [
-                f"{run_uuid}/bindcraft/{sample_id}_0_output/",
-            ]
-        )
-
-    return prefixes
 
 
 def build_boltz_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
@@ -1002,9 +930,9 @@ async def extract_rfdiffusion_max_score(
     row = next(csv_reader, None)
     if row is None:
         return None
-    value = row.get("af2_plddt_overall")
+    value = row.get("af2_iptm")
     if value and value.strip():
-        return float(value) / 100
+        return float(value)
     return None
 
 
@@ -1043,15 +971,18 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
 
 WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec]] = {
     "de-novo-design": {
+        # BindCraft and RFdiffusion are both just fold-design front ends for the
+        # same downstream ProteinDJ pipeline (sequence design, structure
+        # prediction, ranking), so they publish identical results/ outputs and
+        # share every output-collection function here.
         "bindcraft": WorkflowResultsSpec(
             kind="de-novo-design",
             tool="bindcraft",
-            required_categories={"report", "stats_csv", "pdb"},
-            get_prefixes=build_bindcraft_output_listing_prefixes,
-            get_score_file=get_bindcraft_score_file,
-            extract_max_score=extract_bindcraft_max_score,
-            classifier=classify_bindcraft_output_key,
-            supports_snapshots=True,
+            required_categories={"stats_csv", "pdb"},
+            get_prefixes=build_rfdiffusion_output_listing_prefixes,
+            get_score_file=get_rfdiffusion_score_file,
+            extract_max_score=extract_rfdiffusion_max_score,
+            classifier=classify_rfdiffusion_output_key,
             hidden_download_categories=frozenset({"pdb"}),
         ),
         "rfdiffusion": WorkflowResultsSpec(
@@ -1283,39 +1214,6 @@ async def sync_workflow_outputs(
         _sync_run_output_records(db, run, keys, settings=settings)
 
     return keys
-
-
-async def sync_bindcraft_outputs(
-    db: Session, run: WorkflowRun, settings: Settings | None = None
-) -> list[str]:
-    """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
-    settings = settings or get_settings()
-    discovered: list[str] = []
-    for prefix in build_bindcraft_output_listing_prefixes(run):
-        try:
-            files = await list_s3_files(prefix=prefix, settings=settings)
-        except (S3ConfigurationError, S3ServiceError) as exc:
-            logger.warning(
-                "Failed to list bindcraft outputs from S3",
-                extra={
-                    "runId": str(run.id),
-                    "seqeraRunId": run.seqera_run_id,
-                    "prefix": prefix,
-                    "error": str(exc),
-                },
-            )
-            continue
-        for item in files:
-            key = str(item.get("key", "")).strip()
-            if not key or key in discovered:
-                continue
-            if classify_bindcraft_output_key(key):
-                discovered.append(key)
-
-    if discovered:
-        _sync_run_output_records(db, run, discovered, settings=settings)
-
-    return discovered
 
 
 _CATEGORY_ORDER: dict[str, int] = {

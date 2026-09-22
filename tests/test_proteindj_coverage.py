@@ -180,7 +180,7 @@ def test_get_proteindj_default_params_all_fields():
         hotspot_residues="A20,A21",
         num_designs=5,
         design_length="100-150",
-        design_mode="binder_denovo",
+        design_mode="rfd_denovo",
     )
     assert params == {
         "out_dir": "s3://bucket/out",
@@ -188,7 +188,7 @@ def test_get_proteindj_default_params_all_fields():
         "hotspot_residues": "A20,A21",
         "num_designs": 5,
         "design_length": "100-150",
-        "design_mode": "binder_denovo",
+        "design_mode": "rfd_denovo",
     }
 
 
@@ -207,7 +207,7 @@ def test_get_proteindj_design_mode_bindcraft():
 
 
 def test_get_proteindj_design_mode_rfdiffusion():
-    assert get_proteindj_design_mode("rfdiffusion") == "binder_denovo"
+    assert get_proteindj_design_mode("rfdiffusion") == "rfd_denovo"
 
 
 def test_get_proteindj_design_mode_is_case_insensitive():
@@ -354,7 +354,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert "hotspot_residues: A20,A21" in params_text
     assert "num_designs: 5" in params_text
     assert "design_length: 100-150" in params_text
-    assert "design_mode: binder_denovo" in params_text
+    assert "design_mode: rfd_denovo" in params_text
 
     # The uploaded starting-pdb file gets its own Globus staging record, separate
     # from the main samplesheet input handled in the workflows route.
