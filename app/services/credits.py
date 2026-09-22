@@ -91,7 +91,7 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         category="single-prediction",
         displayName="Single Prediction",
         basis=CreditBasis.CONSTANT,
-        toolMultipliers={"boltz": 50, "colabfold": 50, "alphafold2": 200},
+        toolMultipliers={"boltz": 50, "colabfold": 50, "alphafold2": 50},
     ),
     WorkflowCreditConfig(
         category="bulk-prediction",

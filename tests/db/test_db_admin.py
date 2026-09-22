@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jinja2 import Environment, FileSystemLoader
+from sqlalchemy import select
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -19,9 +23,12 @@ from starlette_admin.exceptions import ActionFailed
 
 from app.config import get_settings
 from app.db.admin import (
+    _ADMIN_TEMPLATES_DIR,
+    _SAFE_RELATION_TEMPLATE,
     AppUserAdmin,
     DataTransferAdmin,
     NciServiceUnitsField,
+    RunInputAdmin,
     RunOutputAdmin,
     S3ObjectAdmin,
     SbpCreditField,
@@ -34,6 +41,7 @@ from app.db.admin import (
 )
 from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
 from app.routes.dependencies import get_db
+from app.services.job_sync import ForceResyncOutcome
 from tests.conftest import SettingsNoEnv
 
 DB_ADMIN_REQUIRED_ENV = {
@@ -124,6 +132,121 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit" in field_names
     assert "credit_updated_at" in field_names
     assert "credit_updated_by" in field_names
+
+
+def test_run_output_admin_search_matches_by_job_run_name(test_db) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|run-output-search",
+        name="Run Output Search",
+        email="run-output-search@example.com",
+    )
+    matching_run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="run-output-search-match",
+        work_dir="/tmp/run-output-search-match",
+        run_name="anne-staging-wf-sp",
+    )
+    other_run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="run-output-search-other",
+        work_dir="/tmp/run-output-search-other",
+        run_name="someone-else-job",
+    )
+    matching_object = S3Object(
+        object_key="run-output-search-match/results/report.html",
+        uri="s3://bucket/run-output-search-match/results/report.html",
+    )
+    other_object = S3Object(
+        object_key="run-output-search-other/results/report.html",
+        uri="s3://bucket/run-output-search-other/results/report.html",
+    )
+    test_db.add_all([user, matching_run, other_run, matching_object, other_object])
+    test_db.flush()
+    test_db.add_all(
+        [
+            RunOutput(run_id=matching_run.id, s3_object_id=matching_object.object_key),
+            RunOutput(run_id=other_run.id, s3_object_id=other_object.object_key),
+        ]
+    )
+    test_db.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.action = RequestAction.LIST
+
+    view = RunOutputAdmin(RunOutput)
+    query = view.get_search_query(request, "staging-wf-sp")
+    rows = test_db.scalars(select(RunOutput).where(query)).all()
+
+    assert {row.s3_object_id for row in rows} == {matching_object.object_key}
+
+
+def test_s3_object_relation_fields_use_safe_relation_template() -> None:
+    """Any field pointing at S3Object/RunInput/RunOutput (pks contain "/")
+    must use the safe template - the default one 500s on those."""
+
+    def _field(fields: list, name: str):
+        return next(f for f in fields if getattr(f, "name", None) == name)
+
+    assert _field(RunOutputAdmin.fields, "s3_object").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(RunInputAdmin.fields, "s3_object").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(S3ObjectAdmin.fields, "run_inputs").display_template == _SAFE_RELATION_TEMPLATE
+    assert _field(S3ObjectAdmin.fields, "run_outputs").display_template == _SAFE_RELATION_TEMPLATE
+    # WorkflowRun's pk is a plain UUID, so it doesn't need the override.
+    assert _field(RunOutputAdmin.fields, "run").display_template != _SAFE_RELATION_TEMPLATE
+
+
+def test_safe_relation_template_renders_href_from_detail_url_not_raw_pk() -> None:
+    """Must build the href from the pre-computed _meta.detailUrl, not the
+    foreign model's raw (slash-containing) pk. A long repr (a full S3 key)
+    must be truncated with CSS, not left to overflow the page - full value
+    stays reachable via the title attribute."""
+    env = Environment(loader=FileSystemLoader(_ADMIN_TEMPLATES_DIR))
+    template = env.get_template(_SAFE_RELATION_TEMPLATE)
+
+    long_key = "run-id/colabfold/job/some_very_long_descriptive_output_filename.tsv"
+    data = {
+        "object_key": long_key,
+        "_meta": {
+            "repr": long_key,
+            "detailUrl": "http://testserver/admin/s3-object/detail/ENCODED",
+        },
+    }
+    html = template.render(field=SimpleNamespace(multiple=False), data=data)
+
+    assert 'href="http://testserver/admin/s3-object/detail/ENCODED"' in html
+    assert "text-truncate" in html
+    assert f'title="{long_key}"' in html
+    # text-truncate alone doesn't clip inside a flex container (the item's
+    # default min-width:auto keeps it at full content width) - min-width:0
+    # is required for max-width to actually take effect.
+    assert "min-width: 0" in html
+
+
+def test_detail_template_truncates_card_title_pk() -> None:
+    """Overridden from starlette_admin's own detail.html: the page heading
+    (`#{{ obj[pk] }}`) is a flex item next to the Edit/Delete actions and
+    used to render a long pk (e.g. a composite RunOutput pk with an S3 key
+    in it) unbounded, pushing those actions out of frame."""
+    detail_template_path = Path(_ADMIN_TEMPLATES_DIR) / "detail.html"
+    html = detail_template_path.read_text()
+
+    assert 'class="card-title text-truncate"' in html
+    assert "min-width: 0" in html
+    assert 'title="{{ obj[pk] }}"' in html
 
 
 def test_data_transfer_admin_includes_expected_columns() -> None:
@@ -388,6 +511,166 @@ def test_workflow_run_admin_sbp_credit_not_sortable() -> None:
     # header must not offer to sort by it (that would 500 — starlette-admin
     # would try to build an ORDER BY clause against a nonexistent column).
     assert "sbp_credit" not in WorkflowRunAdmin.sortable_fields
+
+
+def _admin_action_request(action: RequestAction) -> Request:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+    request.state.action = action
+    return request
+
+
+async def test_workflow_run_admin_force_resync_row_action_resyncs_succeeded_run(
+    test_db, mocker
+) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-row",
+        name="Force Resync Row",
+        email="force-resync-row@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-row-run",
+        work_dir="/tmp/force-resync-row-run",
+        seqera_final_status="SUCCEEDED",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    force_resync = mocker.patch(
+        "app.db.admin.force_resync_run_outputs",
+        new_callable=AsyncMock,
+        return_value=ForceResyncOutcome(ready=True, outputs_synced=3),
+    )
+
+    request = _admin_action_request(RequestAction.ROW_ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    message = await view.handle_row_action(request, str(run.id), "force_resync_outputs")
+
+    assert message == "1 run(s) resynced (3 output(s) found)."
+    force_resync.assert_called_once()
+    args, _kwargs = force_resync.call_args
+    assert args[0] is test_db
+    assert args[1].id == run.id
+
+
+async def test_workflow_run_admin_force_resync_row_action_rejects_non_succeeded_run(
+    test_db, mocker
+) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-row-reject",
+        name="Force Resync Row Reject",
+        email="force-resync-row-reject@example.com",
+    )
+    run = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-row-reject-run",
+        work_dir="/tmp/force-resync-row-reject-run",
+        seqera_final_status="RUNNING",
+    )
+    test_db.add_all([user, run])
+    test_db.commit()
+
+    force_resync = mocker.patch("app.db.admin.force_resync_run_outputs", new_callable=AsyncMock)
+
+    request = _admin_action_request(RequestAction.ROW_ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    with pytest.raises(ActionFailed, match="only SUCCEEDED runs"):
+        await view.handle_row_action(request, str(run.id), "force_resync_outputs")
+
+    force_resync.assert_not_called()
+
+
+async def test_workflow_run_admin_force_resync_batch_action_reports_counts(test_db, mocker) -> None:
+    user = AppUser(
+        id=uuid4(),
+        auth0_user_id="auth0|force-resync-batch",
+        name="Force Resync Batch",
+        email="force-resync-batch@example.com",
+    )
+    succeeded_ok = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-ok",
+        work_dir="/tmp/force-resync-batch-ok",
+        seqera_final_status="SUCCEEDED",
+    )
+    succeeded_err = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-err",
+        work_dir="/tmp/force-resync-batch-err",
+        seqera_final_status="SUCCEEDED",
+    )
+    succeeded_new_transfer = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-new-transfer",
+        work_dir="/tmp/force-resync-batch-new-transfer",
+        seqera_final_status="SUCCEEDED",
+    )
+    still_running = WorkflowRun(
+        id=uuid4(),
+        owner_user_id=user.id,
+        seqera_run_id="force-resync-batch-running",
+        work_dir="/tmp/force-resync-batch-running",
+        seqera_final_status="RUNNING",
+    )
+    test_db.add_all([user, succeeded_ok, succeeded_err, succeeded_new_transfer, still_running])
+    test_db.commit()
+
+    async def fake_force_resync(db, run, *, suppress_s3_errors=True, settings=None):
+        if run.id == succeeded_ok.id:
+            return ForceResyncOutcome(ready=True, outputs_synced=2)
+        if run.id == succeeded_err.id:
+            raise RuntimeError("s3 boom")
+        if run.id == succeeded_new_transfer.id:
+            return ForceResyncOutcome(ready=False, outputs_synced=0)
+        raise AssertionError("force_resync_run_outputs called for a skipped run")
+
+    mocker.patch(
+        "app.db.admin.force_resync_run_outputs",
+        new=AsyncMock(side_effect=fake_force_resync),
+    )
+
+    request = _admin_action_request(RequestAction.ACTION)
+    request.state.session = test_db
+
+    view = WorkflowRunAdmin(WorkflowRun)
+    message = await view.handle_action(
+        request,
+        [
+            str(succeeded_ok.id),
+            str(succeeded_err.id),
+            str(succeeded_new_transfer.id),
+            str(still_running.id),
+        ],
+        "force_resync_outputs",
+    )
+
+    assert message == (
+        "1 run(s) resynced (2 output(s) found), "
+        "1 submitted new output transfer(s), not yet ready to resync, "
+        "1 skipped (not completed), 1 errored."
+    )
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""Proteinfold workflow executor for Seqera Platform (modeled after bindflow)."""
+"""Proteinfold workflow executor for Seqera Platform."""
 
 from __future__ import annotations
 

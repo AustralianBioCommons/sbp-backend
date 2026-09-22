@@ -21,7 +21,12 @@ from ..schemas.workflows.shared import (
     map_pipeline_status_to_ui,
 )
 from .job_utils import ensure_completed_run_score, extract_pipeline_status, sync_service_usage
-from .results_utils import get_output_spec, sync_workflow_outputs
+from .results_utils import (
+    get_output_spec,
+    reset_completed_output_transfers,
+    run_has_missing_required_categories,
+    sync_workflow_outputs,
+)
 from .seqera import describe_workflow
 from .seqera_errors import SeqeraAPIError
 
@@ -311,11 +316,62 @@ async def finalize_completed_workflow_run(
         run,
         suppress_s3_errors=suppress_s3_errors,
         settings=settings,
+        force=force,
     )
     run.sync_completed_at = datetime.now(tz=UTC)
     db.add(run)
     db.commit()
     return outputs_synced
+
+
+@dataclass(frozen=True)
+class ForceResyncOutcome:
+    """Outcome of a force-resync attempt for one completed run."""
+
+    # False if a transfer was just submitted (or still in flight) and
+    # results weren't re-synced this pass.
+    ready: bool
+    outputs_synced: int
+
+
+async def force_resync_run_outputs(
+    db: Session,
+    run: WorkflowRun,
+    *,
+    suppress_s3_errors: bool = True,
+    settings: Settings | None = None,
+) -> ForceResyncOutcome:
+    """Force a completed run to pick up results-utils spec changes.
+
+    Submits any output transfer a spec change now requires, then re-scans
+    S3 and resyncs metadata even if already synced. If a required category
+    is still missing afterwards (e.g. a file was deleted directly from S3),
+    every completed output transfer is reset to pending for the scheduler
+    to redo. Unlike sync_workflow_run(force=True), never re-polls Seqera -
+    callers must confirm seqera_final_status is SUCCEEDED first.
+    """
+    output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
+    if not output_transfer_state.ready:
+        return ForceResyncOutcome(ready=False, outputs_synced=0)
+
+    outputs_synced = await finalize_completed_workflow_run(
+        db,
+        run,
+        force=True,
+        suppress_s3_errors=suppress_s3_errors,
+        settings=settings,
+    )
+
+    if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
+        # Deliberately does NOT clear run.sync_completed_at: every results
+        # route treats a null sync_completed_at as "nothing is ready yet"
+        # (is_syncing_results), which would hide this run's other, already-
+        # synced outputs while the reset transfer is in flight. The tradeoff
+        # is that this run won't reappear in the scheduler's own queue -
+        # force-resync must be run again once that transfer completes.
+        return ForceResyncOutcome(ready=False, outputs_synced=outputs_synced)
+
+    return ForceResyncOutcome(ready=True, outputs_synced=outputs_synced)
 
 
 def check_all_output_transfers_completed(db: Session, run: WorkflowRun) -> bool:
@@ -339,6 +395,7 @@ async def _sync_completed_run_results(
     *,
     suppress_s3_errors: bool,
     settings: Settings | None = None,
+    force: bool = False,
 ) -> int:
     try:
         spec = get_output_spec(run)
@@ -353,8 +410,8 @@ async def _sync_completed_run_results(
             spec=spec,
             suppress_s3_errors=suppress_s3_errors,
         )
-        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value)
-        await sync_service_usage(db, run, UIStatus.COMPLETED.value)
+        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value, force=force)
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value, force=force)
     else:
         synced_keys = await sync_workflow_outputs(
             db,
@@ -363,8 +420,10 @@ async def _sync_completed_run_results(
             suppress_s3_errors=suppress_s3_errors,
             settings=settings,
         )
-        await ensure_completed_run_score(db, run, UIStatus.COMPLETED.value, settings=settings)
-        await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings)
+        await ensure_completed_run_score(
+            db, run, UIStatus.COMPLETED.value, settings=settings, force=force
+        )
+        await sync_service_usage(db, run, UIStatus.COMPLETED.value, settings=settings, force=force)
     return len(synced_keys)
 
 

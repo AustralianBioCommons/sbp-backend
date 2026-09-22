@@ -92,7 +92,11 @@ class WorkflowResultsSpec:
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
-        return _non_root_output_prefixes(run, self.get_prefixes(run))
+        prefixes = _non_root_output_prefixes(run, self.get_prefixes(run))
+        # Also include the UsageReport.csv
+        if run.id:
+            prefixes.append(f"{run.id}/UsageReport.csv")
+        return prefixes
 
     def get_transfer_items(
         self,
@@ -440,6 +444,38 @@ def s3_uri_to_key(uri: str | None) -> str | None:
     return parts[3].strip() or None
 
 
+def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
+    """Whether this run's currently recorded RunOutputs miss a required category."""
+    try:
+        spec = get_output_spec(run)
+    except ValueError:
+        return False
+    outputs = collect_classified_outputs(db, run, spec)
+    return bool(missing_required_categories(outputs, spec))
+
+
+def reset_completed_output_transfers(db: Session, run: WorkflowRun) -> int:
+    """Reset this run's completed Globus output transfers to pending.
+
+    Used when a required category is still missing after a resync - a
+    "completed" transfer only proves it copied successfully at the time,
+    not that the file is still there now. Returns the number reset.
+    """
+    completed_transfers = db.scalars(
+        select(DataTransfer).where(
+            DataTransfer.workflow_run_id == run.id,
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+            DataTransfer.status == "completed",
+        )
+    ).all()
+    for transfer in completed_transfers:
+        transfer.reset_to_pending(session=db, commit=False)
+    if completed_transfers:
+        db.commit()
+    return len(completed_transfers)
+
+
 def _non_root_output_prefixes(run: WorkflowRun, prefixes: list[str]) -> list[str]:
     """Return run-scoped output prefixes, excluding the broad run root prefix."""
     if not run.id:
@@ -593,54 +629,6 @@ def get_output_spec(run: WorkflowRun) -> WorkflowResultsSpec:
     )
 
 
-def classify_bindcraft_output_key(
-    key: str, sample_id: str | None = None
-) -> ClassifiedOutput | None:
-    normalized = key.strip()
-    if not normalized or normalized.endswith("/"):
-        return None
-
-    basename = normalized.rsplit("/", 1)[-1]
-    lowered = normalized.lower()
-
-    if basename.endswith("_final_design_stats.csv"):
-        return ClassifiedOutput(category="stats_csv", label=basename)
-    if "/generate/" in lowered and basename.lower().endswith(".html"):
-        return ClassifiedOutput(category="report", label=basename)
-    if "/bindcraft/" in lowered and "_0_output/" in lowered and basename.lower().endswith(".png"):
-        return ClassifiedOutput(category="snapshot", label=basename)
-    if "/ranker/" in lowered and "_ranked/" in lowered and basename.lower().endswith(".pdb"):
-        return ClassifiedOutput(category="pdb", label=basename)
-    return None
-
-
-def get_bindcraft_score_file(keys: list[str], sample_id: str | None) -> str | None:
-    for key in keys:
-        normalized = key.strip()
-        if not normalized:
-            continue
-        basename = normalized.rsplit("/", 1)[-1]
-        if basename.endswith("_final_design_stats.csv"):
-            return normalized
-    return None
-
-
-async def extract_bindcraft_max_score(
-    score_file: str, settings: Settings | None = None
-) -> float | None:
-    settings = settings or get_settings()
-    content = await read_s3_file(score_file, settings=settings)
-    csv_reader = csv.DictReader(StringIO(content))
-    values: list[float] = []
-
-    for row in csv_reader:
-        value = row.get("Average_i_pTM")
-        if value and value.strip():
-            values.append(float(value))
-
-    return max(values) if values else None
-
-
 def get_proteinfold_score_file(keys: list[str], sample_id: str | None) -> str | None:
     sample_id_pattern = re.escape(sample_id) if sample_id else "single-prediction"
     score_pattern = rf"/{sample_id_pattern}/.*{sample_id_pattern}_ptm\.(tsv|csv)"
@@ -673,6 +661,11 @@ def classify_proteinfold_output_key(
     if not normalized or normalized.endswith("/"):
         return None
     filename = normalized.rsplit("/", 1)[-1]
+
+    # plddt.tsv is no longer surfaced to the portal; plddt is already
+    # captured in the per-model report/structure outputs.
+    if filename.lower().endswith("_plddt.tsv"):
+        return None
 
     if re.search(report_pattern, normalized):
         return ClassifiedOutput(category="report", label=filename)
@@ -719,30 +712,6 @@ def classify_colabfold_proteinfold_output(
         stats_pattern=rf"/colabfold/{sample_id_pattern}/.+\.tsv",
         alignment_pattern=rf"/mmseqs/{sample_id_pattern}\.a3m",
     )
-
-
-def build_bindcraft_output_listing_prefixes(run: WorkflowRun) -> list[str]:
-    run_uuid = str(getattr(run, "id", "") or "").strip()
-    if not run_uuid:
-        return []
-
-    # Always include run-UUID-only prefixes; these do not depend on sample_id.
-    prefixes: list[str] = [
-        f"{run_uuid}/",
-        f"{run_uuid}/ranker/",
-        f"{run_uuid}/generate/",
-    ]
-
-    # Append bindcraft sample-specific prefixes only when a sample_id is available.
-    sample_id = get_sample_id_for_result(run)
-    if sample_id:
-        prefixes.extend(
-            [
-                f"{run_uuid}/bindcraft/{sample_id}_0_output/",
-            ]
-        )
-
-    return prefixes
 
 
 def build_boltz_proteinfold_output_listing_prefixes(run: WorkflowRun) -> list[str]:
@@ -961,9 +930,9 @@ async def extract_rfdiffusion_max_score(
     row = next(csv_reader, None)
     if row is None:
         return None
-    value = row.get("af2_plddt_overall")
+    value = row.get("af2_iptm")
     if value and value.strip():
-        return float(value) / 100
+        return float(value)
     return None
 
 
@@ -1002,15 +971,18 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
 
 WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec]] = {
     "de-novo-design": {
+        # BindCraft and RFdiffusion are both just fold-design front ends for the
+        # same downstream ProteinDJ pipeline (sequence design, structure
+        # prediction, ranking), so they publish identical results/ outputs and
+        # share every output-collection function here.
         "bindcraft": WorkflowResultsSpec(
             kind="de-novo-design",
             tool="bindcraft",
-            required_categories={"report", "stats_csv", "pdb"},
-            get_prefixes=build_bindcraft_output_listing_prefixes,
-            get_score_file=get_bindcraft_score_file,
-            extract_max_score=extract_bindcraft_max_score,
-            classifier=classify_bindcraft_output_key,
-            supports_snapshots=True,
+            required_categories={"stats_csv", "pdb"},
+            get_prefixes=build_rfdiffusion_output_listing_prefixes,
+            get_score_file=get_rfdiffusion_score_file,
+            extract_max_score=extract_rfdiffusion_max_score,
+            classifier=classify_rfdiffusion_output_key,
             hidden_download_categories=frozenset({"pdb"}),
         ),
         "rfdiffusion": WorkflowResultsSpec(
@@ -1072,6 +1044,40 @@ def missing_required_categories(
     return set(spec.required_categories) - found
 
 
+_PAE_TSV_RANK_PATTERN = re.compile(r"^(?P<prefix>.*)_(?P<rank>\d+)_pae\.tsv$", re.IGNORECASE)
+
+
+def _drop_non_lowest_rank_pae(outputs: dict[str, ClassifiedOutput]) -> dict[str, ClassifiedOutput]:
+    """Keep only the lowest-ranked ``*_pae.tsv`` per sample directory.
+
+    Proteinfold tools publish one PAE file per predicted model rank, but the
+    portal only needs the top-ranked model's PAE. Different tools number
+    their lowest rank 0 or 1, so pick the minimum found rather than a fixed
+    number.
+    """
+    lowest_rank_by_group: dict[str, tuple[int, str]] = {}
+    pae_keys: set[str] = set()
+    for key, output in outputs.items():
+        if output.category != "stats_csv":
+            continue
+        match = _PAE_TSV_RANK_PATTERN.match(output.label)
+        if not match:
+            continue
+        pae_keys.add(key)
+        directory = key.rsplit("/", 1)[0] if "/" in key else ""
+        group = f"{directory}::{match.group('prefix')}"
+        rank = int(match.group("rank"))
+        current = lowest_rank_by_group.get(group)
+        if current is None or rank < current[0]:
+            lowest_rank_by_group[group] = (rank, key)
+
+    keep_keys = {key for _, key in lowest_rank_by_group.values()}
+    drop_keys = pae_keys - keep_keys
+    if not drop_keys:
+        return outputs
+    return {key: output for key, output in outputs.items() if key not in drop_keys}
+
+
 def collect_classified_outputs(
     db: Session,
     run: WorkflowRun,
@@ -1083,7 +1089,7 @@ def collect_classified_outputs(
         classified = spec.classify_output(key, sample_id)
         if classified:
             outputs[key] = classified
-    return outputs
+    return _drop_non_lowest_rank_pae(outputs)
 
 
 def _filter_outputs_by_category(
@@ -1108,8 +1114,8 @@ def _sync_run_output_records(
     changed = False
 
     # Every workflow config publishes its results under this same run-scoped
-    # prefix, whether the pipeline calls the param "outdir" (bindflow,
-    # proteinfold, wisps) or "out_dir" (proteindj) - the value is identical.
+    # prefix, whether the pipeline calls the param "outdir" (proteinfold,
+    # wisps) or "out_dir" (proteindj) - the value is identical.
     run_outdir = _build_s3_uri(str(run.id), settings=settings)
 
     for key in keys:
@@ -1132,6 +1138,8 @@ def _sync_run_output_records(
             source_location=run_outdir,
             destination_location=s3_object.uri,
             recursive=False,
+            # Bookkeeping link, not a real job - the key was just found in S3.
+            status="completed",
         )
         db.add(output_transfer)
         db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))
@@ -1182,7 +1190,7 @@ async def list_workflow_outputs_from_s3(
             if classified is not None:
                 outputs[key] = classified
 
-    return outputs
+    return _drop_non_lowest_rank_pae(outputs)
 
 
 async def sync_workflow_outputs(
@@ -1206,39 +1214,6 @@ async def sync_workflow_outputs(
         _sync_run_output_records(db, run, keys, settings=settings)
 
     return keys
-
-
-async def sync_bindcraft_outputs(
-    db: Session, run: WorkflowRun, settings: Settings | None = None
-) -> list[str]:
-    """Discover bindcraft result artifacts in S3 and persist them as run outputs."""
-    settings = settings or get_settings()
-    discovered: list[str] = []
-    for prefix in build_bindcraft_output_listing_prefixes(run):
-        try:
-            files = await list_s3_files(prefix=prefix, settings=settings)
-        except (S3ConfigurationError, S3ServiceError) as exc:
-            logger.warning(
-                "Failed to list bindcraft outputs from S3",
-                extra={
-                    "runId": str(run.id),
-                    "seqeraRunId": run.seqera_run_id,
-                    "prefix": prefix,
-                    "error": str(exc),
-                },
-            )
-            continue
-        for item in files:
-            key = str(item.get("key", "")).strip()
-            if not key or key in discovered:
-                continue
-            if classify_bindcraft_output_key(key):
-                discovered.append(key)
-
-    if discovered:
-        _sync_run_output_records(db, run, discovered, settings=settings)
-
-    return discovered
 
 
 _CATEGORY_ORDER: dict[str, int] = {

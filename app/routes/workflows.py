@@ -44,7 +44,6 @@ from ..schemas.workflows.single_prediction import (
     SinglePredictionEntity,
     validate_single_prediction_entities,
 )
-from ..services.bindflow_executor import prepare_bindflow_workflow, resolve_bindflow_asset_path
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -149,8 +148,8 @@ def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | Non
     """Credit-cost quantity for a launch. Sourced from max_trajectories (the
     "Number of Trajectories" form field) rather than number_of_final_designs,
     since the latter is no longer user-facing for bindcraft — it's derived
-    server-side when the bindflow samplesheet is built (see
-    datasets.upload_csv_to_s3) and isn't present in the launch payload.
+    server-side when the samplesheet is built (see datasets.upload_csv_to_s3)
+    and isn't present in the launch payload.
     """
     if not isinstance(form_data, WorkflowFormData):
         return None
@@ -214,11 +213,11 @@ async def _stage_referenced_samplesheet_file(
     return the s3InputKey of a corrected samplesheet with that column rewritten
     to the local path.
 
-    Some samplesheets (bindcraft's starting_pdb, proteinfold's fasta) carry a raw
-    S3 URI to a separately-uploaded file. Globus stages the samplesheet CSV to
-    Gadi as-is, but the pipeline reads that column as a local file path, not an
-    S3 URI (unlike ProteinDJ, which takes its pdb path as a direct pipeline
-    param, never via a samplesheet) - so the referenced file must be staged
+    Some samplesheets (proteinfold's fasta) carry a raw S3 URI to a
+    separately-uploaded file. Globus stages the samplesheet CSV to Gadi as-is,
+    but the pipeline reads that column as a local file path, not an S3 URI
+    (unlike ProteinDJ, which takes its pdb path as a direct pipeline param,
+    never via a samplesheet) - so the referenced file must be staged
     separately and the samplesheet corrected to point at where it lands.
     """
     try:
@@ -274,64 +273,6 @@ async def _stage_referenced_samplesheet_file(
         )
     )
     samplesheet_row[field_name] = staged_location
-    try:
-        csv_upload = await upload_csv_to_s3(samplesheet_row)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {exc}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to re-upload corrected samplesheet: {exc}",
-        ) from exc
-    return csv_upload.file_key
-
-
-async def _rewrite_bindflow_settings_asset_columns(
-    *, s3_input_key: str, repo_assets_path: str
-) -> str:
-    """Fill in settings_filters/settings_advanced samplesheet columns with the
-    local Gadi path to bindflow's bundled default JSON files - the frontend
-    leaves these fields unset (see sbp-portal's de-novo-design.ts), so
-    resolve_bindflow_asset_path fills in the known default; any other,
-    genuinely custom value is left untouched.
-
-    Unlike starting_pdb (_stage_referenced_samplesheet_file, above) these
-    columns don't need their own Globus transfer or RunInput/DataTransfer
-    bookkeeping - they reference files that are already part of the workflow
-    repo, staged as a whole. This is a plain string rewrite, re-uploaded only
-    if something actually changed.
-    """
-    try:
-        samplesheet_rows = await read_csv_from_s3(s3_input_key)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {exc}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
-        ) from exc
-    if not samplesheet_rows:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Samplesheet at s3InputKey is empty.",
-        )
-    samplesheet_row = samplesheet_rows[0]
-    changed = False
-    for field_name in ("settings_filters", "settings_advanced"):
-        resolved = resolve_bindflow_asset_path(
-            field_name, samplesheet_row.get(field_name), repo_assets_path=repo_assets_path
-        )
-        if resolved is not None and resolved != samplesheet_row.get(field_name):
-            samplesheet_row[field_name] = resolved
-            changed = True
-    if not changed:
-        return s3_input_key
     try:
         csv_upload = await upload_csv_to_s3(samplesheet_row)
     except S3ConfigurationError as exc:
@@ -484,21 +425,14 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
-    # Staged for repo_assets_path below - our own backend code reads
-    # pipeline-bundled asset files (e.g. bindcraft settings) directly off disk.
     try:
-        repo_staging_locations = ensure_repo_staging_requested(
-            db_session, workflow, settings=settings
-        )
+        ensure_repo_staging_requested(db_session, workflow, settings=settings)
     except RepoStagingError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
     pipeline_url = workflow.repo_url
-    # gadi_path and assets_gadi_path are the same checkout (see
-    # build_repo_gadi_path, _rewrite_bindflow_settings_asset_columns).
-    repo_assets_path = repo_staging_locations.assets_gadi_path
 
     user = db_session.execute(
         select(AppUser.email).where(AppUser.id == current_user_id)
@@ -583,28 +517,10 @@ async def launch_workflow(
     # Validation above must run before any of this, since it involves real S3/Globus
     # I/O that a malformed request shouldn't pay the cost of (and shouldn't be able
     # to trigger before its own formData is validated).
-    is_rfdiffusion_launch = (
-        workflow_name in ("de-novo-design", "bindflow", "bindcraft")
-        and selected_tool.lower() == "rfdiffusion"
-    )
-    is_bindcraft_launch = (
-        workflow_name in ("de-novo-design", "bindflow", "bindcraft") and not is_rfdiffusion_launch
-    )
+    is_de_novo_design_launch = workflow_name in ("de-novo-design", "bindflow", "bindcraft")
     is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
     is_wisps_launch = workflow_name in ("interaction-screening", "bulk-prediction")
-    if is_bindcraft_launch:
-        s3_input_key = await _stage_referenced_samplesheet_file(
-            db_session=db_session,
-            s3_input_key=s3_input_key,
-            field_name="starting_pdb",
-            run_id=run_id,
-            workflow_name=workflow_name,
-            globus_settings=settings.globus,
-        )
-        s3_input_key = await _rewrite_bindflow_settings_asset_columns(
-            s3_input_key=s3_input_key, repo_assets_path=repo_assets_path
-        )
-    elif is_proteinfold_launch:
+    if is_proteinfold_launch:
         s3_input_key = await _stage_referenced_samplesheet_file(
             db_session=db_session,
             s3_input_key=s3_input_key,
@@ -624,14 +540,15 @@ async def launch_workflow(
         )
 
     staged_input_location: str | None = None
-    if not is_rfdiffusion_launch:
-        # rfdiffusion (ProteinDJ) has no samplesheet: s3InputKey for it is the
-        # starting PDB's own S3 URI, not a bare key (see de-novo-design.ts, which
-        # skips the samplesheet upload for this tool and reuses starting_pdb's URI
-        # directly). prepare_proteindj_workflow stages that PDB itself via its own
-        # DataTransfer, so staging "s3InputKey" here too would both double-prefix
-        # the URI (it's already a full s3:// URI, not a bare key) and create a
-        # second, unused DataTransfer for the same file.
+    if not is_de_novo_design_launch:
+        # de-novo-design (ProteinDJ, both tools) has no samplesheet: s3InputKey
+        # for it is the starting PDB's own S3 URI, not a bare key (see
+        # de-novo-design.ts, which skips the samplesheet upload for rfdiffusion
+        # and reuses starting_pdb's URI directly). prepare_proteindj_workflow
+        # stages that PDB itself via its own DataTransfer, so staging
+        # "s3InputKey" here too would both double-prefix the URI (it's already
+        # a full s3:// URI, not a bare key) and create a second, unused
+        # DataTransfer for the same file.
         s3_bucket = settings.aws.s3_bucket
         s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
         if db_session.get(S3Object, s3_input_key) is None:
@@ -680,39 +597,22 @@ async def launch_workflow(
                 staged_input_location=staged_input_location,
             )
         elif workflow_name in ("de-novo-design", "bindflow", "bindcraft"):
-            # de-novo-design → bindflow executor (bindcraft) or proteindj executor
-            # (rfdiffusion), depending on the chosen algorithm.
-            tool_mode = selected_tool
+            # de-novo-design → proteindj executor for both tools, distinguished
+            # only by the design_mode prepare_proteindj_workflow computes from
+            # the selected tool (see get_proteindj_design_mode).
             de_novo_launch_form = payload.launch.model_copy(update={"runName": seqera_run_name})
-            if tool_mode.lower() == "rfdiffusion":
-                queued_job = await prepare_proteindj_workflow(
-                    de_novo_launch_form,
-                    settings=settings,
-                    db_session=db_session,
-                    workflow_run=workflow_run,
-                    pipeline=pipeline_url,
-                    config_path=workflow.config_path,
-                    revision=workflow.default_revision,
-                    output_id=str(run_id),
-                    form_data=payload.formData,
-                    user_details=user_details,
-                )
-            else:
-                assert staged_input_location is not None
-                queued_job = await prepare_bindflow_workflow(
-                    de_novo_launch_form,
-                    settings=settings,
-                    db_session=db_session,
-                    workflow_run=workflow_run,
-                    pipeline=pipeline_url,
-                    config_path=workflow.config_path,
-                    revision=workflow.default_revision,
-                    output_id=str(run_id),
-                    form_data=payload.formData,
-                    user_details=user_details,
-                    staged_input_location=staged_input_location,
-                    repo_assets_path=repo_assets_path,
-                )
+            queued_job = await prepare_proteindj_workflow(
+                de_novo_launch_form,
+                settings=settings,
+                db_session=db_session,
+                workflow_run=workflow_run,
+                pipeline=pipeline_url,
+                config_path=workflow.config_path,
+                revision=workflow.default_revision,
+                output_id=str(run_id),
+                form_data=payload.formData,
+                user_details=user_details,
+            )
         elif workflow_name in ("interaction-screening", "bulk-prediction"):
             assert wisps_form_data is not None
             assert staged_input_location is not None

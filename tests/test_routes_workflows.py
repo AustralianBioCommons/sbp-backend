@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import QueuedJob
-from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
@@ -33,22 +33,6 @@ def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s
 
 
 async def _queue_job_for_route_prepare(form, **kwargs):
-    db_session = kwargs["db_session"]
-    workflow_run = kwargs["workflow_run"]
-    queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
-        workflow_run=workflow_run,
-        launch_payload={"runName": form.runName},
-        status="pending",
-    )
-    db_session.add(queued_job)
-    db_session.flush()
-    return queued_job
-
-
-async def _queue_job_for_proteindj_route_prepare(form, **kwargs):
-    # proteindj has no samplesheet, so prepare_proteindj_workflow takes no
-    # s3_input_key positional arg (unlike prepare_bindflow_workflow above).
     db_session = kwargs["db_session"]
     workflow_run = kwargs["workflow_run"]
     queued_job = QueuedJob(
@@ -93,8 +77,7 @@ def role_check_client(test_engine):
             description="Test workflow",
             repo_url="https://github.com/test/repo",
             default_revision="dev",
-            config_path="/some/bindflow.config",
-            prerun_script_path="/some/bindflow-prerun.sh",
+            config_path="/some/proteindj.config",
         )
     )
     setup_session.commit()
@@ -113,28 +96,22 @@ def role_check_client(test_engine):
         yield c
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_success_without_dataset(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
-):
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_engine):
     """Test successful workflow launch without dataset."""
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     payload = {
         "launch": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "runName": "test-run",
         },
-        "s3InputKey": "inputs/samplesheets/test.csv",
+        "s3InputKey": "inputs/pdb/target.pdb",
         "formData": {
             "workflow": "de-novo-design",
             "tool": "bindcraft",
             "id": "s1",
             "binder_name": "PDL1",
+            "starting_pdb": "s3://test-bucket/pdb/target.pdb",
             "max_trajectories": 20,
         },
     }
@@ -182,94 +159,23 @@ def test_launch_success_without_dataset(
         assert queued_job is not None
         assert queued_job.status == "staging"
 
-        run_input = db.scalar(select(RunInput).where(RunInput.run_id == created_run.id))
-        assert run_input is not None
-        assert run_input.data_transfer_id is not None
-        input_transfer = db.scalar(
-            select(DataTransfer).where(DataTransfer.id == run_input.data_transfer_id)
+        # ProteinDJ (both tools) stages its own PDB inside prepare_proteindj_workflow,
+        # which is mocked here - so the generic launch route must not also create a
+        # DataTransfer for it.
+        transfer_count = db.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(DataTransfer.workflow_run_id == created_run.id)
         )
-        assert input_transfer is not None
-        assert input_transfer.workflow_run_id == created_run.id
-        assert input_transfer.direction == "input"
-        assert input_transfer.provider == "globus"
-        # The samplesheet is re-uploaded with the starting_pdb column corrected to a
-        # staged Gadi path (_stage_referenced_samplesheet_file), so the main input
-        # transfer's source is the corrected samplesheet key, not the original upload.
-        assert input_transfer.source_location.endswith("inputs/samplesheets/corrected.csv")
-        assert input_transfer.status == "pending"
-        assert input_transfer.destination_location == (
-            f"/test/input/de-novo-design/{created_run.id}/corrected.csv"
-        )
-
-        # The starting_pdb file referenced by the samplesheet gets its own transfer.
-        pdb_transfer = db.scalar(
-            select(DataTransfer).where(
-                DataTransfer.workflow_run_id == created_run.id,
-                DataTransfer.source_location == "s3://test-bucket/pdb/target.pdb",
-            )
-        )
-        assert pdb_transfer is not None
-        assert pdb_transfer.direction == "input"
-        assert pdb_transfer.provider == "globus"
-        assert pdb_transfer.destination_location == (
-            f"/test/input/de-novo-design/{created_run.id}/target.pdb"
-        )
+        assert transfer_count == 0
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_bindcraft_fills_in_default_settings_assets_in_samplesheet(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient
-):
-    """settings_filters/settings_advanced samplesheet columns are left empty
-    by the frontend (see sbp-portal's de-novo-design.ts) - confirmed in
-    production via a real staged samplesheet. _rewrite_bindflow_settings_
-    asset_columns must fill them in with the local Gadi path to bindflow's
-    bundled default JSON files before the samplesheet is staged to Gadi."""
-    mock_read_csv.return_value = [
-        {
-            "starting_pdb": "s3://test-bucket/pdb/target.pdb",
-            "settings_filters": "",
-            "settings_advanced": "",
-        }
-    ]
-    mock_upload_csv.return_value = S3UploadResult(
-        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-bucket"
-    )
-
-    payload = {
-        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "test-run"},
-        "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
-    }
-
-    response = client.post("/api/workflows/launch", json=payload)
-
-    assert response.status_code == 201
-    # First call corrects starting_pdb (_stage_referenced_samplesheet_file),
-    # second call rewrites the settings_* columns - both re-upload the row.
-    assert mock_upload_csv.call_count == 2
-    rewritten_row = mock_upload_csv.call_args_list[1].args[0]
-    assert rewritten_row["settings_filters"] == (
-        "/staged/workflow-repo/assets/assets/bindcraft/default_filters.json"
-    )
-    assert rewritten_row["settings_advanced"] == (
-        "/staged/workflow-repo/assets/assets/bindcraft/default_4stage_multimer.json"
-    )
-
-
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow")
+@patch("app.routes.workflows.prepare_proteindj_workflow")
 def test_launch_queue_preparation_configuration_error(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+    mock_prepare, client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
     mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
 
     payload = {
         "launch": {
@@ -292,16 +198,9 @@ def test_launch_queue_preparation_configuration_error(
         assert count == 0
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow")
-def test_launch_queue_preparation_error(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
-):
+@patch("app.routes.workflows.prepare_proteindj_workflow")
+def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
     """Unexpected queue preparation errors are returned as local queue failures."""
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     mock_prepare.side_effect = RuntimeError("could not build queue payload")
 
     payload = {
@@ -366,13 +265,12 @@ def _add_rfdiffusion_workflow(test_engine):
             db.commit()
 
 
-@patch("app.routes.workflows.prepare_bindflow_workflow")
 @patch(
     "app.routes.workflows.prepare_proteindj_workflow",
-    side_effect=_queue_job_for_proteindj_route_prepare,
+    side_effect=_queue_job_for_route_prepare,
 )
 def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
-    mock_prepare_proteindj, mock_prepare_bindflow, client: TestClient, test_engine
+    mock_prepare_proteindj, client: TestClient, test_engine
 ):
     """tool='rfdiffusion' on de-novo-design must dispatch to the proteindj executor."""
     _add_rfdiffusion_workflow(test_engine)
@@ -393,7 +291,6 @@ def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
     data = response.json()
     assert data["status"] == "staging"
     mock_prepare_proteindj.assert_called_once()
-    mock_prepare_bindflow.assert_not_called()
     assert (
         mock_prepare_proteindj.call_args.kwargs["pipeline"] == "https://github.com/test/proteindj"
     )
@@ -891,10 +788,10 @@ def test_launch_single_prediction_requires_protein(client: TestClient, test_engi
 
 def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClient, test_engine):
     _add_proteinfold_workflow(test_engine)
-    payload = _single_prediction_payload([_protein_entity(sequence="A" * 2000)], tool="alphafold2")
+    payload = _single_prediction_payload([_protein_entity(sequence="A" * 1000)], tool="alphafold2")
     response = client.post("/api/workflows/launch", json=payload)
     assert response.status_code == 422
-    assert "less than 2000" in response.json()["detail"]
+    assert "less than 1000" in response.json()["detail"]
 
 
 @patch("app.routes.workflows.upload_csv_to_s3")
@@ -936,18 +833,11 @@ _LAUNCH_PAYLOAD = {
 }
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_allowed_with_workflow_role(
-    mock_prepare, mock_read_csv, mock_upload_csv, role_check_client, monkeypatch
-):
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_allowed_with_workflow_role(mock_prepare, role_check_client, monkeypatch):
     """Users holding the workflow execution role can launch."""
     monkeypatch.setenv("DB_ADMIN_ROLES_CLAIM", ROLES_CLAIM)
     monkeypatch.setenv("WORKFLOW_EXECUTION_ROLE", WORKFLOW_ROLE)
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
 
     with patch(
         "app.routes.dependencies.verify_access_token_claims",
@@ -1034,7 +924,7 @@ def wisps_client(test_engine):
                 description="Test BindCraft workflow",
                 repo_url="https://github.com/test/repo",
                 default_revision="dev",
-                config_path="/some/bindflow.config",
+                config_path="/some/proteindj.config",
             )
         )
 
@@ -1319,7 +1209,7 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 
     single = by_category["single-prediction"]
     assert single["basis"] == CreditBasis.CONSTANT.value
-    assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 200}
+    assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 50}
 
     bulk = by_category["bulk-prediction"]
     assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
@@ -1335,13 +1225,9 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
 TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_deducts_credits_when_enabled(
     mock_prepare,
-    mock_read_csv,
-    mock_upload_csv,
     client,
     test_engine,
     monkeypatch,
@@ -1350,9 +1236,6 @@ def test_launch_deducts_credits_when_enabled(
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     mock_settings.enable_credits = True
     client.app.dependency_overrides[get_settings] = lambda: mock_settings
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1377,7 +1260,7 @@ def test_launch_deducts_credits_when_enabled(
     assert credit == 70  # 100 − (10 × 3)
 
 
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_rejected_when_insufficient_credits(
     mock_prepare, client, test_engine, monkeypatch, mock_settings
 ):
@@ -1408,17 +1291,12 @@ def test_launch_rejected_when_insufficient_credits(
     assert credit == 10  # unchanged
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
-@patch("app.routes.workflows.read_csv_from_s3")
-@patch("app.routes.workflows.prepare_bindflow_workflow", side_effect=_queue_job_for_route_prepare)
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_does_not_deduct_when_credits_disabled(
-    mock_prepare, mock_read_csv, mock_upload_csv, client, test_engine, monkeypatch
+    mock_prepare, client, test_engine, monkeypatch
 ):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
-    _mock_samplesheet_staging(
-        mock_read_csv, mock_upload_csv, "starting_pdb", "s3://test-bucket/pdb/target.pdb"
-    )
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=5))
         db.commit()

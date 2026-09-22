@@ -19,25 +19,21 @@ from app.services.results_utils import (
     WorkflowResultsSpec,
     _build_s3_uri,
     build_alphafold2_proteinfold_output_listing_prefixes,
-    build_bindcraft_output_listing_prefixes,
     build_boltz_proteinfold_output_listing_prefixes,
     build_colabfold_proteinfold_output_listing_prefixes,
     build_rfdiffusion_output_listing_prefixes,
     build_wisps_output_listing_prefixes,
     classify_alphafold2_proteinfold_output,
-    classify_bindcraft_output_key,
     classify_boltz_proteinfold_output,
     classify_colabfold_proteinfold_output,
     classify_rfdiffusion_output_key,
     classify_shared_outputs,
     classify_wisps_output_key,
-    extract_bindcraft_max_score,
     extract_proteinfold_max_score,
     extract_rfdiffusion_max_score,
     extract_wisps_max_score,
     format_log_entries,
     get_all_downloads_zipped,
-    get_bindcraft_score_file,
     get_category_downloads_zipped,
     get_proteinfold_score_file,
     get_result_output_downloads,
@@ -50,9 +46,11 @@ from app.services.results_utils import (
     list_workflow_outputs_from_s3,
     make_wisps_classifier,
     read_result_output_file,
+    reset_completed_output_transfers,
     resolve_fasta_form_data,
     resolve_pdb_presigned_urls,
     resolve_submitted_form_data,
+    run_has_missing_required_categories,
     s3_uri_to_key,
 )
 from app.services.s3 import S3ServiceError
@@ -61,6 +59,7 @@ from tests.datagen import (
     DataTransferFactory,
     RunOutputFactory,
     S3ObjectFactory,
+    WorkflowFactory,
     WorkflowRunFactory,
 )
 
@@ -210,52 +209,21 @@ def test_get_sample_id_for_result_uses_fallback_order_and_strips():
     assert get_sample_id_for_result(run_empty) is None
 
 
-def test_bindcraft_helpers_classify_keys_and_build_prefixes(mock_settings):
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+def test_bindcraft_spec_reuses_rfdiffusion_output_collection():
+    """BindCraft and RFdiffusion are both fold-design front ends for the same
+    downstream ProteinDJ pipeline, so their output collection must be identical."""
+    bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
+    rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
 
-    assert classify_bindcraft_output_key(" ") is None
-    assert classify_bindcraft_output_key("folder/") is None
-    assert classify_bindcraft_output_key(f"{run.id}/Accepted/Animation/report.html") is None
-    assert classify_bindcraft_output_key(
-        f"{run.id}/generate/bindcraft_report.html"
-    ) == ClassifiedOutput(
-        "report",
-        "bindcraft_report.html",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/bindcraft/sampleZ_0_output/preview.png"
-    ) == ClassifiedOutput(
-        "snapshot",
-        "preview.png",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/ranker/sampleZ_ranked/model.pdb"
-    ) == ClassifiedOutput(
-        "pdb",
-        "model.pdb",
-    )
-    assert classify_bindcraft_output_key(
-        f"{run.id}/ranker/sampleZ_final_design_stats.csv"
-    ) == ClassifiedOutput(
-        "stats_csv",
-        "sampleZ_final_design_stats.csv",
-    )
+    assert bindcraft_spec.get_prefixes is rfdiffusion_spec.get_prefixes
+    assert bindcraft_spec.classifier is rfdiffusion_spec.classifier
+    assert bindcraft_spec.get_score_file is rfdiffusion_spec.get_score_file
+    assert bindcraft_spec.extract_max_score is rfdiffusion_spec.extract_max_score
+    assert bindcraft_spec.required_categories == rfdiffusion_spec.required_categories
+    assert bindcraft_spec.supports_snapshots == rfdiffusion_spec.supports_snapshots
 
-    prefixes = build_bindcraft_output_listing_prefixes(run)
-    assert prefixes == [
-        f"{run.id}/",
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-        f"{run.id}/bindcraft/sampleZ_0_output/",
-    ]
 
-    run_without_sample = SimpleNamespace(id=run.id, sample_id=None, binder_name=None, form_id=None)
-    assert build_bindcraft_output_listing_prefixes(run_without_sample) == [
-        f"{run.id}/",
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-    ]
-
+def test_build_s3_uri_uses_bucket_when_configured(mock_settings):
     mock_settings.aws.s3_bucket = "test-bucket"
     assert (
         _build_s3_uri("path/to/file.txt", settings=mock_settings)
@@ -295,10 +263,17 @@ def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_sett
             destination_location=f"s3://test-s3-bucket/{run.id}/generate/report.html",
             recursive=False,
         ),
+        OutputTransferItem(
+            source_location=f"/test/output/de-novo-design/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
+        ),
     ]
 
 
-def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
+def test_builtin_specs_get_transfer_prefixes_excludes_run_root_but_keeps_usage_report(
+    mock_settings,
+):
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
     bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
@@ -309,26 +284,28 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
     rfdiffusion_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["rfdiffusion"]
 
     assert bindcraft_spec.get_transfer_prefixes(run) == [
-        f"{run.id}/ranker/",
-        f"{run.id}/generate/",
-        f"{run.id}/bindcraft/T1024_0_output/",
+        f"{run.id}/results/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert boltz_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/boltz/top_ranked_structures/",
         f"{run.id}/mmseqs/",
         f"{run.id}/boltz/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert alphafold2_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/alphafold2/split_msa_prediction/top_ranked_structures/",
         f"{run.id}/alphafold2/split_msa_prediction/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert colabfold_spec.get_transfer_prefixes(run) == [
         f"{run.id}/reports/",
         f"{run.id}/colabfold/top_ranked_structures/",
         f"{run.id}/mmseqs/",
         f"{run.id}/colabfold/T1024/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert wisps_spec.get_transfer_prefixes(run) == [
         f"{run.id}/multiqc/",
@@ -338,9 +315,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
         f"{run.id}/boltz_predictions/pae/",
         f"{run.id}/colabfold_predictions/pdb/",
         f"{run.id}/colabfold_predictions/pae/",
+        f"{run.id}/UsageReport.csv",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
         f"{run.id}/results/",
+        f"{run.id}/UsageReport.csv",
     ]
 
     assert boltz_spec.get_transfer_items(run, settings=mock_settings) == [
@@ -366,6 +345,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
             destination_location=f"s3://test-s3-bucket/{run.id}/boltz/T1024/",
             recursive=True,
         ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
+        ),
     ]
 
     assert colabfold_spec.get_transfer_items(run, settings=mock_settings) == [
@@ -390,6 +374,11 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root(mock_settings):
             source_location=f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
             destination_location=f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
             recursive=True,
+        ),
+        OutputTransferItem(
+            source_location=f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            destination_location=f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+            recursive=False,
         ),
     ]
 
@@ -423,16 +412,21 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
             DataTransfer.direction == "output",
         )
     ).all()
-    assert len(first_result) == 4
-    assert len(second_result) == 4
-    assert len(output_transfers) == 4
+    assert len(first_result) == 5
+    assert len(second_result) == 5
+    assert len(output_transfers) == 5
     assert first_result[0].id == existing_transfer.id
     assert first_result[0].status == "in_progress"
     assert first_result[0].transfer_id == "task-existing"
     assert first_result[0].recursive is True
     assert [transfer.id for transfer in second_result] == [transfer.id for transfer in first_result]
-    assert [transfer.status for transfer in first_result[1:]] == ["pending", "pending", "pending"]
-    assert [transfer.recursive for transfer in first_result] == [True, True, True, True]
+    assert [transfer.status for transfer in first_result[1:]] == [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
+    assert [transfer.recursive for transfer in first_result] == [True, True, True, True, False]
 
 
 def test_colabfold_create_output_transfers_creates_expected_rows(
@@ -451,10 +445,10 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
             DataTransfer.direction == "output",
         )
     ).all()
-    assert len(result) == 4
-    assert len(output_transfers) == 4
-    assert [transfer.status for transfer in result] == ["pending"] * 4
-    assert [transfer.recursive for transfer in result] == [True] * 4
+    assert len(result) == 5
+    assert len(output_transfers) == 5
+    assert [transfer.status for transfer in result] == ["pending"] * 5
+    assert [transfer.recursive for transfer in result] == [True, True, True, True, False]
     assert [(transfer.source_location, transfer.destination_location) for transfer in result] == [
         (
             f"/test/output/single-prediction/{run.id}/reports/",
@@ -472,7 +466,97 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
             f"/test/output/single-prediction/{run.id}/colabfold/T1024/",
             f"s3://test-s3-bucket/{run.id}/colabfold/T1024/",
         ),
+        (
+            f"/test/output/single-prediction/{run.id}/UsageReport.csv",
+            f"s3://test-s3-bucket/{run.id}/UsageReport.csv",
+        ),
     ]
+
+
+def test_run_has_missing_required_categories_true_when_category_absent(test_db, persistent_models):
+    """A required category with no recorded output at all must be detected as missing."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")
+    run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
+
+    stats_object = S3ObjectFactory.create_sync(
+        object_key=f"{run.id}/results/ranked_designs.csv",
+        uri=f"s3://bucket/{run.id}/results/ranked_designs.csv",
+    )
+    RunOutputFactory.create_sync(
+        run_id=run.id,
+        s3_object_id=stats_object.object_key,
+        data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
+    )
+    # "pdb" is also required but has no output here.
+    assert run_has_missing_required_categories(test_db, run) is True
+
+
+def test_run_has_missing_required_categories_false_when_satisfied(test_db, persistent_models):
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", tool="bindcraft")
+    run = WorkflowRunFactory.create_sync(owner=user, workflow=workflow, tool="bindcraft")
+
+    outputs = {
+        "pdb": f"{run.id}/results/ranked_designs/{run.id}.pdb",
+        "stats_csv": f"{run.id}/results/ranked_designs.csv",
+    }
+    for key in outputs.values():
+        s3_object = S3ObjectFactory.create_sync(object_key=key, uri=f"s3://bucket/{key}")
+        RunOutputFactory.create_sync(
+            run_id=run.id,
+            s3_object_id=s3_object.object_key,
+            data_transfer=DataTransferFactory.create_sync(workflow_run=run, direction="output"),
+        )
+
+    assert run_has_missing_required_categories(test_db, run) is False
+
+
+def test_reset_completed_output_transfers_resets_only_completed_globus_rows(
+    test_db, persistent_models
+):
+    run = WorkflowRunFactory.create_sync()
+    completed_one = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        transfer_id="task-1",
+    )
+    completed_two = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        transfer_id="task-2",
+    )
+    failed = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="failed",
+        transfer_id="task-3",
+    )
+    s3_provider = DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="s3",
+        status="pending",
+    )
+
+    reset_count = reset_completed_output_transfers(test_db, run)
+
+    assert reset_count == 2
+    test_db.refresh(completed_one)
+    test_db.refresh(completed_two)
+    test_db.refresh(failed)
+    test_db.refresh(s3_provider)
+    assert completed_one.status == "pending"
+    assert completed_one.transfer_id is None
+    assert completed_two.status == "pending"
+    assert completed_two.transfer_id is None
+    assert failed.status == "failed"
+    assert s3_provider.status == "pending"
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
@@ -526,7 +610,7 @@ def test_get_rfdiffusion_score_file_uses_ranked_designs_csv():
 
 @pytest.mark.asyncio
 async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
-    csv_text = "design,af2_plddt_overall\nsampleZ_0,91.3\nsampleZ_1,88.1\n"
+    csv_text = "rank,design,af2_iptm\n1,sampleZ_0,0.913\n2,sampleZ_1,0.881\n"
 
     with patch(
         "app.services.results_utils.read_s3_file",
@@ -542,12 +626,12 @@ async def test_extract_rfdiffusion_max_score_reads_first_ranked_design_score():
 @pytest.mark.asyncio
 async def test_extract_rfdiffusion_max_score_returns_none_without_score_value():
     """
-    Test extract_rfdiffusion_max_score returns None when no af2_plddt_overall score is available
+    Test extract_rfdiffusion_max_score returns None when no af2_iptm score is available
     """
     for csv_text in [
-        "design,af2_plddt_overall\n",
-        "design,af2_plddt_overall\nsampleZ_0, \n",
-        "design,other_score\nsampleZ_0,91.3\n",
+        "rank,design,af2_iptm\n",
+        "rank,design,af2_iptm\n1,sampleZ_0, \n",
+        "rank,design,other_score\n1,sampleZ_0,0.913\n",
     ]:
         with patch(
             "app.services.results_utils.read_s3_file",
@@ -575,9 +659,8 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
     )
 
     output_contents = {
-        f"{run.id}/generate/result.html": b"<html>result</html>",
-        f"{run.id}/ranker/sampleZ_final_design_stats.csv": b"score\n0.9\n",
-        f"{run.id}/ranker/sampleZ_ranked/model.pdb": b"ATOM\n",
+        f"{run.id}/results/ranked_designs.csv": b"score\n0.9\n",
+        f"{run.id}/results/ranked_designs/model.pdb": b"ATOM\n",
     }
     outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
     test_db.add_all([user, run, *outputs])
@@ -596,16 +679,64 @@ async def test_get_all_downloads_zipped_writes_category_label_files_and_reads_ea
 
     with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
         assert set(zip_file.namelist()) == {
-            "report/result.html",
-            "stats_csv/sampleZ_final_design_stats.csv",
+            "stats_csv/ranked_designs.csv",
             "pdb/model.pdb",
         }
-        assert zip_file.read("report/result.html") == b"<html>result</html>"
-        assert zip_file.read("stats_csv/sampleZ_final_design_stats.csv") == b"score\n0.9\n"
+        assert zip_file.read("stats_csv/ranked_designs.csv") == b"score\n0.9\n"
         assert zip_file.read("pdb/model.pdb") == b"ATOM\n"
 
     assert mock_read_s3_bytes.await_count == len(output_contents)
     assert {call.args[0] for call in mock_read_s3_bytes.await_args_list} == set(output_contents)
+
+
+@pytest.mark.asyncio
+async def test_get_all_downloads_zipped_keeps_only_lowest_rank_pae_and_drops_plddt(
+    test_db, persistent_models
+):
+    """Single-prediction proteinfold runs publish one *_pae.tsv per model rank
+    and a *_plddt.tsv summary; the portal should only ever surface the
+    top-ranked model's PAE and never the plddt.tsv file.
+    """
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="single-prediction",
+            repo_url="https://github.com/test/single-prediction",
+            default_revision="main",
+            config_path="/config/single-prediction.config",
+        ),
+        tool="boltz",
+        sample_id="T1024",
+        seqera_run_id="wf-boltz-pae-ranks",
+    )
+
+    output_contents = {
+        f"{run.id}/boltz/T1024/paes/T1024_0_pae.tsv": b"rank-0-pae\n",
+        f"{run.id}/boltz/T1024/paes/T1024_1_pae.tsv": b"rank-1-pae\n",
+        f"{run.id}/boltz/T1024/T1024_plddt.tsv": b"plddt\n",
+        f"{run.id}/boltz/T1024/T1024_ptm.tsv": b"0\t0.9\n",
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(side_effect=read_bytes),
+    ):
+        zip_buffer = await get_all_downloads_zipped(test_db, run)
+
+    with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
+        assert set(zip_file.namelist()) == {
+            "stats_csv/T1024_0_pae.tsv",
+            "stats_csv/T1024_ptm.tsv",
+        }
 
 
 @pytest.mark.asyncio
@@ -620,24 +751,25 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
     run = WorkflowRunFactory.create_sync(
         owner=user,
         workflow=Workflow(
-            name="de-novo-design",
-            repo_url="https://github.com/test/de-novo-design",
+            name="single-prediction",
+            repo_url="https://github.com/test/single-prediction",
             default_revision="main",
-            config_path="/config/de-novo-design.config",
+            config_path="/config/single-prediction.config",
         ),
-        tool="bindcraft",
+        tool="boltz",
+        sample_id="T1024",
         seqera_run_id="wf-report-retry",
     )
     test_db.commit()
 
-    report_key = f"{run.id}/generate/result.html"
-    generate_prefix = f"{run.id}/generate/"
+    report_key = f"{run.id}/reports/T1024_report.html"
+    reports_prefix = f"{run.id}/reports/"
     calls_per_prefix: dict[str, int] = {}
 
     async def fake_list_s3_files(prefix: str, settings=None):
         calls_per_prefix[prefix] = calls_per_prefix.get(prefix, 0) + 1
         # Only found on the second (loud, suppress_s3_errors=False) listing pass.
-        if prefix == generate_prefix and calls_per_prefix[prefix] >= 2:
+        if prefix == reports_prefix and calls_per_prefix[prefix] >= 2:
             return [{"key": report_key}]
         return []
 
@@ -661,6 +793,7 @@ async def test_get_result_report_download_persists_result_found_only_on_retry(
     data_transfer = test_db.get(DataTransfer, run_output.data_transfer_id)
     assert data_transfer is not None
     assert data_transfer.provider == "s3"
+    assert data_transfer.status == "completed"
     assert data_transfer.destination_location.endswith(report_key)
 
 
@@ -684,11 +817,11 @@ async def test_read_result_output_file_persists_newly_discovered_output(test_db,
     )
     test_db.commit()
 
-    stats_key = f"{run.id}/ranker/sampleZ_final_design_stats.csv"
-    ranker_prefix = f"{run.id}/ranker/"
+    stats_key = f"{run.id}/results/ranked_designs.csv"
+    results_prefix = f"{run.id}/results/"
 
     async def fake_list_s3_files(prefix: str, settings=None):
-        if prefix == ranker_prefix:
+        if prefix == results_prefix:
             return [{"key": stats_key}]
         return []
 
@@ -705,44 +838,10 @@ async def test_read_result_output_file_persists_newly_discovered_output(test_db,
         content, label = await read_result_output_file(test_db, run, stats_key)
 
     assert content == b"score\n0.9\n"
-    assert label == "sampleZ_final_design_stats.csv"
+    assert label == "ranked_designs.csv"
 
     run_output = test_db.scalars(select(RunOutput).where(RunOutput.run_id == run.id)).one()
     assert run_output.s3_object_id == stats_key
-
-
-def test_get_bindcraft_score_file_uses_final_design_stats():
-    keys = [
-        "run/ranker/model.pdb",
-        "run/ranker/s1_final_design_stats.csv",
-        "run/generate/report.html",
-    ]
-
-    assert get_bindcraft_score_file(keys, "s1") == "run/ranker/s1_final_design_stats.csv"
-
-
-def test_get_bindcraft_score_file_returns_none_without_stats():
-    keys = [
-        "run/ranker/model.pdb",
-        "run/generate/report.html",
-    ]
-
-    assert get_bindcraft_score_file(keys, "s1") is None
-
-
-@pytest.mark.asyncio
-async def test_extract_bindcraft_max_score_reads_average_i_ptm():
-    csv_text = "design_id,Average_i_pTM\nA,0.12\nB,0.91\nC,\n"
-
-    with patch(
-        "app.services.results_utils.read_s3_file",
-        new_callable=AsyncMock,
-        return_value=csv_text,
-    ) as read_file:
-        score = await extract_bindcraft_max_score("run/ranker/s1_final_design_stats.csv")
-
-    assert score == 0.91
-    read_file.assert_awaited_once_with("run/ranker/s1_final_design_stats.csv", settings=ANY)
 
 
 @pytest.mark.parametrize(
@@ -981,6 +1080,11 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
     assert classify_boltz_proteinfold_output(
         f"{run.id}/mmseqs/T1024.a3m", "T1024"
     ) == ClassifiedOutput("alignment", "T1024.a3m")
+
+    # plddt.tsv is never surfaced, regardless of sample_id
+    assert (
+        classify_boltz_proteinfold_output(f"{run.id}/boltz/T1024/T1024_plddt.tsv", "T1024") is None
+    )
 
     # "single_prediction" paths do not match when sample_id is set
     assert (
