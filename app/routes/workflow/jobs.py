@@ -170,7 +170,7 @@ def _build_job_list_item(
 
     wf = coerce_workflow_payload(payload or {})
     submitted_at = (
-        parse_submit_datetime(payload or {}) or owned_run.submission_timestamp or datetime.now(UTC)
+        owned_run.submission_timestamp or parse_submit_datetime(payload or {}) or datetime.now(UTC)
     )
     job_name = _resolve_job_name(run_id, wf, owned_run)
 
