@@ -742,6 +742,52 @@ async def test_list_jobs_with_pagination(test_db, persistent_models):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_displayed_submitted_at_matches_the_db_sort_key(
+    test_db, persistent_models
+):
+    """The displayed submittedAt must always be the same value the SQL query sorted
+    by (WorkflowRun.submission_timestamp), even for a run that needs a live Seqera
+    check whose payload reports a different "submit" timestamp - otherwise a job can
+    be displayed with a date that contradicts its position in the sorted list."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(name="single-prediction")
+    old_db_timestamp = datetime(2020, 1, 1, 0, 0, tzinfo=UTC)
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow,
+        owner=user,
+        seqera_run_id="wf-diverges",
+        seqera_final_status=None,
+        sync_completed_at=None,
+        binder_name=None,
+        run_name="diverges",
+        submission_timestamp=old_db_timestamp,
+    )
+    test_db.add(RunMetric(run_id=run.id, max_score=0.9))
+    test_db.commit()
+
+    with patch(
+        "app.routes.workflow.jobs.describe_workflow",
+        new_callable=AsyncMock,
+        return_value={
+            "workflow": {"status": "SUCCEEDED", "submit": "2026-09-23T00:00:00Z"}
+        },
+    ):
+        response = await list_jobs(
+            search=None,
+            status_filter=None,
+            limit=50,
+            offset=0,
+            sort_by="submitted",
+            sort_order="desc",
+            current_user_id=user.id,
+            db=test_db,
+        )
+
+    assert len(response.jobs) == 1
+    assert response.jobs[0].submittedAt.replace(tzinfo=UTC) == old_db_timestamp
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_sort_by_score_places_failed_jobs_last(test_db, persistent_models):
     """Unscored (e.g. failed) jobs sort to the end in both directions, even across pages.
     Exercises the DB-level `ORDER BY ... NULLS LAST`, not just the search/live-status
