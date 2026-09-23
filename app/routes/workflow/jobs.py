@@ -169,9 +169,6 @@ def _build_job_list_item(
             seqera_unavailable = True
 
     wf = coerce_workflow_payload(payload or {})
-    # The DB column (not the live payload) must win here: it's what the SQL query
-    # sorts by, so preferring a live value whenever one happens to be fetched would
-    # let the displayed date silently diverge from the row's actual sort position.
     submitted_at = (
         owned_run.submission_timestamp or parse_submit_datetime(payload or {}) or datetime.now(UTC)
     )

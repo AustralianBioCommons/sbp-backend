@@ -742,9 +742,7 @@ async def test_list_jobs_with_pagination(test_db, persistent_models):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_displayed_submitted_at_matches_the_db_sort_key(
-    test_db, persistent_models
-):
+async def test_list_jobs_displayed_submitted_at_matches_the_db_sort_key(test_db, persistent_models):
     """The displayed submittedAt must always be the same value the SQL query sorted
     by (WorkflowRun.submission_timestamp), even for a run that needs a live Seqera
     check whose payload reports a different "submit" timestamp - otherwise a job can
@@ -768,9 +766,7 @@ async def test_list_jobs_displayed_submitted_at_matches_the_db_sort_key(
     with patch(
         "app.routes.workflow.jobs.describe_workflow",
         new_callable=AsyncMock,
-        return_value={
-            "workflow": {"status": "SUCCEEDED", "submit": "2026-09-23T00:00:00Z"}
-        },
+        return_value={"workflow": {"status": "SUCCEEDED", "submit": "2026-09-23T00:00:00Z"}},
     ):
         response = await list_jobs(
             search=None,
