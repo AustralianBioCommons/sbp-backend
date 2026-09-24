@@ -315,6 +315,7 @@ def test_builtin_specs_get_transfer_prefixes_excludes_run_root_but_keeps_usage_r
         f"{run.id}/boltz_predictions/pae/",
         f"{run.id}/colabfold_predictions/pdb/",
         f"{run.id}/colabfold_predictions/pae/",
+        f"{run.id}/colabfold_predictions/confidence/",
         f"{run.id}/UsageReport.csv",
     ]
     assert rfdiffusion_spec.get_transfer_prefixes(run) == [
@@ -1470,6 +1471,39 @@ def test_classify_wisps_output_key_colabfold_pae_npz():
     assert result == ClassifiedOutput(category="pae", label="sample1_model_0.npz")
 
 
+def test_classify_wisps_output_key_colabfold_confidence_json():
+    """Confidence JSONs join the existing (hidden) "pae" bucket rather than a
+    new category, and get a "confidence_" prefix when the filename doesn't
+    already say so, so they're distinguishable from the .npz PAE files."""
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(
+        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json", None, "colabfold"
+    )
+    assert result == ClassifiedOutput(category="pae", label="confidence_sample1_model_0.json")
+
+
+def test_classify_wisps_output_key_colabfold_confidence_json_keeps_existing_name():
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(
+        f"{run_id}/colabfold_predictions/confidence/sample1_model_0_confidence.json",
+        None,
+        "colabfold",
+    )
+    assert result == ClassifiedOutput(
+        category="pae", label="sample1_model_0_confidence.json"
+    )
+
+
+def test_classify_wisps_output_key_boltz_confidence_json_not_classified():
+    """Confidence JSON collection is colabfold-specific; boltz runs don't
+    produce this folder, so a stray file there must not be picked up."""
+    run_id = str(uuid4())
+    result = classify_wisps_output_key(
+        f"{run_id}/colabfold_predictions/confidence/sample1_model_0.json", None, "boltz"
+    )
+    assert result is None
+
+
 def test_classify_wisps_output_key_tool_restricts_to_matching_predictions_folder():
     """A run's classifier only matches its own tool's prediction folder - the other
     tool's folder never exists for that run, so it must never be misclassified."""
@@ -1626,7 +1660,7 @@ async def test_get_run_service_usage():
 def test_build_wisps_output_listing_prefixes():
     run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
     prefixes = build_wisps_output_listing_prefixes(run)
-    assert len(prefixes) == 8
+    assert len(prefixes) == 9
     assert f"{run.id}/" in prefixes
     assert f"{run.id}/multiqc/" in prefixes
     assert f"{run.id}/collect/" in prefixes
@@ -1635,6 +1669,17 @@ def test_build_wisps_output_listing_prefixes():
     assert f"{run.id}/colabfold_predictions/pdb/" in prefixes
     assert f"{run.id}/boltz_predictions/pae/" in prefixes
     assert f"{run.id}/colabfold_predictions/pae/" in prefixes
+    assert f"{run.id}/colabfold_predictions/confidence/" in prefixes
+
+
+def test_build_wisps_output_listing_prefixes_colabfold_tool_only():
+    run = SimpleNamespace(id=uuid4(), tool="colabfold", submitted_form_data=None)
+    prefixes = build_wisps_output_listing_prefixes(run)
+    assert f"{run.id}/colabfold_predictions/pdb/" in prefixes
+    assert f"{run.id}/colabfold_predictions/pae/" in prefixes
+    assert f"{run.id}/colabfold_predictions/confidence/" in prefixes
+    assert f"{run.id}/boltz_predictions/cif/" not in prefixes
+    assert f"{run.id}/boltz_predictions/pae/" not in prefixes
 
 
 def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
@@ -1739,6 +1784,53 @@ async def test_get_category_downloads_zipped_bundles_wisps_structures(
     with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
         assert set(zip_file.namelist()) == {f"pdb/{structure_filename}"}
         assert zip_file.read(f"pdb/{structure_filename}") == structure_content
+
+
+@pytest.mark.asyncio
+async def test_get_category_downloads_zipped_bundles_colabfold_confidence_with_pae(
+    test_db, persistent_models
+):
+    """Colabfold confidence/*.json files join the existing "pae" bucket, so
+    the "pae" bundle download for a colabfold run contains both the .npz
+    files and the confidence JSONs (renamed to make them distinguishable)."""
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user,
+        workflow=Workflow(
+            name="interaction-screening",
+            repo_url="https://github.com/test/interaction-screening",
+            default_revision="main",
+            config_path="/config/interaction-screening.config",
+        ),
+        tool="colabfold",
+        seqera_run_id="wf-wisps-zip-confidence",
+    )
+    output_contents = {
+        f"{run.id}/multiqc/multiqc_report.html": b"<html>report</html>",
+        f"{run.id}/colabfold_predictions/pae/sample1_model_0.npz": b"npz-bytes",
+        f"{run.id}/colabfold_predictions/confidence/sample1_model_0.json": b'{"ptm": 0.9}',
+    }
+    outputs = [S3Object(object_key=key, uri=f"s3://bucket/{key}") for key in output_contents]
+    test_db.add_all([user, run, *outputs])
+    test_db.commit()
+    test_db.add_all([_make_run_output(run, item.object_key) for item in outputs])
+    test_db.commit()
+
+    async def read_bytes(key: str, **_kwargs) -> bytes:
+        return output_contents[key]
+
+    with patch(
+        "app.services.results_utils.read_s3_bytes",
+        new=AsyncMock(side_effect=read_bytes),
+    ):
+        zip_buffer = await get_category_downloads_zipped(test_db, run, "pae")
+
+    with ZipFile(BytesIO(zip_buffer.getvalue())) as zip_file:
+        assert set(zip_file.namelist()) == {
+            "pae/sample1_model_0.npz",
+            "pae/confidence_sample1_model_0.json",
+        }
+        assert zip_file.read("pae/confidence_sample1_model_0.json") == b'{"ptm": 0.9}'
 
 
 @pytest.mark.asyncio
