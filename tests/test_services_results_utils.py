@@ -1489,9 +1489,7 @@ def test_classify_wisps_output_key_colabfold_confidence_json_keeps_existing_name
         None,
         "colabfold",
     )
-    assert result == ClassifiedOutput(
-        category="pae", label="sample1_model_0_confidence.json"
-    )
+    assert result == ClassifiedOutput(category="pae", label="sample1_model_0_confidence.json")
 
 
 def test_classify_wisps_output_key_boltz_confidence_json_not_classified():

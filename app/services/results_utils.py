@@ -328,7 +328,7 @@ async def resolve_fasta_form_data(
                 response_content_disposition=_format_attachment_content_disposition(filename),
                 settings=settings,
             )
-        except (S3ConfigurationError, S3ServiceError):
+        except S3ConfigurationError, S3ServiceError:
             logger.warning(
                 "Failed to generate presigned URL for %r (S3 key %r)",
                 key,
@@ -371,7 +371,7 @@ async def resolve_pdb_presigned_urls(
             settings=settings,
         )
         return {**form_data, "starting_pdb": presigned_url}
-    except (S3ConfigurationError, S3ServiceError):
+    except S3ConfigurationError, S3ServiceError:
         logger.warning(
             "Failed to generate presigned starting_pdb URL for S3 key %r; "
             "returning original form data",
@@ -789,9 +789,7 @@ def classify_wisps_output_key(
             return ClassifiedOutput(category="pdb", label=basename)
         if "/colabfold_predictions/pae/" in lowered and basename.lower().endswith(".npz"):
             return ClassifiedOutput(category="pae", label=basename)
-        if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(
-            ".json"
-        ):
+        if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
             label = basename if "confidence" in basename.lower() else f"confidence_{basename}"
             return ClassifiedOutput(category="pae", label=label)
     return None
