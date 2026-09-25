@@ -789,6 +789,9 @@ def classify_wisps_output_key(
             return ClassifiedOutput(category="pdb", label=basename)
         if "/colabfold_predictions/pae/" in lowered and basename.lower().endswith(".npz"):
             return ClassifiedOutput(category="pae", label=basename)
+        if "/colabfold_predictions/confidence/" in lowered and basename.lower().endswith(".json"):
+            label = basename if "confidence" in basename.lower() else f"confidence_{basename}"
+            return ClassifiedOutput(category="pae", label=label)
     return None
 
 
@@ -865,6 +868,7 @@ def build_wisps_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     if tool in ("", "colabfold"):
         prefixes.append(f"{run_uuid}/colabfold_predictions/pdb/")
         prefixes.append(f"{run_uuid}/colabfold_predictions/pae/")
+        prefixes.append(f"{run_uuid}/colabfold_predictions/confidence/")
 
     return prefixes
 
