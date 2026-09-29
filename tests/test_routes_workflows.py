@@ -1319,3 +1319,145 @@ def test_launch_does_not_deduct_when_credits_disabled(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 5  # unchanged
+
+
+# ── Server-side credit deduction for WISPS (bulk-prediction / interaction-screening) ──
+
+
+def _add_bulk_prediction_workflow(test_engine):
+    """Helper to add a bulk-prediction workflow to the test DB."""
+    with Session(test_engine) as db:
+        existing = db.scalar(select(Workflow).where(Workflow.name == "bulk-prediction"))
+        if not existing:
+            db.add(
+                Workflow(
+                    id=uuid4(),
+                    name="bulk-prediction",
+                    description="WISPS bulk prediction workflow",
+                    repo_url="https://github.com/test/wisps",
+                    default_revision="main",
+                    config_path="/some/config.nf",
+                    prerun_script_path="/some/wisps-prerun.sh",
+                )
+            )
+            db.commit()
+
+
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_bulk_prediction_deducts_credits_when_enabled(
+    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+):
+    """With credits enabled, bulk-prediction charges tool_multiplier × samplesheet row count
+    (the reported bug: this used to deduct nothing at all)."""
+    _add_bulk_prediction_workflow(test_engine)
+    mock_settings.enable_credits = True
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    mock_read_csv.return_value = [
+        {"id": f"seq{i}", "sequence": f"/split/seq{i}.fasta", "type": "protein"} for i in range(5)
+    ]
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
+        db.commit()
+
+    payload = {
+        "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {
+            "workflow": "bulk-prediction",
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    mock_prepare.assert_called_once()
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 95  # 100 − (1 × 5 entries)
+
+
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_interaction_screening_deducts_credits_when_enabled(
+    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+):
+    """With credits enabled, interaction-screening charges tool_multiplier ×
+    (query entries × target entries), derived from the samplesheet's group
+    column, not the client-supplied fastaContent (the reported bug: this used
+    to deduct nothing at all)."""
+    mock_settings.enable_credits = True
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    mock_read_csv.return_value = [
+        {"id": "q1", "sequence": "/split/q1.fasta", "group": "g1", "type": "protein"},
+        {"id": "q2", "sequence": "/split/q2.fasta", "group": "g1", "type": "protein"},
+        {"id": "q3", "sequence": "/split/q3.fasta", "group": "g1", "type": "protein"},
+        {"id": "t1", "sequence": "/split/t1.fasta", "group": "g2", "type": "protein"},
+        {"id": "t2", "sequence": "/split/t2.fasta", "group": "g2", "type": "protein"},
+    ]
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
+        db.commit()
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-credit-run",
+        },
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    mock_prepare.assert_called_once()
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 94  # 100 − (1 × 3 query × 2 target)
+
+
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_interaction_screening_rejected_when_insufficient_credits(
+    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+):
+    """With credits enabled, an unaffordable WISPS launch is rejected (402) and not queued."""
+    mock_settings.enable_credits = True
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    mock_read_csv.return_value = [
+        {"id": "q1", "sequence": "/split/q1.fasta", "group": "g1", "type": "protein"},
+        {"id": "t1", "sequence": "/split/t1.fasta", "group": "g2", "type": "protein"},
+    ]
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=0))
+        db.commit()
+
+    payload = {
+        "launch": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "runName": "wisps-insufficient",
+        },
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": {
+            "workflow": "interaction-screening",
+            "tool": "boltz",
+            "fastaS3Uri": "s3://bucket/test.fasta",
+            "splitOutputDir": "/data/split",
+        },
+    }
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 402
+    mock_prepare.assert_not_called()
+    with Session(test_engine) as db:
+        credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+    assert credit == 0  # unchanged
