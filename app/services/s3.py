@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, BinaryIO, cast
@@ -15,6 +16,16 @@ from botocore.exceptions import BotoCoreError, ClientError
 from ..config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def sanitize_filename(filename: str) -> str:
+    """Replace characters that break shell/glob handling downstream (e.g. Nextflow
+    treats ``[...]`` as a glob character class) with underscores."""
+    sanitized = _UNSAFE_FILENAME_CHARS.sub("_", filename).strip("_")
+    return sanitized or "file"
 
 
 class S3ServiceError(Exception):
@@ -98,7 +109,7 @@ async def upload_file_to_s3(
 
         # Generate unique file key with timestamp
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        file_key = f"{folder}/{timestamp}_{filename}"
+        file_key = f"{folder}/{timestamp}_{sanitize_filename(filename)}"
 
         # Upload file to S3
         s3_client.upload_fileobj(

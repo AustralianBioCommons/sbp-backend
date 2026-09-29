@@ -648,3 +648,12 @@ def test_bulk_prediction_reexports_wisps_form_data():
     from app.schemas.workflows.interaction_screening import WispsFormData
 
     assert BulkWispsFormData is WispsFormData
+
+
+def test_wisps_sequence_item_rejects_glob_unsafe_id():
+    """Sequence IDs become Nextflow file paths, so brackets/spaces must be rejected."""
+    assert WispsSequenceItem(id="NP_414544.1").id == "NP_414544.1"
+    with pytest.raises(ValidationError):
+        WispsSequenceItem(
+            id="NP_414544.1 homoserine kinase [Escherichia coli str. K-12 substr. MG1655]"
+        )

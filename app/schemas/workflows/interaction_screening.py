@@ -29,7 +29,9 @@ class WispsFormData(WorkflowFormData):
 class WispsSequenceItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str
+    # Used as the per-sequence split filename (`<id>.fasta`) that Nextflow reads,
+    # so characters Nextflow treats as glob syntax (e.g. "[", "]") must be excluded.
+    id: str = Field(pattern=r"^[A-Za-z0-9._-]+$")
     sequence: str | None = None
     group: Literal["query", "target"] | None = None
 

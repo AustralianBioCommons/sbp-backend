@@ -18,6 +18,7 @@ from ..db.models.core import DataTransfer, DataTransferStatus
 from ..db.models.job_queue import QueuedJob
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
+from .s3 import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def build_gadi_input_path(
 ) -> str:
     """Build the Gadi-local destination path for a staged input file."""
     globus_settings = globus_settings or get_settings().globus
-    return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{filename}"
+    return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{sanitize_filename(filename)}"
 
 
 def build_gadi_output_path(

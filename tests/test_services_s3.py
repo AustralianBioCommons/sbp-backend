@@ -433,3 +433,16 @@ async def test_calculate_csv_column_max_missing_bucket(mock_s3_settings):
         await calculate_csv_column_max(
             "results/test/file.csv", "Average_i_pTM", settings=mock_s3_settings
         )
+
+
+@pytest.mark.asyncio
+async def test_upload_file_to_s3_sanitizes_filename(mock_s3_settings, mock_s3_client):
+    """Brackets/spaces in filenames break Nextflow globbing, so they are stripped from the key."""
+    filename = "NP_414544.1 homoserine kinase [Escherichia coli str. K-12 substr. MG1655].fasta"
+
+    result = await upload_file_to_s3(BytesIO(b">x\nM"), filename, settings=mock_s3_settings)
+
+    assert result.file_key.endswith(
+        "_NP_414544.1_homoserine_kinase_Escherichia_coli_str._K-12_substr._MG1655_.fasta"
+    )
+    assert not any(c in result.file_key for c in " []")
