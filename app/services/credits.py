@@ -142,12 +142,25 @@ def compute_cost(category: str, tool: str, quantity: int) -> int | None:
     return multiplier * max(0, quantity)
 
 
-def launch_credit_cost(category: str, tool: str, final_design_count: int | None) -> int | None:
+def launch_credit_cost(
+    category: str,
+    tool: str,
+    final_design_count: int | None,
+    *,
+    fasta_entry_count: int | None = None,
+    fasta_pair_counts: tuple[int, int] | None = None,
+) -> int | None:
     """Authoritative per-run cost for workflows charged server-side at launch.
 
-    Only de-novo (final designs) and single (constant) are charged today — their
-    quantity is fully determined by the launch payload. interaction/bulk are not
-    charged here (display-only); they return None.
+    quantity per category:
+    - single-prediction: constant (1).
+    - de-novo-design: ``final_design_count`` (from the launch payload).
+    - bulk-prediction: ``fasta_entry_count`` (WISPS samplesheet row count).
+    - interaction-screening: product of ``fasta_pair_counts`` (query, target
+      WISPS samplesheet row counts).
+
+    Returns None when the category's quantity isn't available/valid, leaving
+    the run uncosted (caller decides how to treat that, e.g. don't charge).
     """
     cat = category.strip().lower()
     if cat == "single-prediction":
@@ -156,4 +169,15 @@ def launch_credit_cost(category: str, tool: str, final_design_count: int | None)
         if final_design_count is None or final_design_count < 1:
             return None
         return compute_cost(cat, tool, final_design_count)
+    if cat == "bulk-prediction":
+        if fasta_entry_count is None or fasta_entry_count < 1:
+            return None
+        return compute_cost(cat, tool, fasta_entry_count)
+    if cat == "interaction-screening":
+        if fasta_pair_counts is None:
+            return None
+        query_count, target_count = fasta_pair_counts
+        if query_count < 1 or target_count < 1:
+            return None
+        return compute_cost(cat, tool, query_count * target_count)
     return None

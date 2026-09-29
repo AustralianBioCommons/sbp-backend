@@ -213,10 +213,12 @@ class NciServiceUnitsField(FloatField):
 class SbpCreditField(IntegerField):
     """SBP credit cost for a run, recomputed on the fly (not stored) using the
     same formula charged at launch time, so it can be shown next to
-    ``service_usage`` for SU-to-credit calibration without a schema change.
-    None for categories not costed by that formula (e.g. bulk/interaction
-    screening). Excluded from create/edit forms via ``exclude_fields_from_*``
-    below, since it has nothing to write back.
+    ``service_usage`` for SU-to-calibration without a schema change.
+    None when the run's quantity can't be recomputed from stored data — always
+    true for bulk-prediction/interaction-screening, since their samplesheet
+    entry counts aren't persisted (only final_design_count is, on RunMetric).
+    Excluded from create/edit forms via ``exclude_fields_from_*`` below, since
+    it has nothing to write back.
     """
 
     async def parse_obj(self, request: Request, obj: Any) -> int | None:

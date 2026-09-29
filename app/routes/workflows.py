@@ -288,6 +288,37 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
+async def _count_wisps_samplesheet_entries(
+    s3_input_key: str, workflow_name: str
+) -> tuple[int | None, tuple[int, int] | None]:
+    """Derive the server-side, non-spoofable credit quantity for a WISPS launch
+    from the already-built samplesheet at s3_input_key (id/sequence[/group]/type
+    rows — see upload_wisps_samplesheet_to_s3), rather than trusting the
+    client-supplied fastaContent.
+
+    Returns (fasta_entry_count, None) for bulk-prediction, or
+    (None, (query_count, target_count)) for interaction-screening, where counts
+    are derived from the samplesheet's group column (g1=query, g2=target).
+    """
+    try:
+        rows = await read_csv_from_s3(s3_input_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+        ) from exc
+    if workflow_name == "interaction-screening":
+        query_count = sum(1 for row in rows if row.get("group") == "g1")
+        target_count = sum(1 for row in rows if row.get("group") == "g2")
+        return None, (query_count, target_count)
+    return len(rows), None
+
+
 def _stage_wisps_fasta(
     *,
     db_session: Session,
@@ -447,12 +478,27 @@ async def launch_workflow(
         ip_address=_require_launch_var("ip_address", launch_ip or None),
     )
 
-    # Authoritative credit cost (server-side, non-spoofable). Only charged for
-    # workflows whose quantity is fully determined by the launch payload
-    # (de-novo, single); interaction/bulk are display-only for now. Gated by the
-    # ENABLE_CREDITS flag so the feature can be rolled out independently.
+    # Authoritative credit cost (server-side, non-spoofable). For bulk/interaction,
+    # quantity comes from the already-built WISPS samplesheet at s3_input_key, not
+    # the client-supplied fastaContent. Gated by the ENABLE_CREDITS flag so the
+    # feature can be rolled out independently.
+    wisps_entry_count: int | None = None
+    wisps_pair_counts: tuple[int, int] | None = None
+    if is_credits_enabled(settings) and requested_workflow in (
+        "interaction-screening",
+        "bulk-prediction",
+    ):
+        wisps_entry_count, wisps_pair_counts = await _count_wisps_samplesheet_entries(
+            s3_input_key, requested_workflow
+        )
     run_credit_cost = (
-        launch_credit_cost(requested_workflow, selected_tool, final_design_count)
+        launch_credit_cost(
+            requested_workflow,
+            selected_tool,
+            final_design_count,
+            fasta_entry_count=wisps_entry_count,
+            fasta_pair_counts=wisps_pair_counts,
+        )
         if is_credits_enabled(settings)
         else None
     )
