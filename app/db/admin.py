@@ -38,7 +38,6 @@ from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..config import Settings, get_settings
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import PipelineStatus
-from ..services.credits import launch_credit_cost
 from ..services.globus_transfer import reset_failed_output_transfers
 from ..services.job_sync import force_resync_run_outputs
 from . import engine
@@ -211,19 +210,19 @@ class NciServiceUnitsField(FloatField):
 
 
 class SbpCreditField(IntegerField):
-    """SBP credit cost for a run, recomputed on the fly (not stored) using the
-    same formula charged at launch time, so it can be shown next to
-    ``service_usage`` for SU-to-credit calibration without a schema change.
-    None for categories not costed by that formula (e.g. bulk/interaction
-    screening). Excluded from create/edit forms via ``exclude_fields_from_*``
-    below, since it has nothing to write back.
+    """SBP credit cost actually charged for this run at launch time
+    (``WorkflowRun.credit_cost``, set in ``launch_workflow``), shown next to
+    ``service_usage`` for SU-to-credit calibration. Read directly rather than
+    recomputed, so it reflects exactly what was deducted even if the credit
+    formula changes later, and works uniformly across categories (including
+    bulk-prediction/interaction-screening, which have no final_design_count).
+    None when the run was uncosted (e.g. credits were disabled at launch).
+    Excluded from create/edit forms via ``exclude_fields_from_*`` below, since
+    it has nothing to write back.
     """
 
     async def parse_obj(self, request: Request, obj: Any) -> int | None:
-        if obj.workflow is None or not obj.tool:
-            return None
-        final_design_count = obj.metrics.final_design_count if obj.metrics else None
-        return launch_credit_cost(obj.workflow.name, obj.tool, final_design_count)
+        return obj.credit_cost
 
 
 class WorkflowRunAdmin(ModelView):

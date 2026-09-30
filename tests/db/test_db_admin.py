@@ -697,39 +697,25 @@ async def test_nci_service_units_field_keeps_raw_precision_on_forms() -> None:
         assert await field.serialize_value(None, 12.001, action) == 12.001
 
 
-async def test_sbp_credit_field_computes_de_novo_design_cost_from_metrics() -> None:
+async def test_sbp_credit_field_reads_persisted_credit_cost() -> None:
+    """Reads WorkflowRun.credit_cost directly (set at launch), not recomputed —
+    works the same for every category, including bulk/interaction-screening,
+    which have no final_design_count to recompute from."""
     field = SbpCreditField("sbp_credit", label="SBP Credit")
-    run = SimpleNamespace(
-        workflow=SimpleNamespace(name="de-novo-design"),
-        tool="rfdiffusion",
-        metrics=SimpleNamespace(final_design_count=3),
-    )
-    assert await field.parse_obj(None, run) == 12  # 4 credits/design * 3 designs
+    de_novo_run = SimpleNamespace(credit_cost=12)
+    bulk_run = SimpleNamespace(credit_cost=5)
+
+    assert await field.parse_obj(None, de_novo_run) == 12
+    assert await field.parse_obj(None, bulk_run) == 5
 
 
-async def test_sbp_credit_field_computes_single_prediction_constant_cost() -> None:
+async def test_sbp_credit_field_is_none_when_uncosted() -> None:
+    """None when the run was uncosted at launch (credit_cost persisted as
+    None, e.g. credits were disabled)."""
     field = SbpCreditField("sbp_credit", label="SBP Credit")
-    run = SimpleNamespace(
-        workflow=SimpleNamespace(name="single-prediction"),
-        tool="colabfold",
-        metrics=None,
-    )
-    assert await field.parse_obj(None, run) == 50
+    uncosted_run = SimpleNamespace(credit_cost=None)
 
-
-async def test_sbp_credit_field_is_none_for_uncosted_categories_and_missing_data() -> None:
-    field = SbpCreditField("sbp_credit", label="SBP Credit")
-    bulk_run = SimpleNamespace(
-        workflow=SimpleNamespace(name="bulk-prediction"), tool="boltz", metrics=None
-    )
-    no_workflow_run = SimpleNamespace(workflow=None, tool="boltz", metrics=None)
-    no_tool_run = SimpleNamespace(
-        workflow=SimpleNamespace(name="single-prediction"), tool=None, metrics=None
-    )
-
-    assert await field.parse_obj(None, bulk_run) is None
-    assert await field.parse_obj(None, no_workflow_run) is None
-    assert await field.parse_obj(None, no_tool_run) is None
+    assert await field.parse_obj(None, uncosted_run) is None
 
 
 def test_app_user_admin_credit_audit_fields_are_read_only_on_forms() -> None:
