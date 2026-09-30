@@ -516,6 +516,9 @@ async def launch_workflow(
     submission_timestamp = datetime.now(UTC)
 
     # Reserve DB row first so a queued workflow always has a DB entry.
+    # credit_cost mirrors run_credit_cost exactly (not recomputed later), so the
+    # admin's SBP Credit field reflects what was actually charged even for
+    # bulk-prediction/interaction-screening, which have no final_design_count.
     workflow_run = WorkflowRun(
         id=run_id,
         workflow=workflow,
@@ -529,6 +532,7 @@ async def launch_workflow(
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
         tool=selected_tool,
+        credit_cost=run_credit_cost,
     )
 
     db_session.add(workflow_run)

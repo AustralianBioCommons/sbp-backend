@@ -77,6 +77,9 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">repo_staging_updated_at</TD>
                          <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">ref_database</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR></TABLE>> URL="http://Workflow_details.html"]
 	Workflow -> WorkflowRun [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
 	WorkflowRun [label=<
@@ -122,6 +125,9 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">service_usage</TD>
                          <TD BGCOLOR="#BBDEFB">FLOAT ()</TD>
                          </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">credit_cost</TD>
+                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
+                         </TR><TR>
                          <TD BGCOLOR="#BBDEFB">seqera_final_status</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
@@ -134,6 +140,7 @@ digraph {
 	WorkflowRun -> RunInput [label=inputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunInput"]
 	WorkflowRun -> RunOutput [label=outputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunOutput"]
 	WorkflowRun -> DataTransfer [label=data_transfers color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and DataTransfer"]
+	WorkflowRun -> QueuedJob [label=queued_jobs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and QueuedJob"]
 	S3Object [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">S3Object</FONT></TD></TR>
@@ -220,11 +227,17 @@ digraph {
                          <TD BGCOLOR="#BBDEFB">destination_location</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">recursive</TD>
+                         <TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD>
+                         </TR><TR>
                          <TD BGCOLOR="#BBDEFB">transfer_id</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">status</TD>
                          <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">attempts</TD>
+                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">created_at</TD>
                          <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
