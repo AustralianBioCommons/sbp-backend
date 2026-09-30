@@ -1254,10 +1254,13 @@ def test_launch_deducts_credits_when_enabled(
 
     assert response.status_code == 201
     assert response.json()["status"] == "staging"
+    run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+        credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
     assert credit == 70  # 100 − (10 × 3)
+    assert credit_cost == 30  # persisted on the run for admin display
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
@@ -1315,10 +1318,13 @@ def test_launch_does_not_deduct_when_credits_disabled(
 
     assert response.status_code == 201
     assert response.json()["status"] == "staging"
+    run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+        credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
     assert credit == 5  # unchanged
+    assert credit_cost is None  # uncosted while credits are disabled
 
 
 # ── Server-side credit deduction for WISPS (bulk-prediction / interaction-screening) ──
@@ -1373,10 +1379,13 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+        credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
     assert credit == 95  # 100 − (1 × 5 entries)
+    assert credit_cost == 5  # persisted on the run for admin display
 
 
 @patch("app.routes.workflows.read_csv_from_s3")
@@ -1418,10 +1427,13 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+        credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
     assert credit == 94  # 100 − (1 × 3 query × 2 target)
+    assert credit_cost == 6  # persisted on the run for admin display
 
 
 @patch("app.routes.workflows.read_csv_from_s3")

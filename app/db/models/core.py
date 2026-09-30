@@ -134,6 +134,11 @@ class WorkflowRun(Base):
     )
     tool: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_usage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The SBP credit cost actually charged at launch (see launch_credit_cost),
+    # persisted rather than recomputed later so it reflects exactly what was
+    # deducted even if the credit formula changes afterwards. None when the
+    # run was uncosted (credits disabled, or its quantity wasn't available).
+    credit_cost: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     seqera_final_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     sync_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
