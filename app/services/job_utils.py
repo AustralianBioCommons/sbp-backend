@@ -293,6 +293,9 @@ def _get_tool(run: WorkflowRun) -> str:
 
 
 def _get_final_design_count(run: WorkflowRun) -> int | None:
+    """The trajectories requested at launch until the run completes, then
+    overwritten with the designs that actually passed ProteinDJ's filters
+    (see ensure_completed_run_score) - what the dashboard should show either way."""
     if not run.metrics:
         return None
     value = run.metrics.final_design_count
@@ -341,11 +344,27 @@ async def ensure_completed_run_score(
     if max_score is None:
         return None
 
+    # None for every workflow except de-novo-design, whose score file lists
+    # only the designs that passed the pipeline's own filters - the dashboard
+    # count should be this, not the trajectories requested at launch.
+    if settings is None:
+        design_count = await spec.get_design_count(db, run)
+    else:
+        design_count = await spec.get_design_count(db, run, settings=settings)
+
     bounded_score = max(0.0, min(1.0, float(max_score)))
     if existing:
         existing.max_score = bounded_score
+        if design_count is not None:
+            existing.final_design_count = design_count
     else:
-        db.add(RunMetric(run_id=run.id, max_score=bounded_score))
+        db.add(
+            RunMetric(
+                run_id=run.id,
+                max_score=bounded_score,
+                final_design_count=design_count,
+            )
+        )
     db.commit()
     return _round_score(bounded_score)
 

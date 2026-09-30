@@ -55,6 +55,14 @@ class ExtractMaxScore(Protocol):
     ) -> Awaitable[float | None]: ...
 
 
+class ExtractDesignCount(Protocol):
+    """Count the designs that passed the pipeline's own filters, from an S3 object."""
+
+    def __call__(
+        self, score_file: str, settings: Settings | None = None
+    ) -> Awaitable[int | None]: ...
+
+
 @dataclass(frozen=True)
 class ClassifiedOutput:
     category: OutputCategory
@@ -84,6 +92,9 @@ class WorkflowResultsSpec:
     classifier: OutputClassifier
     get_score_file: GetScoreFile
     extract_max_score: ExtractMaxScore
+    # Only set for workflows whose score file is a list of designs that already
+    # passed the pipeline's own filters (de-novo-design); None everywhere else.
+    extract_design_count: ExtractDesignCount | None = None
     supports_snapshots: bool = False
     # Flagged in `get_result_output_downloads`'s `zip_categories` for a UI
     # to bundle as one zip instead of listing individually; still returned
@@ -186,6 +197,25 @@ class WorkflowResultsSpec:
             return await self.extract_max_score(score_file, settings=settings)
         except Exception as e:
             logger.warning("Failed to extract max score from %r: %s", score_file, e, exc_info=True)
+            return None
+
+    async def get_design_count(
+        self, db: Session, run: WorkflowRun, settings: Settings | None = None
+    ) -> int | None:
+        if self.extract_design_count is None:
+            return None
+        settings = settings or get_settings()
+        keys = _get_run_output_keys(db, run)
+        sample_id = get_sample_id_for_result(run)
+        score_file = self.get_score_file(keys, sample_id)
+        if score_file is None:
+            return None
+        try:
+            return await self.extract_design_count(score_file, settings=settings)
+        except Exception as e:
+            logger.warning(
+                "Failed to extract design count from %r: %s", score_file, e, exc_info=True
+            )
             return None
 
     def get_usage_file(self, keys: list[str]) -> str | None:
@@ -940,6 +970,18 @@ async def extract_rfdiffusion_max_score(
     return None
 
 
+async def extract_rfdiffusion_design_count(
+    score_file: str, settings: Settings | None = None
+) -> int | None:
+    """Rows in ranked_designs.csv are exactly the designs that passed
+    ProteinDJ's own filters - the dashboard's design count should be this,
+    not the number of trajectories requested at launch."""
+    settings = settings or get_settings()
+    content = await read_s3_file(score_file, settings=settings)
+    csv_reader = csv.DictReader(StringIO(content))
+    return sum(1 for _ in csv_reader)
+
+
 def build_rfdiffusion_output_listing_prefixes(run: WorkflowRun) -> list[str]:
     run_uuid = str(getattr(run, "id", "") or "").strip()
     if not run_uuid:
@@ -986,6 +1028,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_rfdiffusion_output_listing_prefixes,
             get_score_file=get_rfdiffusion_score_file,
             extract_max_score=extract_rfdiffusion_max_score,
+            extract_design_count=extract_rfdiffusion_design_count,
             classifier=classify_rfdiffusion_output_key,
             hidden_download_categories=frozenset({"pdb"}),
         ),
@@ -996,6 +1039,7 @@ WORKFLOW_OUTPUT_SPECS: dict[WorkflowName, dict[WorkflowTool, WorkflowResultsSpec
             get_prefixes=build_rfdiffusion_output_listing_prefixes,
             get_score_file=get_rfdiffusion_score_file,
             extract_max_score=extract_rfdiffusion_max_score,
+            extract_design_count=extract_rfdiffusion_design_count,
             classifier=classify_rfdiffusion_output_key,
             hidden_download_categories=frozenset({"pdb"}),
         ),

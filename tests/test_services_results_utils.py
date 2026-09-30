@@ -30,6 +30,7 @@ from app.services.results_utils import (
     classify_shared_outputs,
     classify_wisps_output_key,
     extract_proteinfold_max_score,
+    extract_rfdiffusion_design_count,
     extract_rfdiffusion_max_score,
     extract_wisps_max_score,
     format_log_entries,
@@ -640,6 +641,31 @@ async def test_extract_rfdiffusion_max_score_returns_none_without_score_value():
             return_value=csv_text,
         ):
             assert await extract_rfdiffusion_max_score("run-1/results/ranked_designs.csv") is None
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_design_count_counts_ranked_design_rows():
+    csv_text = "rank,design,af2_iptm\n1,sampleZ_0,0.913\n2,sampleZ_1,0.881\n"
+
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value=csv_text,
+    ) as read_file:
+        count = await extract_rfdiffusion_design_count("run-1/results/ranked_designs.csv")
+
+    assert count == 2
+    read_file.assert_awaited_once_with("run-1/results/ranked_designs.csv", settings=ANY)
+
+
+@pytest.mark.asyncio
+async def test_extract_rfdiffusion_design_count_returns_zero_for_empty_results():
+    with patch(
+        "app.services.results_utils.read_s3_file",
+        new_callable=AsyncMock,
+        return_value="rank,design,af2_iptm\n",
+    ):
+        assert await extract_rfdiffusion_design_count("run-1/results/ranked_designs.csv") == 0
 
 
 @pytest.mark.asyncio
