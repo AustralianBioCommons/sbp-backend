@@ -58,22 +58,17 @@ def wisps_settings(mock_settings):
 def _queued_wisps_job(
     *,
     params_text: str | None = None,
-    prerun_script_path: str | None = None,
-    submitted_form_data: dict | None = None,
-    ref_database: str | None = None,
+    prerun_script: str = "export NXF_OFFLINE=true\n",
 ) -> QueuedJob:
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="interaction-screening",
         repo_url="https://github.com/test/repo",
-        prerun_script_path=prerun_script_path,
-        ref_database=ref_database,
     )
     workflow_run = WorkflowRunFactory.create_sync(
         workflow=workflow,
         owner=user,
-        submitted_form_data=submitted_form_data
-        or {
+        submitted_form_data={
             "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/seqs.fa",
@@ -92,6 +87,7 @@ def _queued_wisps_job(
         "configProfiles": ["singularity"],
         "configText": "config_text",
         "resume": False,
+        "preRunScript": prerun_script,
     }
     return QueuedJobFactory.create_sync(
         workflow=workflow,
@@ -99,15 +95,6 @@ def _queued_wisps_job(
         launch_payload=launch_payload,
         status="pending",
     )
-
-
-def _wisps_submitted_form_data() -> dict:
-    return {
-        "workflow": "interaction-screening",
-        "tool": "boltz",
-        "fastaS3Uri": "s3://bucket/seqs.fa",
-        "splitOutputDir": "/tmp/split",
-    }
 
 
 @contextmanager
@@ -319,20 +306,18 @@ async def test_launch_wisps_workflow_success(wisps_settings, persistent_models):
 
     with (
         patch(
-            "app.services.wisps_executor.post_seqera_launch",
+            "app.services.launch_payloads.post_seqera_launch",
             new=AsyncMock(return_value=mock_result),
         ) as mock_post,
     ):
-        result = await launch_wisps_workflow(
-            queued_job=_queued_wisps_job(), settings=wisps_settings
-        )
+        queued_job = _queued_wisps_job()
+        result = await launch_wisps_workflow(queued_job=queued_job, settings=wisps_settings)
 
     assert result.workflow_id == "wf_xyz"
-    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    prerun_lines = posted_payload["preRunScript"].split("\n")
-    assert prerun_lines[0].startswith("F=/test/input/interaction-screening/")
-    assert prerun_lines[0].endswith("seqs.fa")
-    assert prerun_lines[1] == "D=/tmp/split"
+    posted_payload = mock_post.call_args.args[0]["launch"]
+    # The already-persisted launch_payload (including preRunScript) is forwarded as-is.
+    assert posted_payload == queued_job.launch_payload
+    assert posted_payload["preRunScript"] == "export NXF_OFFLINE=true\n"
 
 
 @pytest.mark.anyio
@@ -340,7 +325,9 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     test_db, persistent_models, wisps_settings
 ):
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        name="interaction-screening", prerun_script_path=None, ref_database=None
+    )
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
@@ -388,7 +375,6 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["revision"] == "dev"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
-    assert "preRunScript" not in queued_job.launch_payload
     assert queued_job.launch_payload["resume"] is False
     assert (
         "outdir: /test/output/interaction-screening/output-queued"
@@ -399,81 +385,134 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
         in queued_job.launch_payload["paramsText"]
     )
     assert "tools: boltz" in queued_job.launch_payload["paramsText"]
+    prerun_lines = queued_job.launch_payload["preRunScript"].split("\n")
+    assert prerun_lines[0].startswith("F=/test/input/interaction-screening/")
+    assert prerun_lines[0].endswith("seqs.fa")
+    assert prerun_lines[1] == "D=/tmp/split"
+
+
+def _wisps_form_and_data(**form_data_overrides) -> tuple[WorkflowLaunchForm, WispsFormData]:
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
+    defaults = {
+        "workflow": "interaction-screening",
+        "tool": "boltz",
+        "fastaS3Uri": "s3://bucket/seqs.fa",
+        "splitOutputDir": "/tmp/split",
+    }
+    defaults.update(form_data_overrides)
+    return form, WispsFormData(**defaults)
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_with_prerun_script_path(wisps_settings, persistent_models):
-    """prerun_script_path is forwarded to get_executor_script."""
-    mock_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
-    prerun_url = "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
+async def test_prepare_wisps_workflow_forwards_prerun_script_path(
+    test_db, persistent_models, wisps_settings
+):
+    """prerun_script_path is forwarded to get_executor_script at prepare time."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
+        ref_database=None,
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form, form_data = _wisps_form_and_data()
 
     with (
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
-            "app.services.wisps_executor.post_seqera_launch",
-            new=AsyncMock(return_value=mock_result),
-        ) as mock_post,
+            "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
+        ),
         patch(
             "app.services.wisps_executor.get_executor_script", return_value="prerun_body"
         ) as mock_script,
     ):
-        result = await launch_wisps_workflow(
-            queued_job=_queued_wisps_job(prerun_script_path=prerun_url),
+        prepared_job = await prepare_wisps_workflow(
+            form=form,
             settings=wisps_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            output_id="output-queued",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
         )
 
-    assert result.workflow_id == "wf_prerun"
     call_kwargs = mock_script.call_args.kwargs
-    assert call_kwargs["prerun_script_path"] == prerun_url
-    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert posted_payload["preRunScript"].endswith("prerun_body")
-    assert "F=" in posted_payload["preRunScript"]
-    assert "D=/tmp/split" in posted_payload["preRunScript"]
+    assert (
+        call_kwargs["prerun_script_path"]
+        == "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
+    )
+    prerun_script = prepared_job.launch_payload["preRunScript"]
+    assert prerun_script.endswith("prerun_body")
+    assert "F=" in prerun_script
+    assert "D=/tmp/split" in prerun_script
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
-    wisps_settings, persistent_models
+async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
+    test_db, persistent_models, wisps_settings
 ):
     """When the workflow has a ref_database, it's exported as PF_DB_BASE_DIR."""
-    mock_result = WorkflowLaunchResult(workflow_id="wf_refdb", status="submitted")
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        ref_database="/scratch/mini_dbs", prerun_script_path=None
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form, form_data = _wisps_form_and_data()
 
     with (
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
-            "app.services.wisps_executor.post_seqera_launch",
-            new=AsyncMock(return_value=mock_result),
-        ) as mock_post,
-        patch("app.services.wisps_executor.get_executor_script", return_value="prerun_body"),
+            "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
+        ),
     ):
-        await launch_wisps_workflow(
-            queued_job=_queued_wisps_job(ref_database="/scratch/mini_dbs"),
+        prepared_job = await prepare_wisps_workflow(
+            form=form,
             settings=wisps_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            output_id="output-queued",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
         )
 
-    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in posted_payload["preRunScript"]
+    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in prepared_job.launch_payload["preRunScript"]
 
 
 @pytest.mark.anyio
-async def test_launch_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
-    wisps_settings, persistent_models
+async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
+    test_db, persistent_models, wisps_settings
 ):
     """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
-    mock_result = WorkflowLaunchResult(workflow_id="wf_norefdb", status="submitted")
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form, form_data = _wisps_form_and_data()
 
     with (
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
         patch(
-            "app.services.wisps_executor.post_seqera_launch",
-            new=AsyncMock(return_value=mock_result),
-        ) as mock_post,
-        patch("app.services.wisps_executor.get_executor_script", return_value="prerun_body"),
+            "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
+        ),
     ):
-        await launch_wisps_workflow(
-            queued_job=_queued_wisps_job(ref_database=None),
+        prepared_job = await prepare_wisps_workflow(
+            form=form,
             settings=wisps_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            output_id="output-queued",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
         )
 
-    posted_payload = mock_post.call_args.kwargs["payload"]["launch"]
-    assert "PF_DB_BASE_DIR" not in posted_payload["preRunScript"]
+    assert "PF_DB_BASE_DIR" not in prepared_job.launch_payload["preRunScript"]
 
 
 @pytest.mark.anyio
@@ -563,7 +602,7 @@ async def test_launch_wisps_workflow_with_tool(wisps_settings, persistent_models
 
     with (
         patch(
-            "app.services.wisps_executor.post_seqera_launch",
+            "app.services.launch_payloads.post_seqera_launch",
             new=AsyncMock(return_value=mock_result),
         ),
     ):

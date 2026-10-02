@@ -51,13 +51,12 @@ def _make_launch_form(**kwargs) -> WorkflowLaunchForm:
 def _queued_proteindj_job(
     *,
     params_text: str | None = None,
-    prerun_script_path: str | None = None,
+    prerun_script: str = "export NXF_OFFLINE=true\n",
 ) -> QueuedJob:
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="de-novo-design",
         repo_url="https://github.com/org/proteindj",
-        prerun_script_path=prerun_script_path,
     )
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
@@ -72,6 +71,7 @@ def _queued_proteindj_job(
         "configProfiles": ["singularity"],
         "configText": "config_text",
         "resume": False,
+        "preRunScript": prerun_script,
     }
     return QueuedJobFactory.create_sync(
         workflow=workflow,
@@ -291,7 +291,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     test_db, persistent_models, seqera_env
 ):
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteindj-run")
@@ -345,7 +345,8 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
-    assert "preRunScript" not in queued_job.launch_payload
+    assert "export NXF_OFFLINE=true" in queued_job.launch_payload["preRunScript"]
+    assert "module load singularity" in queued_job.launch_payload["preRunScript"]
     assert queued_job.launch_payload["resume"] is False
     params_text = queued_job.launch_payload["paramsText"]
     staged_pdb_location = f"/test/input/de-novo-design/{workflow_run.id}/test.pdb"
@@ -386,7 +387,7 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
 ):
     """The BindCraft toggle launches ProteinDJ with design_mode=bindcraft_denovo."""
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(tool="bindcraft", runName="queued-bindcraft-run")
@@ -430,7 +431,7 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
     test_db, persistent_models, seqera_env
 ):
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync(name="de-novo-design")
+    workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(paramsText="extra_param: value")
@@ -465,6 +466,51 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
     )
     assert "extra_param: value" in queued_job.launch_payload["paramsText"]
     assert prepared_job.id == queued_job.id
+
+
+@pytest.mark.anyio
+async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
+    test_db, persistent_models, seqera_env
+):
+    """prerun_script_path is forwarded to get_executor_script at prepare time."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        name="de-novo-design", prerun_script_path="/some/prerun.sh"
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form = _make_launch_form()
+
+    with (
+        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch(
+            "app.services.proteindj_executor.get_proteindj_config_profiles",
+            return_value=["singularity"],
+        ),
+        patch(
+            "app.services.proteindj_executor.get_executor_script",
+            return_value="prerun_body",
+        ) as mock_script,
+    ):
+        prepared_job = await prepare_proteindj_workflow(
+            form=form,
+            settings=seqera_env,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/org/proteindj",
+            config_path="/fake/proteindj.config",
+            output_id="run-output-id",
+            form_data=_form_data(
+                starting_pdb="s3://my-bucket/inputs/test.pdb",
+                target_hotspot_residues="A20,A21",
+                number_of_final_designs=5,
+                min_length=100,
+                max_length=150,
+            ),
+            user_details=_USER_DETAILS,
+        )
+
+    assert prepared_job.launch_payload["preRunScript"] == "prerun_body"
+    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
 
 
 @pytest.mark.anyio
@@ -639,53 +685,27 @@ async def test_launch_proteindj_workflow_success(seqera_env, persistent_models):
 
     with (
         patch(
-            "app.services.proteindj_executor.post_seqera_launch",
+            "app.services.launch_payloads.post_seqera_launch",
             new_callable=AsyncMock,
             return_value=expected_result,
         ) as mock_post,
     ):
-        result = await launch_proteindj_workflow(
-            queued_job=_queued_proteindj_job(), settings=seqera_env
-        )
+        queued_job = _queued_proteindj_job()
+        result = await launch_proteindj_workflow(queued_job=queued_job, settings=seqera_env)
 
     assert result.workflow_id == "wf_success"
     assert result.status == "submitted"
     mock_post.assert_called_once()
     posted_payload = mock_post.call_args.args[0]["launch"]
-    assert "module load singularity" in posted_payload["preRunScript"]
-    assert "module load nextflow" in posted_payload["preRunScript"]
-
-
-@pytest.mark.anyio
-async def test_launch_proteindj_workflow_with_prerun_script_path(seqera_env, persistent_models):
-    expected_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
-
-    with (
-        patch(
-            "app.services.proteindj_executor.post_seqera_launch",
-            new_callable=AsyncMock,
-            return_value=expected_result,
-        ) as mock_post,
-        patch(
-            "app.services.proteindj_executor.get_executor_script",
-            return_value="prerun_body",
-        ) as mock_script,
-    ):
-        result = await launch_proteindj_workflow(
-            queued_job=_queued_proteindj_job(prerun_script_path="/some/prerun.sh"),
-            settings=seqera_env,
-        )
-
-    assert result.workflow_id == "wf_prerun"
-    posted_payload = mock_post.call_args.args[0]["launch"]
-    assert posted_payload["preRunScript"] == "prerun_body"
-    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
+    # The already-persisted launch_payload (including preRunScript) is forwarded as-is.
+    assert posted_payload == queued_job.launch_payload
+    assert posted_payload["preRunScript"] == "export NXF_OFFLINE=true\n"
 
 
 @pytest.mark.anyio
 async def test_launch_proteindj_workflow_dry_run(seqera_env, persistent_models):
     with patch(
-        "app.services.proteindj_executor.post_seqera_launch",
+        "app.services.launch_payloads.post_seqera_launch",
         new_callable=AsyncMock,
     ) as mock_post:
         result = await launch_proteindj_workflow(

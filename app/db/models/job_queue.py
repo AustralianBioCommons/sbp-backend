@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid7
 
-from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, event, func
-from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, validates
+from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from .. import Base
 
@@ -41,15 +41,6 @@ class QueuedJob(Base):
     workflow: Mapped[Workflow] = relationship()
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="queued_jobs")
 
-    @validates("launch_payload")
-    def ensure_no_prerun_script(self, key: str, value: dict) -> dict:
-        """
-        Ensure that launch_payload does not include a preRunScript -
-        preRunScript may contain sensitive info like AWS keys.
-        """
-        _raise_if_prerun_script(value)
-        return value
-
     def cancel_pending_job(self, session: Session, commit: bool = False) -> None:
         self.status = "cancelled"
         self.next_attempt_at = None
@@ -74,16 +65,3 @@ class QueuedJob(Base):
         session.add(self)
         if commit:
             session.commit()
-
-
-def _raise_if_prerun_script(launch_payload: dict) -> None:
-    if "preRunScript" in launch_payload:
-        raise ValueError("QueuedJob.launch_payload must not include preRunScript")
-
-
-def _validate_queued_job_launch_payload(mapper, connection, target: QueuedJob) -> None:
-    _raise_if_prerun_script(target.launch_payload)
-
-
-event.listen(QueuedJob, "before_insert", _validate_queued_job_launch_payload)
-event.listen(QueuedJob, "before_update", _validate_queued_job_launch_payload)

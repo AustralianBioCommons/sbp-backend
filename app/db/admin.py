@@ -674,12 +674,128 @@ class DataTransferAdmin(ModelView):
         return "Output transfer reset to pending."
 
 
+class JSONTreeField(JSONField):
+    """JSONField that also renders a read-only, collapsible tree on the detail page.
+
+    Upstream JSONField only ships its jsoneditor assets for the create/edit
+    form (BaseField.additional_css_links/js_links gate on action.is_form()),
+    so a detail page falls back to displays/json.html's bare
+    ``{{ data|tojson }}`` with no client-side formatting - the vendored
+    displays.js that's meant to pretty-print it is never even included there,
+    and round-trips the text through JSON.stringify/parse in a way that
+    never actually parses it. This adds a small custom renderer for the
+    DETAIL action instead of reusing the vendored jsoneditor widget, since
+    jsoneditor shows multi-line string values (e.g. launch_payload's
+    paramsText/configText, which embed YAML/Nextflow config text with real
+    newlines) JSON-escaped on one line - this renders those in a <pre> block
+    with their actual line breaks preserved instead.
+    """
+
+    def additional_js_links(self, request: Request, action: RequestAction) -> list[str]:
+        links = super().additional_js_links(request, action)
+        if action == RequestAction.DETAIL:
+            links = [*links, "/admin/assets/json-tree-detail.js"]
+        return links
+
+
+# Replaces each read-only JSONTreeField's flat `div.field-json` (rendered by
+# the upstream displays/json.html template, as a single-line JSON-escaped
+# string) with a collapsible <details>-based tree. Multi-line string values
+# (configText/paramsText) render in a <pre> with their real line breaks
+# intact, rather than JSON-escaped "\n" sequences.
+_JSON_TREE_DETAIL_JS = """
+$(function () {
+  // Internal Seqera infra identifiers - noise for a human reading the
+  // launch payload, so hidden from the tree rather than surfaced as fields.
+  var HIDDEN_KEYS = ["computeEnvId", "workspaceId"];
+
+  function renderJsonTree(value) {
+    if (value === null || value === undefined) {
+      return $('<span>').css("color", "#888").text("null");
+    }
+    if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
+      var isArray = Array.isArray(value);
+      var entries = isArray ? value.map(function (v, i) { return [i, v]; }) : Object.entries(value);
+      if (!isArray) {
+        entries = entries.filter(function (entry) {
+          return HIDDEN_KEYS.indexOf(entry[0]) === -1;
+        });
+      }
+      if (entries.length === 0) {
+        return $('<span>').css("color", "#888").text(isArray ? "[]" : "{}");
+      }
+      var details = $('<details open>');
+      details.append(
+        $('<summary>')
+          .css({ cursor: "pointer", fontWeight: "bold", color: "#212529" })
+          .text((isArray ? "Array" : "Object") + " (" + entries.length + ")")
+      );
+      var children = $('<div>').css({
+        marginLeft: "1.25em",
+        paddingLeft: "0.75em",
+        borderLeft: "1px dotted #ccc",
+      });
+      entries.forEach(function (entry) {
+        var row = $('<div>').css("margin", "0.15em 0");
+        row.append($('<span>').css({ color: "#8b1d8b", fontWeight: "bold" }).text(entry[0] + ": "));
+        row.append(renderJsonTree(entry[1]));
+        children.append(row);
+      });
+      details.append(children);
+      return details;
+    }
+    if (typeof value === "string" && value.indexOf("\\n") !== -1) {
+      return $('<pre>')
+        .css({
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          margin: "0.25em 0",
+          padding: "0.5em",
+          color: "#212529",
+          background: "#f6f6f6",
+          border: "1px solid #e0e0e0",
+          borderRadius: "4px",
+          maxHeight: "24em",
+          overflow: "auto",
+        })
+        .text(value);
+    }
+    if (typeof value === "string") {
+      return $('<span>').css("color", "#6a8759").text(JSON.stringify(value));
+    }
+    return $('<span>').css("color", "#1750eb").text(String(value));
+  }
+
+  $("div.field-json").each(function () {
+    var el = this;
+    var data;
+    try {
+      data = JSON.parse($(el).text());
+    } catch (e) {
+      return;
+    }
+    $(el)
+      .empty()
+      .css({
+        fontFamily: "monospace",
+        color: "#212529",
+        background: "#ffffff",
+        padding: "0.75em",
+        border: "1px solid #e0e0e0",
+        borderRadius: "4px",
+      })
+      .append(renderJsonTree(data));
+  });
+});
+"""
+
+
 class QueuedJobAdmin(ModelView):
     fields = [
         "id",
         HasOne("workflow_run", identity="workflow-run"),
         HasOne("workflow", identity="workflow"),
-        "launch_payload",
+        JSONTreeField("launch_payload"),
         "status",
         "attempts",
         "queued_at",
@@ -688,6 +804,7 @@ class QueuedJobAdmin(ModelView):
         "submitted_at",
         "error",
     ]
+    exclude_fields_from_list = ["launch_payload"]
 
 
 def _get_admin_session_cookie_name() -> str:
@@ -873,6 +990,10 @@ def _mount_admin_ui_assets(app: FastAPI) -> None:
     @router.get("/admin/assets/workflow-run-export.js")
     def workflow_run_export_js() -> Response:
         return Response(content=_WORKFLOW_RUN_EXPORT_ALL_JS, media_type="application/javascript")
+
+    @router.get("/admin/assets/json-tree-detail.js")
+    def json_tree_detail_js() -> Response:
+        return Response(content=_JSON_TREE_DETAIL_JS, media_type="application/javascript")
 
     app.include_router(router)
 

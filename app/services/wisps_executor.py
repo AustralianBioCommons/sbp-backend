@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import shlex
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
+from ..schemas.workflows.interaction_screening import WispsFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .globus_transfer import build_gadi_input_path, build_gadi_output_path
-from .launch_payloads import get_executor_script, inject_prerun_script, without_prerun_script
+from .launch_payloads import get_executor_script, send_queued_launch
 from .results_utils import s3_uri_to_key
-from .seqera import (
-    WorkflowLaunchResult,
-    params_to_yaml_text,
-    post_seqera_launch,
-)
+from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
     WISPS_WORKFLOW_MODES,
@@ -28,8 +25,6 @@ from .wisps_config import (
     get_wisps_config_text,
     get_wisps_default_params,
 )
-
-logger = logging.getLogger(__name__)
 
 
 async def prepare_wisps_workflow(
@@ -95,10 +90,51 @@ async def prepare_wisps_workflow(
         "resume": False,
     }
 
+    try:
+        wisps_fields = WispsFormData.model_validate(form_data.model_dump())
+    except ValidationError as exc:
+        raise WorkflowLaunchError(
+            "'fastaS3Uri'/'splitOutputDir' are required in formData for WISPS workflow launch"
+        ) from exc
+    fasta_uri = wisps_fields.fastaS3Uri.strip()
+    split_output_dir = wisps_fields.splitOutputDir.strip()
+    if not fasta_uri or not split_output_dir:
+        raise WorkflowLaunchError("Missing fastaS3Uri/splitOutputDir in formData")
+    fasta_key = s3_uri_to_key(fasta_uri)
+    if not fasta_key:
+        raise WorkflowLaunchError(f"Invalid S3 URI for fastaS3Uri: {fasta_uri}")
+    workflow = workflow_run.workflow
+    assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    # Matches the destination_location computed by _stage_wisps_fasta at queue
+    # time (app/routes/workflows.py) - the aggregated FASTA Globus stages to.
+    staged_fasta_location = build_gadi_input_path(
+        workflow_run.id,
+        workflow.name.lower(),
+        os.path.basename(fasta_key),
+        globus_settings=settings.globus,
+    )
+
+    prerun_script = get_executor_script(
+        prerun_script_path=workflow.prerun_script_path,
+        repo_gadi_path=workflow.repo_gadi_path,
+        repo_url=workflow.repo_url,
+    )
+    # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
+    # files the samplesheet references, reading F (input) and D (output dir) as
+    # shell vars - get_executor_script no longer injects per-run env, so prepend
+    # them here instead.
+    prerun_script = (
+        f"F={shlex.quote(staged_fasta_location)}\n"
+        f"D={shlex.quote(split_output_dir)}\n" + prerun_script
+    )
+    if workflow.ref_database:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
+    launch_payload["preRunScript"] = prerun_script
+
     queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
+        workflow=workflow,
         workflow_run=workflow_run,
-        launch_payload=without_prerun_script(launch_payload),
+        launch_payload=launch_payload,
         status="pending",
         next_attempt_at=datetime.now(UTC),
     )
@@ -118,52 +154,6 @@ async def launch_wisps_workflow(
 ) -> WorkflowLaunchResult | None:
     """Launch an interaction screening (WISPS) workflow on the Seqera Platform."""
     settings = settings or get_settings()
-    if not queued_job.workflow_run.submitted_form_data:
-        raise ValueError("No submitted form data found for queued job")
-    form_data = WorkflowFormData.model_validate(queued_job.workflow_run.submitted_form_data)
-    fasta_uri = (form_data.extra_fields.get("fastaS3Uri") or "").strip()
-    split_output_dir = (form_data.extra_fields.get("splitOutputDir") or "").strip()
-    if not fasta_uri or not split_output_dir:
-        raise ValueError("Missing fastaS3Uri/splitOutputDir in submitted form data")
-
-    fasta_key = s3_uri_to_key(fasta_uri)
-    if not fasta_key:
-        raise ValueError(f"Invalid S3 URI for fastaS3Uri: {fasta_uri}")
-    if queued_job.workflow_run.workflow is None:
-        raise ValueError("Queued job's workflow run has no associated workflow")
-    # Matches the destination_location computed by _stage_wisps_fasta at queue
-    # time (app/routes/workflows.py) - the aggregated FASTA Globus stages to.
-    staged_fasta_location = build_gadi_input_path(
-        queued_job.workflow_run.id,
-        queued_job.workflow_run.workflow.name.lower(),
-        os.path.basename(fasta_key),
-        globus_settings=settings.globus,
-    )
-
-    prerun_script = get_executor_script(
-        prerun_script_path=queued_job.workflow.prerun_script_path,
-        repo_gadi_path=queued_job.workflow.repo_gadi_path,
-        repo_url=queued_job.workflow.repo_url,
-    )
-    # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
-    # files the samplesheet references, reading F (input) and D (output dir) as
-    # shell vars - get_executor_script no longer injects per-run env, so prepend
-    # them here instead.
-    prerun_script = (
-        f"F={shlex.quote(staged_fasta_location)}\n"
-        f"D={shlex.quote(split_output_dir)}\n" + prerun_script
-    )
-    if queued_job.workflow.ref_database:
-        prerun_script += (
-            f"\nexport PF_DB_BASE_DIR={shlex.quote(queued_job.workflow.ref_database)}\n"
-        )
-    runtime_payload = inject_prerun_script(
-        launch_payload=queued_job.launch_payload, prerun_script=prerun_script
-    )
-
-    if dry_run:
-        logger.info("Dry run - not launching WISPS workflow")
-        return None
-    return await post_seqera_launch(
-        payload={"launch": runtime_payload}, workflow_label="WISPS", settings=settings
+    return await send_queued_launch(
+        queued_job=queued_job, settings=settings, workflow_label="WISPS", dry_run=dry_run
     )
