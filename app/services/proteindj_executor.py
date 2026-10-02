@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -16,12 +15,7 @@ from ..db.models.core import DataTransfer, RunInput, S3Object
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .globus_transfer import build_gadi_input_path, build_gadi_output_path
-from .launch_payloads import (
-    DEFAULT_MODULE_LOADS,
-    get_executor_script,
-    inject_prerun_script,
-    without_prerun_script,
-)
+from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteindj_config import (
     get_proteindj_config_profiles,
     get_proteindj_config_text,
@@ -29,14 +23,8 @@ from .proteindj_config import (
     get_proteindj_design_mode,
 )
 from .results_utils import s3_uri_to_key
-from .seqera import (
-    WorkflowLaunchResult,
-    params_to_yaml_text,
-    post_seqera_launch,
-)
+from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
-
-logger = logging.getLogger(__name__)
 
 
 def _design_length(fields: ProteinDjFormData) -> str:
@@ -152,10 +140,19 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "resume": False,
     }
 
+    workflow = workflow_run.workflow
+    assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    launch_payload["preRunScript"] = get_executor_script(
+        prerun_script_path=workflow.prerun_script_path,
+        repo_gadi_path=workflow.repo_gadi_path,
+        repo_url=workflow.repo_url,
+        module_loads=DEFAULT_MODULE_LOADS,
+    )
+
     queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
+        workflow=workflow,
         workflow_run=workflow_run,
-        launch_payload=without_prerun_script(launch_payload),
+        launch_payload=launch_payload,
         status="pending",
         next_attempt_at=datetime.now(UTC),
     )
@@ -167,7 +164,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     return queued_job
 
 
-async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
+async def launch_proteindj_workflow(
     *,
     queued_job: QueuedJob,
     settings: Settings | None = None,
@@ -175,34 +172,6 @@ async def launch_proteindj_workflow(  # pylint: disable=too-many-locals
 ) -> WorkflowLaunchResult | None:
     """Launch a proteindj workflow on the Seqera Platform."""
     settings = settings or get_settings()
-    launch_payload = queued_job.launch_payload
-
-    # Log the complete params being sent
-    logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
-
-    logger.info(
-        "Launching proteindj workflow via Seqera API",
-        extra={
-            "workspaceId": launch_payload["workspaceId"],
-            "computeEnvId": launch_payload["computeEnvId"],
-            "pipeline": launch_payload["pipeline"],
-            "runName": launch_payload["runName"],
-        },
-    )
-
-    prerun_script = get_executor_script(
-        prerun_script_path=queued_job.workflow.prerun_script_path,
-        repo_gadi_path=queued_job.workflow.repo_gadi_path,
-        repo_url=queued_job.workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
-    )
-    runtime_payload = inject_prerun_script(
-        launch_payload=launch_payload, prerun_script=prerun_script
-    )
-
-    if dry_run:
-        logger.info("Dry run - not launching proteindj workflow")
-        return None
-    return await post_seqera_launch(
-        {"launch": runtime_payload}, workflow_label="ProteinDJ", settings=settings
+    return await send_queued_launch(
+        queued_job=queued_job, settings=settings, workflow_label="ProteinDJ", dry_run=dry_run
     )

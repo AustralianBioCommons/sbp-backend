@@ -46,15 +46,12 @@ def _form_data(**extra) -> WorkflowFormData:
 def _queued_proteinfold_job(
     *,
     params_text: str | None = None,
-    prerun_script_path: str | None = None,
-    ref_database: str | None = None,
+    prerun_script: str = "export NXF_OFFLINE=true\n",
 ) -> QueuedJob:
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         name="single-prediction",
         repo_url="https://github.com/nf-core/proteinfold",
-        prerun_script_path=prerun_script_path,
-        ref_database=ref_database,
     )
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
@@ -73,6 +70,7 @@ def _queued_proteinfold_job(
         "configProfiles": ["singularity"],
         "configText": "config_text",
         "resume": False,
+        "preRunScript": prerun_script,
     }
     return QueuedJobFactory.create_sync(
         workflow=workflow,
@@ -293,103 +291,21 @@ async def test_launch_proteinfold_workflow_success(seqera_env, persistent_models
 
     with (
         patch(
-            "app.services.proteinfold_executor.post_seqera_launch",
+            "app.services.launch_payloads.post_seqera_launch",
             new_callable=AsyncMock,
             return_value=expected_result,
         ) as mock_post,
     ):
-        result = await launch_proteinfold_workflow(
-            queued_job=_queued_proteinfold_job(), settings=seqera_env
-        )
+        queued_job = _queued_proteinfold_job()
+        result = await launch_proteinfold_workflow(queued_job=queued_job, settings=seqera_env)
 
     assert result.workflow_id == "wf_success"
     assert result.status == "submitted"
     mock_post.assert_called_once()
     posted_payload = mock_post.call_args.args[0]["launch"]
-    assert "module load singularity" in posted_payload["preRunScript"]
-    assert "module load nextflow" in posted_payload["preRunScript"]
-
-
-@pytest.mark.anyio
-async def test_launch_proteinfold_workflow_injects_prerun_script_at_launch(
-    seqera_env, persistent_models
-):
-    expected_result = WorkflowLaunchResult(workflow_id="wf_prerun", status="submitted")
-
-    with (
-        patch(
-            "app.services.proteinfold_executor.post_seqera_launch",
-            new_callable=AsyncMock,
-            return_value=expected_result,
-        ) as mock_post,
-        patch(
-            "app.services.proteinfold_executor.get_executor_script",
-            return_value="prerun_body",
-        ) as mock_script,
-    ):
-        result = await launch_proteinfold_workflow(
-            queued_job=_queued_proteinfold_job(prerun_script_path="/some/prerun.sh"),
-            settings=seqera_env,
-        )
-
-    assert result.workflow_id == "wf_prerun"
-    posted_payload = mock_post.call_args.args[0]["launch"]
-    assert posted_payload["preRunScript"] == "prerun_body"
-    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
-
-
-@pytest.mark.anyio
-async def test_launch_proteinfold_workflow_exports_pf_db_base_dir_from_ref_database(
-    seqera_env, persistent_models
-):
-    """When the workflow has a ref_database, it's exported as PF_DB_BASE_DIR."""
-    expected_result = WorkflowLaunchResult(workflow_id="wf_refdb", status="submitted")
-
-    with (
-        patch(
-            "app.services.proteinfold_executor.post_seqera_launch",
-            new_callable=AsyncMock,
-            return_value=expected_result,
-        ) as mock_post,
-        patch(
-            "app.services.proteinfold_executor.get_executor_script",
-            return_value="prerun_body",
-        ),
-    ):
-        await launch_proteinfold_workflow(
-            queued_job=_queued_proteinfold_job(ref_database="/scratch/mini_dbs"),
-            settings=seqera_env,
-        )
-
-    posted_payload = mock_post.call_args.args[0]["launch"]
-    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in posted_payload["preRunScript"]
-
-
-@pytest.mark.anyio
-async def test_launch_proteinfold_workflow_without_ref_database_omits_pf_db_base_dir(
-    seqera_env, persistent_models
-):
-    """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
-    expected_result = WorkflowLaunchResult(workflow_id="wf_norefdb", status="submitted")
-
-    with (
-        patch(
-            "app.services.proteinfold_executor.post_seqera_launch",
-            new_callable=AsyncMock,
-            return_value=expected_result,
-        ) as mock_post,
-        patch(
-            "app.services.proteinfold_executor.get_executor_script",
-            return_value="prerun_body",
-        ),
-    ):
-        await launch_proteinfold_workflow(
-            queued_job=_queued_proteinfold_job(ref_database=None),
-            settings=seqera_env,
-        )
-
-    posted_payload = mock_post.call_args.args[0]["launch"]
-    assert "PF_DB_BASE_DIR" not in posted_payload["preRunScript"]
+    # The already-persisted launch_payload (including preRunScript) is forwarded as-is.
+    assert posted_payload == queued_job.launch_payload
+    assert posted_payload["preRunScript"] == "export NXF_OFFLINE=true\n"
 
 
 @pytest.mark.anyio
@@ -397,7 +313,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     test_db, persistent_models, seqera_env
 ):
     user = AppUserFactory.create_sync()
-    workflow = WorkflowFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(prerun_script_path=None)
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteinfold-run")
@@ -450,7 +366,8 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
     assert queued_job.launch_payload["configText"] == "config_text"
-    assert "preRunScript" not in queued_job.launch_payload
+    assert "export NXF_OFFLINE=true" in queued_job.launch_payload["preRunScript"]
+    assert "module load singularity" in queued_job.launch_payload["preRunScript"]
     assert queued_job.launch_payload["resume"] is False
     assert (
         "outdir: /test/output/single-prediction/run-output-id"
@@ -463,6 +380,102 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert "mode: colabfold" in queued_job.launch_payload["paramsText"]
     assert "colabfold_num_recycles: 3" in queued_job.launch_payload["paramsText"]
     assert "colabfold_use_templates: true" in queued_job.launch_payload["paramsText"]
+
+
+@pytest.mark.anyio
+async def test_prepare_proteinfold_workflow_forwards_prerun_script_path(
+    test_db, persistent_models, seqera_env
+):
+    """prerun_script_path is forwarded to get_executor_script at prepare time."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(prerun_script_path="/some/prerun.sh", ref_database=None)
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form = _make_launch_form()
+
+    with (
+        patch(
+            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            return_value="config_text",
+        ),
+        patch(
+            "app.services.proteinfold_executor.get_executor_script",
+            return_value="prerun_body",
+        ) as mock_script,
+    ):
+        prepared_job = await prepare_proteinfold_workflow(
+            form=form,
+            settings=seqera_env,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
+            output_id="run-output-id",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/test.csv",
+        )
+
+    assert prepared_job.launch_payload["preRunScript"] == "prerun_body"
+    assert mock_script.call_args.kwargs["prerun_script_path"] == "/some/prerun.sh"
+
+
+@pytest.mark.anyio
+async def test_prepare_proteinfold_workflow_exports_pf_db_base_dir_from_ref_database(
+    test_db, persistent_models, seqera_env
+):
+    """When the workflow has a ref_database, it's exported as PF_DB_BASE_DIR."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        ref_database="/scratch/mini_dbs", prerun_script_path=None
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form = _make_launch_form()
+
+    with patch(
+        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        return_value="config_text",
+    ):
+        prepared_job = await prepare_proteinfold_workflow(
+            form=form,
+            settings=seqera_env,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
+            output_id="run-output-id",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/test.csv",
+        )
+
+    assert "export PF_DB_BASE_DIR=/scratch/mini_dbs" in prepared_job.launch_payload["preRunScript"]
+
+
+@pytest.mark.anyio
+async def test_prepare_proteinfold_workflow_without_ref_database_omits_pf_db_base_dir(
+    test_db, persistent_models, seqera_env
+):
+    """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form = _make_launch_form()
+
+    with patch(
+        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        return_value="config_text",
+    ):
+        prepared_job = await prepare_proteinfold_workflow(
+            form=form,
+            settings=seqera_env,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="https://github.com/nf-core/proteinfold",
+            config_path="/fake/proteinfold.config",
+            output_id="run-output-id",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/single-prediction/run-id/test.csv",
+        )
+
+    assert "PF_DB_BASE_DIR" not in prepared_job.launch_payload["preRunScript"]
 
 
 @pytest.mark.anyio
@@ -511,7 +524,7 @@ async def test_launch_proteinfold_workflow_with_form_data(seqera_env, persistent
 
     with (
         patch(
-            "app.services.proteinfold_executor.post_seqera_launch",
+            "app.services.launch_payloads.post_seqera_launch",
             new_callable=AsyncMock,
             return_value=expected_result,
         ),
