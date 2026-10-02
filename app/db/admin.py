@@ -705,6 +705,10 @@ class JSONTreeField(JSONField):
 # intact, rather than JSON-escaped "\n" sequences.
 _JSON_TREE_DETAIL_JS = """
 $(function () {
+  // Internal Seqera infra identifiers - noise for a human reading the
+  // launch payload, so hidden from the tree rather than surfaced as fields.
+  var HIDDEN_KEYS = ["computeEnvId", "workspaceId"];
+
   function renderJsonTree(value) {
     if (value === null || value === undefined) {
       return $('<span>').css("color", "#888").text("null");
@@ -712,6 +716,11 @@ $(function () {
     if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
       var isArray = Array.isArray(value);
       var entries = isArray ? value.map(function (v, i) { return [i, v]; }) : Object.entries(value);
+      if (!isArray) {
+        entries = entries.filter(function (entry) {
+          return HIDDEN_KEYS.indexOf(entry[0]) === -1;
+        });
+      }
       if (entries.length === 0) {
         return $('<span>').css("color", "#888").text(isArray ? "[]" : "{}");
       }
