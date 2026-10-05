@@ -25,7 +25,7 @@ from sqlalchemy import inspect as sqla_inspect
 from sqlalchemy.orm import Session, joinedload
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette_admin import CustomView, DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import action, link_row_action, row_action
@@ -55,9 +55,9 @@ from .models.core import (
 
 logger = logging.getLogger(__name__)
 
-_ADMIN_TEMPLATES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
-)
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ADMIN_TEMPLATES_DIR = os.path.join(_APP_DIR, "templates")
+_ADMIN_STATIC_DIR = os.path.join(_APP_DIR, "static", "admin")
 
 # The built-in displays/relation.html builds its href from the foreign model's
 # raw pk, which 500s ("May not contain path separators") for a pk containing
@@ -710,33 +710,6 @@ class JSONTreeField(JSONField):
         return links
 
 
-# Replaces each JSONTreeField's raw-text div with a read-only jsoneditor
-# widget (view/code/text mode switcher built in).
-_JSON_TREE_DETAIL_JS = """
-$(function () {
-  // Masked rather than removed, so the key is still visible as redacted.
-  var MASKED_KEYS = ["computeEnvId", "workspaceId"];
-
-  $("div.field-json").each(function () {
-    var el = this;
-    var data;
-    try {
-      data = JSON.parse($(el).text());
-    } catch (e) {
-      return;
-    }
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      MASKED_KEYS.forEach(function (key) {
-        if (key in data) data[key] = "***";
-      });
-    }
-    $(el).empty();
-    new JSONEditor(el, { mode: "view", modes: ["view", "code", "text"] }, data);
-  });
-});
-"""
-
-
 class QueuedJobAdmin(ModelView):
     fields = [
         "id",
@@ -926,7 +899,7 @@ def mount_db_admin(app: FastAPI, settings: Settings) -> None:
 
 
 def _mount_admin_ui_assets(app: FastAPI) -> None:
-    """Serve small custom JS files used by the admin dashboard's list pages.
+    """Serve small custom JS files used by the admin dashboard.
 
     Registered before the greedy Starlette Admin mount for the same reason as
     _mount_db_debug_api above. Gated behind admin auth for consistency with
@@ -940,7 +913,10 @@ def _mount_admin_ui_assets(app: FastAPI) -> None:
 
     @router.get("/admin/assets/json-tree-detail.js")
     def json_tree_detail_js() -> Response:
-        return Response(content=_JSON_TREE_DETAIL_JS, media_type="application/javascript")
+        return FileResponse(
+            os.path.join(_ADMIN_STATIC_DIR, "json-tree-detail.js"),
+            media_type="application/javascript",
+        )
 
     app.include_router(router)
 
