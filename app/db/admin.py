@@ -766,6 +766,21 @@ $(function () {
     return $('<span>').css("color", "#1750eb").text(String(value));
   }
 
+  function makeToggleButton(label, active) {
+    return $("<button type='button'>")
+      .text(label)
+      .css({
+        fontFamily: "inherit",
+        fontSize: "0.8em",
+        cursor: "pointer",
+        padding: "0.2em 0.75em",
+        borderRadius: "4px",
+        border: "1px solid #d0d0d0",
+        background: active ? "#212529" : "#ffffff",
+        color: active ? "#ffffff" : "#212529",
+      });
+  }
+
   $("div.field-json").each(function () {
     var el = this;
     var data;
@@ -774,6 +789,38 @@ $(function () {
     } catch (e) {
       return;
     }
+
+    var treeBtn = makeToggleButton("Object view", true);
+    var textBtn = makeToggleButton("Text view", false);
+    var toolbar = $("<div>")
+      .css({ display: "flex", gap: "0.4em", marginBottom: "0.5em" })
+      .append(treeBtn, textBtn);
+
+    var treeView = $("<div>").append(renderJsonTree(data));
+    var textView = $("<pre>")
+      .css({
+        display: "none",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        margin: 0,
+        maxHeight: "40em",
+        overflow: "auto",
+      })
+      .text(JSON.stringify(data, null, 2));
+
+    treeBtn.on("click", function () {
+      treeView.show();
+      textView.hide();
+      treeBtn.css({ background: "#212529", color: "#ffffff" });
+      textBtn.css({ background: "#ffffff", color: "#212529" });
+    });
+    textBtn.on("click", function () {
+      treeView.hide();
+      textView.show();
+      textBtn.css({ background: "#212529", color: "#ffffff" });
+      treeBtn.css({ background: "#ffffff", color: "#212529" });
+    });
+
     $(el)
       .empty()
       .css({
@@ -784,7 +831,7 @@ $(function () {
         border: "1px solid #e0e0e0",
         borderRadius: "4px",
       })
-      .append(renderJsonTree(data));
+      .append(toolbar, treeView, textView);
   });
 });
 """
