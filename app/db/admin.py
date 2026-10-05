@@ -714,8 +714,8 @@ class JSONTreeField(JSONField):
 # widget (view/code/text mode switcher built in).
 _JSON_TREE_DETAIL_JS = """
 $(function () {
-  // Noise for a human reading the launch payload.
-  var HIDDEN_KEYS = ["computeEnvId", "workspaceId"];
+  // Masked rather than removed, so the key is still visible as redacted.
+  var MASKED_KEYS = ["computeEnvId", "workspaceId"];
 
   $("div.field-json").each(function () {
     var el = this;
@@ -726,8 +726,8 @@ $(function () {
       return;
     }
     if (data && typeof data === "object" && !Array.isArray(data)) {
-      HIDDEN_KEYS.forEach(function (key) {
-        delete data[key];
+      MASKED_KEYS.forEach(function (key) {
+        if (key in data) data[key] = "***";
       });
     }
     $(el).empty();
