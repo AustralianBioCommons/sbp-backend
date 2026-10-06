@@ -5,6 +5,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from app.scheduler import jobs as scheduler_jobs
+from app.services.gadi_pbs_jobs import GadiPbsJobsError, GadiPbsJobsSnapshot, PbsJobStatus
 from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
 
 
@@ -79,7 +80,7 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     monkeypatch.setattr(
         scheduler_jobs,
         "get_available_workflow_capacity",
-        lambda **_kwargs: 25,
+        lambda _db_session, **_kwargs: 25,
     )
 
     scheduler_jobs.submit_pending_jobs(dry_run=True)
@@ -114,7 +115,7 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     monkeypatch.setattr(
         scheduler_jobs,
         "get_available_workflow_capacity",
-        lambda **_kwargs: 25,
+        lambda _db_session, **_kwargs: 25,
     )
 
     scheduler_jobs.submit_pending_jobs()
@@ -134,7 +135,9 @@ def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_mod
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
-    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 0)
+    monkeypatch.setattr(
+        scheduler_jobs, "get_available_workflow_capacity", lambda _db_session, **_kwargs: 0
+    )
 
     scheduler_jobs.submit_pending_jobs()
 
@@ -154,7 +157,9 @@ def test_submit_pending_jobs_caps_submissions_to_available_capacity(
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
-    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 2)
+    monkeypatch.setattr(
+        scheduler_jobs, "get_available_workflow_capacity", lambda _db_session, **_kwargs: 2
+    )
 
     scheduler_jobs.submit_pending_jobs()
 
@@ -179,7 +184,9 @@ def test_submit_pending_jobs_reschedules_due_launching_jobs(
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
     monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
     monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
-    monkeypatch.setattr(scheduler_jobs, "get_available_workflow_capacity", lambda **_kwargs: 1)
+    monkeypatch.setattr(
+        scheduler_jobs, "get_available_workflow_capacity", lambda _db_session, **_kwargs: 1
+    )
 
     scheduler_jobs.submit_pending_jobs()
 
@@ -190,21 +197,92 @@ def test_submit_pending_jobs_reschedules_due_launching_jobs(
     assert due_launching_job.next_attempt_at is not None
 
 
-def test_get_available_workflow_capacity_uses_seqera_active_count(monkeypatch, mock_settings):
-    async def _count_active_workflows(**_kwargs):
-        return 20
+def _pbs_job(job_id: str, *, queue: str, state: str) -> PbsJobStatus:
+    return PbsJobStatus(
+        job_id=job_id,
+        job_name=None,
+        state=state,
+        state_label=state,
+        queue=queue,
+        account=None,
+        submitted_at=None,
+        started_at=None,
+    )
 
-    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
-    mock_settings.seqera.max_concurrent_workflows = 25
 
-    assert scheduler_jobs.get_available_workflow_capacity(settings=mock_settings) == 5
+def _patch_pbs_snapshot(monkeypatch, jobs: list[PbsJobStatus], generated_at: datetime):
+    async def _get_pbs_jobs(**_kwargs):
+        return GadiPbsJobsSnapshot(generated_at=generated_at, jobs=jobs, queue_totals=[])
+
+    monkeypatch.setattr(scheduler_jobs.gadi_pbs_jobs, "get_pbs_jobs", _get_pbs_jobs)
 
 
-def test_get_available_workflow_capacity_floors_at_zero(monkeypatch, mock_settings):
-    async def _count_active_workflows(**_kwargs):
-        return 30
+def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec_jobs(
+    test_db, monkeypatch, mock_settings
+):
+    _patch_pbs_snapshot(
+        monkeypatch,
+        [
+            _pbs_job("1", queue="workflow-exec", state="R"),
+            _pbs_job("2", queue="workflow-exec", state="R"),
+            _pbs_job("3", queue="workflow-exec", state="Q"),
+            # Not counted: other states / other queues.
+            _pbs_job("4", queue="workflow-exec", state="H"),
+            _pbs_job("5", queue="workflow-exec", state="F"),
+            _pbs_job("6", queue="normal", state="R"),
+            _pbs_job("7", queue="gpuhopper", state="Q"),
+        ],
+        generated_at=datetime.now(UTC),
+    )
+    mock_settings.seqera.max_workflow_exec_jobs = 10
 
-    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
-    mock_settings.seqera.max_concurrent_workflows = 25
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
 
-    assert scheduler_jobs.get_available_workflow_capacity(settings=mock_settings) == 0
+
+def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
+    test_db, persistent_models, monkeypatch, mock_settings
+):
+    generated_at = datetime.now(UTC) - timedelta(minutes=10)
+    before = _create_queued_job(status="submitted")
+    before.submitted_at = generated_at - timedelta(minutes=1)
+    after = _create_queued_job(status="submitted")
+    after.submitted_at = generated_at + timedelta(minutes=1)
+    test_db.add_all([before, after])
+    test_db.commit()
+    _patch_pbs_snapshot(
+        monkeypatch, [_pbs_job("1", queue="workflow-exec", state="R")], generated_at
+    )
+    mock_settings.seqera.max_workflow_exec_jobs = 10
+
+    # 1 in the snapshot + 1 submitted since it was generated.
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
+
+
+def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mock_settings):
+    _patch_pbs_snapshot(
+        monkeypatch,
+        [_pbs_job(str(i), queue="workflow-exec", state="Q") for i in range(12)],
+        generated_at=datetime.now(UTC),
+    )
+    mock_settings.seqera.max_workflow_exec_jobs = 10
+
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 0
+
+
+def test_submit_pending_jobs_skips_when_pbs_snapshot_unavailable(
+    test_db, persistent_models, monkeypatch
+):
+    _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+    scheduler = _make_scheduler()
+
+    async def _get_pbs_jobs(**_kwargs):
+        raise GadiPbsJobsError("missing")
+
+    monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
+    monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda _db_session, **_kwargs: True)
+    monkeypatch.setattr(scheduler_jobs.gadi_pbs_jobs, "get_pbs_jobs", _get_pbs_jobs)
+
+    scheduler_jobs.submit_pending_jobs()
+
+    assert scheduler.get_jobs(jobstore="memory") == []

@@ -64,6 +64,15 @@ _PBS_DATETIME_FORMAT = "%a %b %d %H:%M:%S %Y"
 _PBS_TIMEZONE = ZoneInfo("Australia/Sydney")
 
 
+# Gadi queue that Seqera submits Nextflow head jobs to - one PBS job per
+# workflow run, so its queued+running count is how many SBP workflows are
+# currently occupying a submission slot (see scheduler's capacity check).
+WORKFLOW_EXEC_QUEUE = "workflow-exec"
+
+# Job states that count as occupying a slot in a queue.
+_ACTIVE_JOB_STATES = frozenset({"Q", "R"})
+
+
 class GadiPbsJobsError(RuntimeError):
     """Raised when the pushed jobs object is missing, unreadable, or malformed."""
 
@@ -103,6 +112,11 @@ class GadiPbsJobsSnapshot:
     generated_at: datetime
     jobs: list[PbsJobStatus]
     queue_totals: list[QueueTotal]
+
+
+def count_active_jobs_in_queue(snapshot: GadiPbsJobsSnapshot, queue: str) -> int:
+    """Count sbp_service's queued + running jobs in `queue`."""
+    return sum(1 for job in snapshot.jobs if job.queue == queue and job.state in _ACTIVE_JOB_STATES)
 
 
 def _parse_pbs_datetime(raw: Any) -> datetime | None:

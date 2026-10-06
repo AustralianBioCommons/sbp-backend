@@ -16,13 +16,12 @@ from ..db.models.core import AppUser, DataTransfer, Workflow
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
-from ..services import globus_transfer, health, seqera, workflow_repo_staging
+from ..services import gadi_pbs_jobs, globus_transfer, health, workflow_repo_staging
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
 from ..services.seqera import WorkflowLaunchResult
-from ..services.seqera_errors import SeqeraAPIError
 from ..services.wisps_executor import launch_wisps_workflow
 from . import SCHEDULER
 
@@ -236,17 +235,39 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
         return
 
 
-def get_available_workflow_capacity(settings: Settings | None = None) -> int:
+def get_available_workflow_capacity(db_session: Session, settings: Settings | None = None) -> int:
     """
-    How many more workflows can be submitted to Gadi right now, per the Seqera API's
-    count of workflows still occupying a job slot there (see MAX_CONCURRENT_WORKFLOWS).
+    How many more workflows can be submitted to Gadi right now, per sbp_service's
+    queued + running jobs in the workflow-exec queue (see MAX_WORKFLOW_EXEC_JOBS).
+
+    The PBS snapshot lags behind reality (Gadi-side push + Globus sync), so jobs
+    this scheduler submitted after the snapshot was generated are counted too -
+    otherwise consecutive ticks would each fill the full cap from the same
+    stale count.
     """
     settings = settings or get_settings()
-    active_workflow_count = asyncio.run(seqera.count_active_workflows(settings=settings))
-    capacity = max(0, settings.seqera.max_concurrent_workflows - active_workflow_count)
+    max_jobs = settings.seqera.max_workflow_exec_jobs
+    snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
+    pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
+        snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
+    )
+    submitted_since_snapshot = (
+        db_session.scalar(
+            select(func.count())
+            .select_from(QueuedJob)
+            .where(
+                QueuedJob.status == "submitted",
+                QueuedJob.submitted_at > snapshot.generated_at,
+            )
+        )
+        or 0
+    )
+    active_count = pbs_count + submitted_since_snapshot
+    capacity = max(0, max_jobs - active_count)
     logger.info(
-        f"{active_workflow_count}/{settings.seqera.max_concurrent_workflows} workflows active on Gadi "
-        f"({capacity} submission slot(s) available)."
+        f"{active_count}/{max_jobs} jobs active in Gadi {gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE} queue "
+        f"({pbs_count} in PBS snapshot from {snapshot.generated_at.isoformat()}, "
+        f"{submitted_since_snapshot} submitted since; {capacity} submission slot(s) available)."
     )
     return capacity
 
@@ -262,12 +283,12 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
         return
 
     try:
-        available_capacity = get_available_workflow_capacity(settings=settings)
-    except SeqeraAPIError as e:
-        logger.warning(f"Could not determine Gadi workflow capacity from Seqera: {e}")
+        available_capacity = get_available_workflow_capacity(db_session, settings=settings)
+    except gadi_pbs_jobs.GadiPbsJobsError as e:
+        logger.warning(f"Could not determine Gadi workflow capacity from PBS jobs snapshot: {e}")
         return
     if available_capacity <= 0:
-        logger.info("Gadi is at its concurrent workflow limit; skipping submission this tick.")
+        logger.info("Gadi workflow-exec queue is at its job limit; skipping submission this tick.")
         return
 
     now = datetime.now(tz=UTC)
