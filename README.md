@@ -202,7 +202,7 @@ Optional entries:
 - `AUTH_ISSUER` — Custom issuer URL to accept in addition to `https://{AUTH_DOMAIN}/`.
 - `AUTH_ALGORITHMS` — Comma-separated JWT algorithms (default `RS256`).
 - `SEQERA_GADI_PROJECT` — NCI Gadi project code used for PBS submissions (default `yz52`).
-- `SEQERA_MAX_CONCURRENT_WORKFLOWS` — Scheduler submission cap based on active Seqera workflows (default `25`).
+- `SEQERA_MAX_CONCURRENT_WORKFLOWS` — Scheduler submission cap on sbp_service's queued + running jobs in the Gadi `workflow-exec` queue (default `10`).
 - `SEQERA_WORKFLOW_SYNC_BATCH_LIMIT` — Workflow sync batch size for the scheduler (default `50`).
 - `SEQERA_HEALTH_CACHE_TTL_SECONDS` — Cache TTL for system status probes in seconds (default `30`).
 - `SEQERA_ENABLE_AGENT_HEALTHCHECK` — Set to `true` to enable the active Tower Agent liveness probe (default `false`).

@@ -234,7 +234,7 @@ def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec
         ],
         generated_at=datetime.now(UTC),
     )
-    mock_settings.seqera.max_workflow_exec_jobs = 10
+    mock_settings.seqera.max_concurrent_workflows = 10
 
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
 
@@ -252,7 +252,7 @@ def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
     _patch_pbs_snapshot(
         monkeypatch, [_pbs_job("1", queue="workflow-exec", state="R")], generated_at
     )
-    mock_settings.seqera.max_workflow_exec_jobs = 10
+    mock_settings.seqera.max_concurrent_workflows = 10
 
     # 1 in the snapshot + 1 submitted since it was generated.
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
@@ -264,7 +264,7 @@ def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mo
         [_pbs_job(str(i), queue="workflow-exec", state="Q") for i in range(12)],
         generated_at=datetime.now(UTC),
     )
-    mock_settings.seqera.max_workflow_exec_jobs = 10
+    mock_settings.seqera.max_concurrent_workflows = 10
 
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 0
 

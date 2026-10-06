@@ -238,7 +238,7 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
 def get_available_workflow_capacity(db_session: Session, settings: Settings | None = None) -> int:
     """
     How many more workflows can be submitted to Gadi right now, per sbp_service's
-    queued + running jobs in the workflow-exec queue (see MAX_WORKFLOW_EXEC_JOBS).
+    queued + running jobs in the workflow-exec queue (see MAX_CONCURRENT_WORKFLOWS).
 
     The PBS snapshot lags behind reality (Gadi-side push + Globus sync), so jobs
     this scheduler submitted after the snapshot was generated are counted too -
@@ -246,7 +246,7 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     stale count.
     """
     settings = settings or get_settings()
-    max_jobs = settings.seqera.max_workflow_exec_jobs
+    max_jobs = settings.seqera.max_concurrent_workflows
     snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
     pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
         snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
