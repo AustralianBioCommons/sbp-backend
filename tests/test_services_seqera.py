@@ -67,12 +67,13 @@ async def test_count_active_workflows_raises_on_api_error():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_get_queue_status_reports_active_and_available_capacity():
+async def test_get_queue_status_reports_active_and_available_capacity(mock_settings):
     respx.get(url__regex=r".*/workflow(\?.*)?$").mock(
         side_effect=_totals_by_status_handler({"RUNNING": 3, "SUBMITTED": 2})
     )
+    mock_settings.seqera.max_concurrent_workflows = 25
 
-    status = await get_queue_status()
+    status = await get_queue_status(settings=mock_settings)
 
     assert status.active_workflows == 5
     assert status.max_concurrent_workflows == 25
