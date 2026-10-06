@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import shlex
 from datetime import UTC, datetime
 from typing import Any
@@ -13,25 +12,14 @@ from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .globus_transfer import build_gadi_output_path
-from .launch_payloads import (
-    DEFAULT_MODULE_LOADS,
-    get_executor_script,
-    inject_prerun_script,
-    without_prerun_script,
-)
+from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
     get_proteinfold_config_text,
     get_proteinfold_default_params,
 )
-from .seqera import (
-    WorkflowLaunchResult,
-    params_to_yaml_text,
-    post_seqera_launch,
-)
+from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
-
-logger = logging.getLogger(__name__)
 
 # Params forwarded from the frontend's Tool Settings (step 2)
 _TOOL_PARAM_KEYS = frozenset(
@@ -125,10 +113,22 @@ async def prepare_proteinfold_workflow(
         "resume": False,
     }
 
+    workflow = workflow_run.workflow
+    assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    prerun_script = get_executor_script(
+        prerun_script_path=workflow.prerun_script_path,
+        repo_gadi_path=workflow.repo_gadi_path,
+        repo_url=workflow.repo_url,
+        module_loads=DEFAULT_MODULE_LOADS,
+    )
+    if workflow.ref_database:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
+    launch_payload["preRunScript"] = prerun_script
+
     queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
+        workflow=workflow,
         workflow_run=workflow_run,
-        launch_payload=without_prerun_script(launch_payload),
+        launch_payload=launch_payload,
         status="pending",
         next_attempt_at=datetime.now(UTC),
     )
@@ -148,36 +148,6 @@ async def launch_proteinfold_workflow(
 ) -> WorkflowLaunchResult | None:
     """Launch a proteinfold workflow on the Seqera Platform."""
     settings = settings or get_settings()
-    launch_payload = queued_job.launch_payload
-    logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
-    logger.info(
-        "Launching proteinfold workflow via Seqera API",
-        extra={
-            "workspaceId": launch_payload["workspaceId"],
-            "computeEnvId": launch_payload["computeEnvId"],
-            "pipeline": launch_payload["pipeline"],
-            "runName": launch_payload["runName"],
-        },
-    )
-
-    prerun_script = get_executor_script(
-        prerun_script_path=queued_job.workflow.prerun_script_path,
-        repo_gadi_path=queued_job.workflow.repo_gadi_path,
-        repo_url=queued_job.workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
-    )
-    if queued_job.workflow.ref_database:
-        prerun_script += (
-            f"\nexport PF_DB_BASE_DIR={shlex.quote(queued_job.workflow.ref_database)}\n"
-        )
-    runtime_payload = inject_prerun_script(
-        launch_payload=launch_payload,
-        prerun_script=prerun_script,
-    )
-
-    if dry_run:
-        logger.info("Dry run - not launching proteinfold workflow")
-        return None
-    return await post_seqera_launch(
-        {"launch": runtime_payload}, workflow_label="Proteinfold", settings=settings
+    return await send_queued_launch(
+        queued_job=queued_job, settings=settings, workflow_label="Proteinfold", dry_run=dry_run
     )

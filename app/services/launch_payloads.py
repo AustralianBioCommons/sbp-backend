@@ -1,30 +1,50 @@
-"""Helpers for safely preparing Seqera launch payloads."""
+"""Helpers for building and sending Seqera launch payloads."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING
 
+from .seqera import WorkflowLaunchResult, post_seqera_launch
 from .workflow_config_fetcher import fetch_workflow_config
+
+if TYPE_CHECKING:
+    from ..config import Settings
+    from ..db.models import QueuedJob
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODULE_LOADS = ["singularity", "nextflow/25.10.4"]
 
 
-def without_prerun_script(launch_payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy safe to persist in the job queue."""
-    persisted_payload = launch_payload.copy()
-    persisted_payload.pop("preRunScript", None)
-    return persisted_payload
+async def send_queued_launch(
+    *,
+    queued_job: QueuedJob,
+    settings: Settings,
+    workflow_label: str,
+    dry_run: bool = False,
+) -> WorkflowLaunchResult | None:
+    """Post a queued job's already-built launch_payload to Seqera as-is."""
+    launch_payload = queued_job.launch_payload
+    logger.info("Launch payload paramsText", extra={"paramsText": launch_payload["paramsText"]})
+    logger.info(
+        "Launching %s workflow via Seqera API",
+        workflow_label,
+        extra={
+            "workspaceId": launch_payload["workspaceId"],
+            "computeEnvId": launch_payload["computeEnvId"],
+            "pipeline": launch_payload["pipeline"],
+            "runName": launch_payload["runName"],
+        },
+    )
 
-
-def inject_prerun_script(
-    launch_payload: dict[str, Any],
-    prerun_script: str,
-) -> dict[str, Any]:
-    """Return a launch-time payload with preRunScript generated at send time."""
-    runtime_payload = launch_payload.copy()
-    runtime_payload["preRunScript"] = prerun_script
-    return runtime_payload
+    if dry_run:
+        logger.info("Dry run - not launching %s workflow", workflow_label)
+        return None
+    return await post_seqera_launch(
+        {"launch": launch_payload}, workflow_label=workflow_label, settings=settings
+    )
 
 
 def get_executor_script(

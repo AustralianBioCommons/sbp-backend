@@ -65,7 +65,7 @@ def _apply_bindcraft_design_target(
 ) -> None:
     """BindCraft's samplesheet requires number_of_final_designs, but the
     de-novo-design form only collects max_trajectories ("Number of
-    Trajectories") — this derives the QC-pass target as 2x the trajectory
+    Designs") — this derives the QC-pass target as 2x the trajectory
     count so the run isn't QC-gated below what was requested, without ever
     exposing it to the user. Scoped to workflow=de-novo-design AND
     tool=bindcraft specifically — de-novo-design also covers rfdiffusion,
