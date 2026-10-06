@@ -25,7 +25,7 @@ from sqlalchemy import inspect as sqla_inspect
 from sqlalchemy.orm import Session, joinedload
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette_admin import CustomView, DropDown, HasMany, JSONField, TimezoneConfig
 from starlette_admin._types import RequestAction
 from starlette_admin.actions import action, link_row_action, row_action
@@ -55,9 +55,9 @@ from .models.core import (
 
 logger = logging.getLogger(__name__)
 
-_ADMIN_TEMPLATES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
-)
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ADMIN_TEMPLATES_DIR = os.path.join(_APP_DIR, "templates")
+_ADMIN_STATIC_DIR = os.path.join(_APP_DIR, "static", "admin")
 
 # The built-in displays/relation.html builds its href from the foreign model's
 # raw pk, which 500s ("May not contain path separators") for a pk containing
@@ -674,12 +674,48 @@ class DataTransferAdmin(ModelView):
         return "Output transfer reset to pending."
 
 
+class JSONTreeField(JSONField):
+    """JSONField, but also loads jsoneditor (read-only) on the detail page.
+
+    Upstream only ships jsoneditor for the create/edit form; detail just
+    dumps the raw JSON string.
+    """
+
+    def additional_css_links(self, request: Request, action: RequestAction) -> list[str]:
+        links = super().additional_css_links(request, action)
+        if action == RequestAction.DETAIL:
+            links = [
+                *links,
+                str(
+                    request.url_for(
+                        f"{request.app.state.ROUTE_NAME}:statics", path="css/jsoneditor.min.css"
+                    )
+                ),
+            ]
+        return links
+
+    def additional_js_links(self, request: Request, action: RequestAction) -> list[str]:
+        links = super().additional_js_links(request, action)
+        if action == RequestAction.DETAIL:
+            links = [
+                *links,
+                str(
+                    request.url_for(
+                        f"{request.app.state.ROUTE_NAME}:statics",
+                        path="js/vendor/jsoneditor.min.js",
+                    )
+                ),
+                "/admin/assets/json-tree-detail.js",
+            ]
+        return links
+
+
 class QueuedJobAdmin(ModelView):
     fields = [
         "id",
         HasOne("workflow_run", identity="workflow-run"),
         HasOne("workflow", identity="workflow"),
-        "launch_payload",
+        JSONTreeField("launch_payload"),
         "status",
         "attempts",
         "queued_at",
@@ -688,6 +724,7 @@ class QueuedJobAdmin(ModelView):
         "submitted_at",
         "error",
     ]
+    exclude_fields_from_list = ["launch_payload"]
 
 
 def _get_admin_session_cookie_name() -> str:
@@ -862,7 +899,7 @@ def mount_db_admin(app: FastAPI, settings: Settings) -> None:
 
 
 def _mount_admin_ui_assets(app: FastAPI) -> None:
-    """Serve small custom JS files used by the admin dashboard's list pages.
+    """Serve small custom JS files used by the admin dashboard.
 
     Registered before the greedy Starlette Admin mount for the same reason as
     _mount_db_debug_api above. Gated behind admin auth for consistency with
@@ -873,6 +910,13 @@ def _mount_admin_ui_assets(app: FastAPI) -> None:
     @router.get("/admin/assets/workflow-run-export.js")
     def workflow_run_export_js() -> Response:
         return Response(content=_WORKFLOW_RUN_EXPORT_ALL_JS, media_type="application/javascript")
+
+    @router.get("/admin/assets/json-tree-detail.js")
+    def json_tree_detail_js() -> Response:
+        return FileResponse(
+            os.path.join(_ADMIN_STATIC_DIR, "json-tree-detail.js"),
+            media_type="application/javascript",
+        )
 
     app.include_router(router)
 

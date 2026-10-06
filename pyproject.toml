@@ -35,7 +35,7 @@ dependencies = [
 packages = ["app"]
 
 [tool.setuptools.package-data]
-app = ["templates/**/*.html"]
+app = ["templates/**/*.html", "static/**/*.js"]
 
 [dependency-groups]
 dev = [

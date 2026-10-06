@@ -146,7 +146,7 @@ def _extract_binder_name(form_data: WorkflowFormData | None) -> str | None:
 
 def _extract_final_design_count(form_data: WorkflowFormData | None) -> int | None:
     """Credit-cost quantity for a launch. Sourced from max_trajectories (the
-    "Number of Trajectories" form field) rather than number_of_final_designs,
+    "Number of Designs" form field) rather than number_of_final_designs,
     since the latter is no longer user-facing for bindcraft — it's derived
     server-side when the samplesheet is built (see datasets.upload_csv_to_s3)
     and isn't present in the launch payload.

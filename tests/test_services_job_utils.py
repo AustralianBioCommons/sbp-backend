@@ -224,10 +224,13 @@ def test_get_sample_id_for_score_delegates():
 async def test_ensure_completed_run_score_updates_existing_when_score_was_none():
     """When existing metric exists but max_score is None, update it in place."""
     run = SimpleNamespace(id="rid", seqera_run_id="wf-x", tool="bindcraft")
-    existing_metric = SimpleNamespace(max_score=None)
+    existing_metric = SimpleNamespace(max_score=None, final_design_count=None)
     db = _DB(scalar=existing_metric)
 
-    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.75))
+    fake_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=0.75),
+        get_design_count=AsyncMock(return_value=None),
+    )
     with (
         patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
         patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
@@ -238,6 +241,48 @@ async def test_ensure_completed_run_score_updates_existing_when_score_was_none()
     assert existing_metric.max_score == 0.75
     assert db.committed is True
     assert db.added is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_overwrites_final_design_count_when_spec_provides_one():
+    """de-novo-design's spec counts the designs that passed ProteinDJ's filters;
+    that should replace the trajectories requested at launch."""
+    run = SimpleNamespace(id="rid", seqera_run_id="wf-x", tool="rfdiffusion")
+    existing_metric = SimpleNamespace(max_score=None, final_design_count=40)
+    db = _DB(scalar=existing_metric)
+
+    fake_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=0.75),
+        get_design_count=AsyncMock(return_value=20),
+    )
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        await job_utils.ensure_completed_run_score(db, run, "Completed")
+
+    assert existing_metric.final_design_count == 20
+
+
+@pytest.mark.asyncio
+async def test_ensure_completed_run_score_leaves_final_design_count_when_spec_has_none():
+    """Workflows without a design-count concept (e.g. single-prediction) must not
+    clobber whatever's already stored there."""
+    run = SimpleNamespace(id="rid", seqera_run_id="wf-x", tool="boltz")
+    existing_metric = SimpleNamespace(max_score=None, final_design_count=None)
+    db = _DB(scalar=existing_metric)
+
+    fake_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=0.75),
+        get_design_count=AsyncMock(return_value=None),
+    )
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        await job_utils.ensure_completed_run_score(db, run, "Completed")
+
+    assert existing_metric.final_design_count is None
 
 
 @pytest.mark.asyncio
@@ -266,7 +311,10 @@ async def test_ensure_completed_run_score_branches():
 
     # calculate + add path
     db_new = _DB(scalar=None)
-    fake_new_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=1.23))
+    fake_new_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=1.23),
+        get_design_count=AsyncMock(return_value=None),
+    )
     with (
         patch("app.services.job_utils.get_output_spec", return_value=fake_new_spec),
         patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
@@ -274,8 +322,22 @@ async def test_ensure_completed_run_score_branches():
         score = await job_utils.ensure_completed_run_score(db_new, run, "Completed")
     assert score == 1.0
     assert db_new.added is not None
+    assert db_new.added.final_design_count is None
     assert db_new.committed is True
     fake_new_spec.get_max_score.assert_awaited_once_with(db_new, run)
+
+    # calculate + add path, with a design count from the spec
+    db_new_with_count = _DB(scalar=None)
+    fake_spec_with_count = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=1.0),
+        get_design_count=AsyncMock(return_value=18),
+    )
+    with (
+        patch("app.services.job_utils.get_output_spec", return_value=fake_spec_with_count),
+        patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
+    ):
+        await job_utils.ensure_completed_run_score(db_new_with_count, run, "Completed")
+    assert db_new_with_count.added.final_design_count == 18
 
     # calculate failure path
     db_fail = _DB(scalar=None)
@@ -297,8 +359,11 @@ async def test_ensure_completed_run_score_force_recomputes_despite_existing_valu
         workflow=SimpleNamespace(name="de-novo-design"),
         tool="bindcraft",
     )
-    db = _DB(scalar=SimpleNamespace(max_score=0.5))
-    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.95))
+    db = _DB(scalar=SimpleNamespace(max_score=0.5, final_design_count=None))
+    fake_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=0.95),
+        get_design_count=AsyncMock(return_value=None),
+    )
 
     with (
         patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
@@ -364,7 +429,10 @@ async def test_ensure_completed_run_score_persists_spec_score(test_db):
     test_db.add(run_output)
     test_db.commit()
 
-    fake_spec = SimpleNamespace(get_max_score=AsyncMock(return_value=0.88))
+    fake_spec = SimpleNamespace(
+        get_max_score=AsyncMock(return_value=0.88),
+        get_design_count=AsyncMock(return_value=None),
+    )
     with (
         patch("app.services.job_utils.get_output_spec", return_value=fake_spec),
         patch("app.services.job_utils.sync_workflow_outputs", new_callable=AsyncMock),
