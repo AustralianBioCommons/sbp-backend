@@ -60,7 +60,7 @@ class SeqeraSettings(NestedSettings):
     skip_health_gate: bool = False
     # Cap on sbp_service's queued + running jobs in Gadi's workflow-exec queue,
     # enforced by the scheduler before submitting pending jobs.
-    max_concurrent_workflows: int = 10
+    max_concurrent_workflows: int = 5
     workflow_sync_batch_limit: int = 50
     # S3 key (in AWS_S3_BUCKET) that a script running on Gadi under the
     # yz52_workflow service account periodically overwrites with
