@@ -9,7 +9,7 @@ import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
-from app.schemas.workflows.interaction_screening import WispsFormData
+from app.schemas.workflows.interaction_screening import InteractionScreeningFormData, WispsFormData
 from app.schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.seqera import (
@@ -331,11 +331,11 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
-    form_data = WispsFormData(
+    form_data = InteractionScreeningFormData(
         workflow="interaction-screening",
         tool="boltz",
-        fastaS3Uri="s3://bucket/seqs.fa",
-        splitOutputDir="/tmp/split",
+        queryFastaS3Uri="s3://bucket/run_query.fasta",
+        targetFastaS3Uri="s3://bucket/run_target.fasta",
     )
 
     with (
@@ -385,16 +385,17 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
         in queued_job.launch_payload["paramsText"]
     )
     assert "tools: boltz" in queued_job.launch_payload["paramsText"]
-    prerun_lines = queued_job.launch_payload["preRunScript"].split("\n")
-    assert prerun_lines[0].startswith("F=/test/input/interaction-screening/")
-    assert prerun_lines[0].endswith("seqs.fa")
-    assert prerun_lines[1] == "D=/tmp/split"
+    # The samplesheet already points at the staged query/target FASTAs, so
+    # there is nothing for the prerun script to split.
+    prerun_script = queued_job.launch_payload["preRunScript"]
+    assert "F=" not in prerun_script
+    assert "D=" not in prerun_script
 
 
 def _wisps_form_and_data(**form_data_overrides) -> tuple[WorkflowLaunchForm, WispsFormData]:
-    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
+    form = WorkflowLaunchForm(workflow="bulk-prediction", tool="boltz", runName="queued-run")
     defaults = {
-        "workflow": "interaction-screening",
+        "workflow": "bulk-prediction",
         "tool": "boltz",
         "fastaS3Uri": "s3://bucket/seqs.fa",
         "splitOutputDir": "/tmp/split",
@@ -443,10 +444,11 @@ async def test_prepare_wisps_workflow_forwards_prerun_script_path(
         call_kwargs["prerun_script_path"]
         == "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
     )
-    prerun_script = prepared_job.launch_payload["preRunScript"]
-    assert prerun_script.endswith("prerun_body")
-    assert "F=" in prerun_script
-    assert "D=/tmp/split" in prerun_script
+    prerun_lines = prepared_job.launch_payload["preRunScript"].split("\n")
+    assert prerun_lines[0].startswith("F=/test/input/")
+    assert prerun_lines[0].endswith("seqs.fa")
+    assert prerun_lines[1] == "D=/tmp/split"
+    assert prerun_lines[-1] == "prerun_body"
 
 
 @pytest.mark.anyio

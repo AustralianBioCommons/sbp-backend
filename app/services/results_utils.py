@@ -334,7 +334,8 @@ async def resolve_fasta_form_data(
     """Hide internal WISPS fields and replace FASTA S3 URIs with presigned download URLs.
 
     - Removes ``splitOutputDir`` (WISPS internal cluster path, not user-facing)
-    - Replaces ``fastaS3Uri`` (WISPS) and ``fastaFileUrl`` (single-prediction) with
+    - Replaces ``fastaS3Uri`` (bulk-prediction), ``queryFastaS3Uri``/``targetFastaS3Uri``
+      (interaction-screening) and ``fastaFileUrl`` (single-prediction) with
       time-limited presigned download URLs when they contain ``s3://`` URIs.
     """
     if not form_data:
@@ -343,7 +344,7 @@ async def resolve_fasta_form_data(
 
     result = {k: v for k, v in form_data.items() if k != "splitOutputDir"}
 
-    for key in ("fastaS3Uri", "fastaFileUrl"):
+    for key in ("fastaS3Uri", "queryFastaS3Uri", "targetFastaS3Uri", "fastaFileUrl"):
         uri = result.get(key)
         if not isinstance(uri, str) or not uri.startswith("s3://"):
             continue
@@ -615,9 +616,9 @@ def get_workflow_name(run: WorkflowRun) -> WorkflowName | None:
         return None
 
     workflow_name: str = run.workflow.name
-    assert workflow_name in get_args(
-        WorkflowName
-    ), f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
+    assert workflow_name in get_args(WorkflowName), (
+        f"Workflow name {workflow_name!r} not recognized: expected one of {get_args(WorkflowName)}"
+    )
     return cast(WorkflowName, workflow_name)
 
 

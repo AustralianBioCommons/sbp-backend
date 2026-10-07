@@ -90,6 +90,43 @@ async def prepare_wisps_workflow(
         "resume": False,
     }
 
+    workflow = workflow_run.workflow
+    assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    prerun_script = get_executor_script(
+        prerun_script_path=workflow.prerun_script_path,
+        repo_gadi_path=workflow.repo_gadi_path,
+        repo_url=workflow.repo_url,
+    )
+    # Interaction-screening's samplesheet already points at the staged query/target
+    # FASTAs (rewritten at launch), so only bulk-prediction needs the prerun split.
+    if form_data.workflow != "interaction-screening":
+        prerun_script = _bulk_split_env(form_data, workflow_run, settings) + prerun_script
+    if workflow.ref_database:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
+    launch_payload["preRunScript"] = prerun_script
+
+    queued_job = QueuedJob(
+        workflow=workflow,
+        workflow_run=workflow_run,
+        launch_payload=launch_payload,
+        status="pending",
+        next_attempt_at=datetime.now(UTC),
+    )
+    db_session.add(queued_job)
+    if commit:
+        db_session.commit()
+    else:
+        db_session.flush()
+    return queued_job
+
+
+def _bulk_split_env(
+    form_data: WorkflowFormData, workflow_run: WorkflowRun, settings: Settings
+) -> str:
+    """Shell vars wisps_prerun.sh reads to split the staged aggregated FASTA:
+    F (input) and D (per-sequence output dir). get_executor_script no longer
+    injects per-run env, so these are prepended to the script instead.
+    """
     try:
         wisps_fields = WispsFormData.model_validate(form_data.model_dump())
     except ValidationError as exc:
@@ -113,37 +150,7 @@ async def prepare_wisps_workflow(
         os.path.basename(fasta_key),
         globus_settings=settings.globus,
     )
-
-    prerun_script = get_executor_script(
-        prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=workflow.repo_gadi_path,
-        repo_url=workflow.repo_url,
-    )
-    # wisps_prerun.sh splits the staged aggregated FASTA into the per-sequence
-    # files the samplesheet references, reading F (input) and D (output dir) as
-    # shell vars - get_executor_script no longer injects per-run env, so prepend
-    # them here instead.
-    prerun_script = (
-        f"F={shlex.quote(staged_fasta_location)}\n"
-        f"D={shlex.quote(split_output_dir)}\n" + prerun_script
-    )
-    if workflow.ref_database:
-        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
-    launch_payload["preRunScript"] = prerun_script
-
-    queued_job = QueuedJob(
-        workflow=workflow,
-        workflow_run=workflow_run,
-        launch_payload=launch_payload,
-        status="pending",
-        next_attempt_at=datetime.now(UTC),
-    )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
+    return f"F={shlex.quote(staged_fasta_location)}\nD={shlex.quote(split_output_dir)}\n"
 
 
 async def launch_wisps_workflow(

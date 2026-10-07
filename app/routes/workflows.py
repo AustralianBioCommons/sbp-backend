@@ -27,7 +27,12 @@ from ..db.models.core import (
     Workflow,
     WorkflowRun,
 )
-from ..schemas.workflows.interaction_screening import WispsDatasetUploadRequest, WispsFormData
+from ..schemas.workflows.interaction_screening import (
+    InteractionScreeningDatasetUploadRequest,
+    InteractionScreeningFormData,
+    WispsDatasetUploadRequest,
+    WispsFormData,
+)
 from ..schemas.workflows.shared import (
     DatasetUploadRequest,
     LaunchDetails,
@@ -52,8 +57,9 @@ from ..services.credits import (
 )
 from ..services.datasets import (
     BULK_PREDICTION_BASE_PATH,
-    INTERACTION_SCREENING_BASE_PATH,
     upload_csv_to_s3,
+    upload_interaction_screening_samplesheet_to_s3,
+    upload_samplesheet_rows_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
 from ..services.globus_transfer import build_gadi_input_path
@@ -65,6 +71,7 @@ from ..services.s3 import (
     S3ServiceError,
     generate_presigned_url,
     read_csv_from_s3,
+    read_s3_file,
 )
 from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
@@ -297,8 +304,9 @@ async def _count_wisps_samplesheet_entries(
     client-supplied fastaContent.
 
     Returns (fasta_entry_count, None) for bulk-prediction, or
-    (None, (query_count, target_count)) for interaction-screening, where counts
-    are derived from the samplesheet's group column (g1=query, g2=target).
+    (None, (query_count, target_count)) for interaction-screening, where each
+    count is the number of FASTA records in the file its g1 (query) / g2
+    (target) row references.
     """
     try:
         rows = await read_csv_from_s3(s3_input_key)
@@ -313,10 +321,111 @@ async def _count_wisps_samplesheet_entries(
             detail=f"Failed to read samplesheet at s3InputKey: {exc}",
         ) from exc
     if workflow_name == "interaction-screening":
-        query_count = sum(1 for row in rows if row.get("group") == "g1")
-        target_count = sum(1 for row in rows if row.get("group") == "g2")
-        return None, (query_count, target_count)
+        counts = {"g1": 0, "g2": 0}
+        for row in rows:
+            group = row.get("group")
+            if group not in counts:
+                continue
+            fasta_key = s3_uri_to_key(row.get("sequence"))
+            if not fasta_key:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid S3 URI in samplesheet 'sequence' for group {group}.",
+                )
+            try:
+                fasta_text = await read_s3_file(fasta_key)
+            except S3ConfigurationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"S3 configuration error: {exc}",
+                ) from exc
+            except S3ServiceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to read FASTA referenced by samplesheet: {exc}",
+                ) from exc
+            counts[group] += sum(1 for line in fasta_text.splitlines() if line.startswith(">"))
+        return None, (counts["g1"], counts["g2"])
     return len(rows), None
+
+
+async def _stage_interaction_screening_fastas(
+    *,
+    db_session: Session,
+    s3_input_key: str,
+    run_id: UUID,
+    workflow_name: str,
+    globus_settings: GlobusSettings,
+) -> str:
+    """Stage the query and target FASTAs referenced by the interaction-screening
+    samplesheet to Gadi via Globus, and return the s3InputKey of a corrected
+    samplesheet whose ``sequence`` column holds the Gadi-local paths.
+
+    Multi-row counterpart of _stage_referenced_samplesheet_file: the samplesheet
+    has one row per group (g1=query, g2=target), each pointing at its own
+    multi-FASTA, which the pipeline reads directly - no prerun split.
+    """
+    try:
+        samplesheet_rows = await read_csv_from_s3(s3_input_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+        ) from exc
+    if sorted(row.get("group") or "" for row in samplesheet_rows) != ["g1", "g2"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Interaction-screening samplesheet must have exactly one g1 and one g2 row.",
+        )
+    for row in samplesheet_rows:
+        source_uri = (row.get("sequence") or "").strip()
+        source_key = s3_uri_to_key(source_uri)
+        if not source_uri.startswith("s3://") or not source_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid S3 URI in samplesheet 'sequence' for group {row['group']}.",
+            )
+        if db_session.get(S3Object, source_key) is None:
+            db_session.add(S3Object(object_key=source_key, uri=source_uri))
+        staged_location = build_gadi_input_path(
+            run_id,
+            workflow_name,
+            os.path.basename(source_key),
+            globus_settings=globus_settings,
+        )
+        db_session.add(
+            RunInput(
+                run_id=run_id,
+                s3_object_id=source_key,
+                data_transfer=DataTransfer(
+                    workflow_run_id=run_id,
+                    direction="input",
+                    provider="globus",
+                    source_location=source_uri,
+                    destination_location=staged_location,
+                    recursive=False,
+                ),
+            )
+        )
+        row["sequence"] = staged_location
+    try:
+        csv_upload = await upload_samplesheet_rows_to_s3(samplesheet_rows)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to re-upload corrected samplesheet: {exc}",
+        ) from exc
+    return csv_upload.file_key
 
 
 def _stage_wisps_fasta(
@@ -547,10 +656,15 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
         )
 
-    wisps_form_data: WispsFormData | None = None
+    wisps_form_data: WispsFormData | InteractionScreeningFormData | None = None
     if workflow_name in ("interaction-screening", "bulk-prediction"):
+        wisps_form_model = (
+            InteractionScreeningFormData
+            if workflow_name == "interaction-screening"
+            else WispsFormData
+        )
         try:
-            wisps_form_data = WispsFormData.model_validate(payload.formData.model_dump())
+            wisps_form_data = wisps_form_model.model_validate(payload.formData.model_dump())
         except ValidationError as exc:
             missing = next(
                 (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
@@ -579,8 +693,16 @@ async def launch_workflow(
             workflow_name=workflow_name,
             globus_settings=settings.globus,
         )
+    elif workflow_name == "interaction-screening":
+        s3_input_key = await _stage_interaction_screening_fastas(
+            db_session=db_session,
+            s3_input_key=s3_input_key,
+            run_id=run_id,
+            workflow_name=workflow_name,
+            globus_settings=settings.globus,
+        )
     elif is_wisps_launch:
-        assert wisps_form_data is not None
+        assert isinstance(wisps_form_data, WispsFormData)
         _stage_wisps_fasta(
             db_session=db_session,
             fasta_uri=wisps_form_data.fastaS3Uri,
@@ -840,22 +962,59 @@ async def upload_dataset(
     )
 
 
+@router.post(
+    "/datasets/interaction-screening/upload",
+    response_model=S3DatasetUploadResponse,
+)
+async def upload_interaction_screening_dataset_endpoint(
+    payload: InteractionScreeningDatasetUploadRequest,
+    settings: Settings = Depends(get_settings),
+) -> S3DatasetUploadResponse:
+    """Build and upload the two-row (query/target) interaction-screening samplesheet."""
+    try:
+        result = await upload_interaction_screening_samplesheet_to_s3(
+            payload.queryFastaS3Uri,
+            payload.targetFastaS3Uri,
+            payload.runId,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"S3 upload failed: {exc}",
+        ) from exc
+
+    return S3DatasetUploadResponse(
+        message="interaction-screening samplesheet uploaded to S3 successfully",
+        s3Key=result.file_key,
+        s3Uri=result.file_url or f"s3://{result.bucket}/{result.file_key}",
+        success=result.success,
+    )
+
+
 _WISPS_BASE_PATHS: dict[str, str] = {
-    "interaction-screening": INTERACTION_SCREENING_BASE_PATH,
     "bulk-prediction": BULK_PREDICTION_BASE_PATH,
 }
 
 
+# Registered after the interaction-screening route above, which must match first.
 @router.post(
     "/datasets/{workflow_name}/upload",
     response_model=S3DatasetUploadResponse,
 )
 async def upload_wisps_dataset_endpoint(
-    workflow_name: Literal["interaction-screening", "bulk-prediction"],
+    workflow_name: Literal["bulk-prediction"],
     payload: WispsDatasetUploadRequest,
     settings: Settings = Depends(get_settings),
 ) -> S3DatasetUploadResponse:
-    """Build and upload a WISPS samplesheet directly to S3."""
+    """Build and upload a bulk-prediction WISPS samplesheet directly to S3."""
     base_path = _WISPS_BASE_PATHS[workflow_name]
     try:
         result, split_output_dir = await upload_wisps_samplesheet_to_s3(
@@ -863,7 +1022,6 @@ async def upload_wisps_dataset_endpoint(
             payload.runId,
             base_path,
             workflow_name,
-            include_group=workflow_name == "interaction-screening",
             settings=settings,
         )
     except ValueError as exc:
