@@ -284,12 +284,16 @@ def get_safe_zip_filename(folder: str, filename: str) -> str:
 
 
 def _format_attachment_content_disposition(filename: str) -> str:
+    return _format_content_disposition(filename, "attachment")
+
+
+def _format_content_disposition(filename: str, disposition: str) -> str:
     sanitized = _sanitize_content_disposition_filename(filename)
     ascii_fallback = sanitized.encode("ascii", "ignore").decode("ascii")
     ascii_fallback = _FILENAME_FALLBACK_UNSAFE_CHARS.sub("_", ascii_fallback).strip("._")
     ascii_fallback = ascii_fallback or "download"
     encoded_filename = quote(sanitized, safe="")
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
+    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
@@ -327,6 +331,9 @@ def resolve_submitted_form_data(run: WorkflowRun) -> dict[str, Any] | None:
     return fallback or None
 
 
+_INLINE_FASTA_KEYS = ("fastaS3Uri", "queryFastaS3Uri", "targetFastaS3Uri")
+
+
 async def resolve_fasta_form_data(
     form_data: dict[str, Any] | None,
     settings: Settings | None = None,
@@ -336,7 +343,9 @@ async def resolve_fasta_form_data(
     - Removes ``splitOutputDir`` (WISPS internal cluster path, not user-facing)
     - Replaces ``fastaS3Uri`` (bulk-prediction), ``queryFastaS3Uri``/``targetFastaS3Uri``
       (interaction-screening) and ``fastaFileUrl`` (single-prediction) with
-      time-limited presigned download URLs when they contain ``s3://`` URIs.
+      time-limited presigned URLs when they contain ``s3://`` URIs. The WISPS
+      FASTAs open inline as plain text (so users can copy sequences straight from
+      the browser); single-prediction's stays a download.
     """
     if not form_data:
         return form_data
@@ -344,7 +353,7 @@ async def resolve_fasta_form_data(
 
     result = {k: v for k, v in form_data.items() if k != "splitOutputDir"}
 
-    for key in ("fastaS3Uri", "queryFastaS3Uri", "targetFastaS3Uri", "fastaFileUrl"):
+    for key in (*_INLINE_FASTA_KEYS, "fastaFileUrl"):
         uri = result.get(key)
         if not isinstance(uri, str) or not uri.startswith("s3://"):
             continue
@@ -352,11 +361,15 @@ async def resolve_fasta_form_data(
         if not file_key:
             continue
         filename = file_key.rsplit("/", 1)[-1] if "/" in file_key else file_key
+        inline = key in _INLINE_FASTA_KEYS
         try:
             result[key] = await generate_presigned_url(
                 file_key=file_key,
                 expiration=3600,
-                response_content_disposition=_format_attachment_content_disposition(filename),
+                response_content_type="text/plain; charset=utf-8" if inline else None,
+                response_content_disposition=_format_content_disposition(
+                    filename, "inline" if inline else "attachment"
+                ),
                 settings=settings,
             )
         except S3ConfigurationError, S3ServiceError:

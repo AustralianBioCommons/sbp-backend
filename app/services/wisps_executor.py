@@ -15,7 +15,7 @@ from ..db.models import QueuedJob, WorkflowRun
 from ..schemas.workflows.interaction_screening import WispsFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .globus_transfer import build_gadi_input_path, build_gadi_output_path
-from .launch_payloads import get_executor_script, send_queued_launch
+from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .results_utils import s3_uri_to_key
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
@@ -92,15 +92,23 @@ async def prepare_wisps_workflow(
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
-    prerun_script = get_executor_script(
-        prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=workflow.repo_gadi_path,
-        repo_url=workflow.repo_url,
-    )
-    # Interaction-screening's samplesheet already points at the staged query/target
-    # FASTAs (rewritten at launch), so only bulk-prediction needs the prerun split.
-    if form_data.workflow != "interaction-screening":
-        prerun_script = _bulk_split_env(form_data, workflow_run, settings) + prerun_script
+    if form_data.workflow == "interaction-screening":
+        # The samplesheet already points at the staged query/target FASTAs
+        # (rewritten at launch), so there's nothing to split: skip the remote
+        # prerun script and just load the modules it would have.
+        prerun_script = get_executor_script(
+            prerun_script_path=None,
+            repo_gadi_path=workflow.repo_gadi_path,
+            repo_url=workflow.repo_url,
+            module_loads=DEFAULT_MODULE_LOADS,
+        )
+    else:
+        # wisps_prerun.sh loads its own modules and splits the aggregated FASTA.
+        prerun_script = _bulk_split_env(form_data, workflow_run, settings) + get_executor_script(
+            prerun_script_path=workflow.prerun_script_path,
+            repo_gadi_path=workflow.repo_gadi_path,
+            repo_url=workflow.repo_url,
+        )
     if workflow.ref_database:
         prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
     launch_payload["preRunScript"] = prerun_script

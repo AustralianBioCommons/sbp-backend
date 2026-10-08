@@ -390,6 +390,55 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     prerun_script = queued_job.launch_payload["preRunScript"]
     assert "F=" not in prerun_script
     assert "D=" not in prerun_script
+    assert "module load singularity" in prerun_script
+    assert "module load nextflow/" in prerun_script
+
+
+@pytest.mark.anyio
+async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_script_path(
+    test_db, persistent_models, wisps_settings
+):
+    """Interaction-screening never fetches the remote (FASTA-splitting) prerun
+    script, even when the workflow row has one - it only loads modules."""
+    user = AppUserFactory.create_sync()
+    workflow = WorkflowFactory.create_sync(
+        prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
+        ref_database=None,
+    )
+    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="is-run")
+    form_data = InteractionScreeningFormData(
+        workflow="interaction-screening",
+        tool="boltz",
+        queryFastaS3Uri="s3://bucket/run_query.fasta",
+        targetFastaS3Uri="s3://bucket/run_target.fasta",
+    )
+
+    with (
+        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch(
+            "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
+        ),
+        patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch,
+    ):
+        prepared_job = await prepare_wisps_workflow(
+            form=form,
+            settings=wisps_settings,
+            db_session=test_db,
+            workflow_run=workflow_run,
+            pipeline="nf-core/wisps",
+            config_path="/fake/config.nf",
+            form_data=form_data,
+            output_id="output-queued",
+            user_details=_USER_DETAILS,
+            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
+        )
+
+    mock_fetch.assert_not_called()
+    prerun_script = prepared_job.launch_payload["preRunScript"]
+    assert "module load singularity" in prerun_script
+    assert "module load nextflow/" in prerun_script
+    assert "F=" not in prerun_script
 
 
 def _wisps_form_and_data(**form_data_overrides) -> tuple[WorkflowLaunchForm, WispsFormData]:
@@ -449,6 +498,8 @@ async def test_prepare_wisps_workflow_forwards_prerun_script_path(
     assert prerun_lines[0].endswith("seqs.fa")
     assert prerun_lines[1] == "D=/tmp/split"
     assert prerun_lines[-1] == "prerun_body"
+    # Bulk's module loads come from wisps_prerun.sh itself, not the backend.
+    assert "module_loads" not in call_kwargs
 
 
 @pytest.mark.anyio
