@@ -114,9 +114,7 @@ class Workflow(Base):
 
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
-    __table_args__ = (
-        UniqueConstraint("seqera_run_id"),
-    )
+    __table_args__ = (UniqueConstraint("seqera_run_id"),)
 
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     workflow_id: Mapped[PyUUID | None] = mapped_column(ForeignKey("workflows.id"))
