@@ -1,9 +1,9 @@
 """Schemas for the interaction-screening workflow.
 
-``WispsFormData``/``WispsSequenceItem``/``WispsDatasetUploadRequest`` back the
-shared WISPS pipeline used by both interaction-screening and bulk-prediction
-(see ``bulk_prediction.py``); the ``InteractionScreening*`` response models
-below are specific to this workflow, which always returns a split output dir.
+``WispsFormData``/``WispsSequenceItem``/``WispsDatasetUploadRequest`` back
+bulk-prediction's split-FASTA flow (see ``bulk_prediction.py``). Interaction
+screening instead uploads one query and one target FASTA, and its samplesheet
+has exactly two rows (g1=query, g2=target) pointing at those files.
 """
 
 from __future__ import annotations
@@ -41,6 +41,22 @@ class WispsDatasetUploadRequest(BaseModel):
 
     sequences: list[WispsSequenceItem]
     runId: str
+
+
+class InteractionScreeningFormData(WorkflowFormData):
+    """Form data for interaction-screening: one FASTA per group, each staged to
+    Gadi as-is and referenced by its own samplesheet row (no prerun split)."""
+
+    queryFastaS3Uri: str = Field(..., description="S3 URI of the query multi-FASTA file")
+    targetFastaS3Uri: str = Field(..., description="S3 URI of the target multi-FASTA file")
+
+
+class InteractionScreeningDatasetUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runId: str
+    queryFastaS3Uri: str = Field(min_length=1)
+    targetFastaS3Uri: str = Field(min_length=1)
 
 
 class InteractionScreeningDatasetUploadResponse(DatasetUploadResponse):

@@ -10,9 +10,11 @@ from fastapi import HTTPException, status
 from app.routes.workflows import (
     get_details,
     upload_dataset,
-    upload_wisps_dataset_endpoint,
+    upload_interaction_screening_dataset_endpoint,
 )
-from app.schemas.workflows.interaction_screening import WispsDatasetUploadRequest
+from app.schemas.workflows.interaction_screening import (
+    InteractionScreeningDatasetUploadRequest,
+)
 from app.schemas.workflows.shared import DatasetUploadRequest
 from app.services.s3 import S3ConfigurationError, S3ServiceError, S3UploadResult
 
@@ -103,60 +105,63 @@ async def test_get_details_returns_placeholder():
 # =============================================================================
 
 
-def _screening_request() -> WispsDatasetUploadRequest:
-    return WispsDatasetUploadRequest(
-        sequences=[
-            {"id": "seq_A", "group": "query"},
-            {"id": "seq_B", "group": "target"},
-        ],
+def _screening_request() -> InteractionScreeningDatasetUploadRequest:
+    return InteractionScreeningDatasetUploadRequest(
         runId="run-screen-1",
+        queryFastaS3Uri="s3://bucket/input/run-screen-1_query.fasta",
+        targetFastaS3Uri="s3://bucket/input/run-screen-1_target.fasta",
     )
 
 
-@patch("app.routes.workflows.upload_wisps_samplesheet_to_s3")
+@patch("app.routes.workflows.upload_interaction_screening_samplesheet_to_s3")
 async def test_upload_interaction_screening_success(mock_upload):
     """Test successful interaction screening samplesheet upload to S3."""
     s3_result = _s3_result(key="inputs/samplesheets/run-screen-1.csv")
-    mock_upload.return_value = (s3_result, "/data/split/run-screen-1")
+    mock_upload.return_value = s3_result
 
-    response = await upload_wisps_dataset_endpoint("interaction-screening", _screening_request())
+    response = await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert response.success is True
     assert response.s3Key == "inputs/samplesheets/run-screen-1.csv"
-    assert response.splitOutputDir == "/data/split/run-screen-1"
-    mock_upload.assert_called_once()
+    assert response.splitOutputDir is None
+    mock_upload.assert_called_once_with(
+        "s3://bucket/input/run-screen-1_query.fasta",
+        "s3://bucket/input/run-screen-1_target.fasta",
+        "run-screen-1",
+        settings=mock_upload.call_args.kwargs["settings"],
+    )
 
 
-@patch("app.routes.workflows.upload_wisps_samplesheet_to_s3")
+@patch("app.routes.workflows.upload_interaction_screening_samplesheet_to_s3")
 async def test_upload_interaction_screening_value_error(mock_upload):
     """Test that ValueError returns 400."""
     mock_upload.side_effect = ValueError("sequences cannot be empty")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_wisps_dataset_endpoint("interaction-screening", _screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-@patch("app.routes.workflows.upload_wisps_samplesheet_to_s3")
+@patch("app.routes.workflows.upload_interaction_screening_samplesheet_to_s3")
 async def test_upload_interaction_screening_s3_config_error(mock_upload):
     """Test that S3ConfigurationError returns 500."""
     mock_upload.side_effect = S3ConfigurationError("Missing bucket")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_wisps_dataset_endpoint("interaction-screening", _screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "S3 configuration error" in str(exc_info.value.detail)
 
 
-@patch("app.routes.workflows.upload_wisps_samplesheet_to_s3")
+@patch("app.routes.workflows.upload_interaction_screening_samplesheet_to_s3")
 async def test_upload_interaction_screening_s3_service_error(mock_upload):
     """Test that S3ServiceError returns 502."""
     mock_upload.side_effect = S3ServiceError("Upload failed")
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_wisps_dataset_endpoint("interaction-screening", _screening_request())
+        await upload_interaction_screening_dataset_endpoint(_screening_request())
 
     assert exc_info.value.status_code == status.HTTP_502_BAD_GATEWAY
     assert "S3 upload failed" in str(exc_info.value.detail)
