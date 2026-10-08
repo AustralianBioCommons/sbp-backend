@@ -116,7 +116,6 @@ class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
     __table_args__ = (
         UniqueConstraint("seqera_run_id"),
-        UniqueConstraint("work_dir"),
     )
 
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)

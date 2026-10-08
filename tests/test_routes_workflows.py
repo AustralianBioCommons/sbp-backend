@@ -1068,6 +1068,42 @@ def test_launch_interaction_screening_success(
         }
 
 
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_records_base_work_dir_without_run_id(
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
+):
+    """Runs store the shared Seqera workdir as-is (no per-run id suffix), so two
+    launches record the same work_dir."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
+    get_settings_override = wisps_client.app.dependency_overrides.get(get_settings, get_settings)
+    expected_work_dir = get_settings_override().seqera.work_dir
+
+    run_ids = []
+    for run_name in ("workdir-run-1", "workdir-run-2"):
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {
+                    "workflow": "interaction-screening",
+                    "tool": "boltz",
+                    "runName": run_name,
+                },
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": IS_FORM_DATA,
+            },
+        )
+        assert response.status_code == 201
+        run_ids.append(UUID(response.json()["runId"]))
+
+    with Session(test_engine) as db:
+        work_dirs = db.scalars(
+            select(WorkflowRun.work_dir).where(WorkflowRun.id.in_(run_ids))
+        ).all()
+    assert work_dirs == [expected_work_dir, expected_work_dir]
+
+
 @pytest.mark.parametrize("missing", ["queryFastaS3Uri", "targetFastaS3Uri"])
 def test_launch_interaction_screening_missing_fasta(missing, wisps_client: TestClient):
     """A missing query/target FASTA URI in formData should return 422."""

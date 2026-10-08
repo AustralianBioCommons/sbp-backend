@@ -131,7 +131,7 @@ def test_workflow_run_model():
     constraints = list(WorkflowRun.__table__.constraints)
     constraint_names = {c.name for c in constraints}
     assert "uq_workflow_runs_seqera_run_id" in constraint_names
-    assert "uq_workflow_runs_work_dir" in constraint_names
+    assert "uq_workflow_runs_work_dir" not in constraint_names  # shared base workdir
 
 
 @pytest.mark.parametrize(
