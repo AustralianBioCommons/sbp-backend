@@ -1379,6 +1379,40 @@ async def test_resolve_fasta_form_data_replaces_fasta_s3_uri_with_presigned():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["fastaS3Uri", "queryFastaS3Uri", "targetFastaS3Uri"])
+async def test_resolve_fasta_form_data_wisps_fasta_opens_inline_as_text(key):
+    """WISPS FASTA links open in the browser (copyable) instead of downloading."""
+    form_data = {key: "s3://my-bucket/uploads/run_query.fasta"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value="https://signed"),
+    ) as mock_presign:
+        result = await resolve_fasta_form_data(form_data)
+
+    assert result[key] == "https://signed"
+    kwargs = mock_presign.await_args.kwargs
+    assert kwargs["file_key"] == "uploads/run_query.fasta"
+    assert kwargs["response_content_type"] == "text/plain; charset=utf-8"
+    assert kwargs["response_content_disposition"].startswith('inline; filename="run_query.fasta"')
+
+
+@pytest.mark.asyncio
+async def test_resolve_fasta_form_data_fasta_file_url_stays_a_download():
+    form_data = {"fastaFileUrl": "s3://my-bucket/uploads/seq.fa"}
+
+    with patch(
+        "app.services.results_utils.generate_presigned_url",
+        new=AsyncMock(return_value="https://signed"),
+    ) as mock_presign:
+        await resolve_fasta_form_data(form_data)
+
+    kwargs = mock_presign.await_args.kwargs
+    assert kwargs["response_content_type"] is None
+    assert kwargs["response_content_disposition"].startswith("attachment;")
+
+
+@pytest.mark.asyncio
 async def test_resolve_fasta_form_data_replaces_fasta_file_url_with_presigned():
     presigned = "https://my-bucket.s3.amazonaws.com/uploads/seq.fa?X-Amz-Signature=xyz"
     form_data = {"fastaFileUrl": "s3://my-bucket/uploads/seq.fa"}

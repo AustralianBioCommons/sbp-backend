@@ -32,6 +32,28 @@ def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s
     )
 
 
+IS_QUERY_URI = "s3://test-s3-bucket/input/20260101_120000_wisps-run_query.fasta"
+IS_TARGET_URI = "s3://test-s3-bucket/input/20260101_120000_wisps-run_target.fasta"
+IS_FORM_DATA = {
+    "workflow": "interaction-screening",
+    "tool": "boltz",
+    "queryFastaS3Uri": IS_QUERY_URI,
+    "targetFastaS3Uri": IS_TARGET_URI,
+}
+
+
+def _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows):
+    """Configure the two-row (query/target) samplesheet that
+    _stage_interaction_screening_fastas reads, rewrites and re-uploads."""
+    mock_read_csv.side_effect = lambda *_a, **_k: [
+        {"id": "query", "sequence": IS_QUERY_URI, "group": "g1", "type": "protein"},
+        {"id": "target", "sequence": IS_TARGET_URI, "group": "g2", "type": "protein"},
+    ]
+    mock_upload_rows.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-s3-bucket"
+    )
+
+
 async def _queue_job_for_route_prepare(form, **kwargs):
     db_session = kwargs["db_session"]
     workflow_run = kwargs["workflow_run"]
@@ -964,9 +986,14 @@ def wisps_client(test_engine):
         yield c
 
 
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestClient, test_engine):
+def test_launch_interaction_screening_success(
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
+):
     """Test successful interaction-screening workflow launch."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     payload = {
         "launch": {
             "workflow": "interaction-screening",
@@ -974,12 +1001,7 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
             "runName": "wisps-run",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
@@ -990,11 +1012,26 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
     run_id = UUID(data["runId"])
     mock_prepare.assert_called_once()
     call_kwargs = mock_prepare.call_args.kwargs
-    assert call_kwargs["form_data"].fastaS3Uri == "s3://bucket/test.fasta"
-    assert call_kwargs["form_data"].splitOutputDir == "/data/split"
+    assert call_kwargs["form_data"].queryFastaS3Uri == IS_QUERY_URI
+    assert call_kwargs["form_data"].targetFastaS3Uri == IS_TARGET_URI
     assert call_kwargs["pipeline"] == "https://github.com/test/wisps"
     assert call_kwargs["revision"] in {"dev", "main"}
     assert call_kwargs["output_id"] == str(run_id)
+    # The pipeline gets the corrected samplesheet, not the S3-URI one.
+    assert call_kwargs["staged_input_location"].endswith(
+        f"/interaction-screening/{run_id}/corrected.csv"
+    )
+
+    # The corrected samplesheet keeps both rows, with Gadi-local FASTA paths.
+    rewritten_rows = mock_upload_rows.call_args.args[0]
+    assert [(r["id"], r["group"]) for r in rewritten_rows] == [("query", "g1"), ("target", "g2")]
+    query_path, target_path = (r["sequence"] for r in rewritten_rows)
+    assert query_path.endswith(
+        f"/interaction-screening/{run_id}/20260101_120000_wisps-run_query.fasta"
+    )
+    assert target_path.endswith(
+        f"/interaction-screening/{run_id}/20260101_120000_wisps-run_target.fasta"
+    )
 
     with Session(test_engine) as db:
         created_run = db.execute(
@@ -1009,74 +1046,120 @@ def test_launch_interaction_screening_success(mock_prepare, wisps_client: TestCl
         assert created_run is not None
         assert created_run.seqera_run_id is None
         assert created_run.run_name == "wisps-run"
-        assert created_run.submitted_form_data["fastaS3Uri"] == "s3://bucket/test.fasta"
-        assert created_run.submitted_form_data["splitOutputDir"] == "/data/split"
+        assert created_run.submitted_form_data["queryFastaS3Uri"] == IS_QUERY_URI
+        assert created_run.submitted_form_data["targetFastaS3Uri"] == IS_TARGET_URI
         assert created_run.submission_timestamp is not None
         queued_job = db.scalar(select(QueuedJob).where(QueuedJob.workflow_run_id == created_run.id))
         assert queued_job is not None
         assert queued_job.status == "staging"
 
-        # Both the samplesheet and the aggregated FASTA it references must be
+        # The corrected samplesheet and both FASTAs it references must be
         # staged - _notify_launcher only flips "staging" -> "pending" once every
         # input DataTransfer for this run is completed.
         transfers = db.scalars(
             select(DataTransfer).where(DataTransfer.workflow_run_id == created_run.id)
         ).all()
-        assert len(transfers) == 2
-        sources = {t.source_location for t in transfers}
-        assert sources == {
-            "s3://test-s3-bucket/inputs/samplesheets/test.csv",
-            "s3://bucket/test.fasta",
+        assert {t.source_location: t.destination_location for t in transfers} == {
+            "s3://test-s3-bucket/inputs/samplesheets/corrected.csv": call_kwargs[
+                "staged_input_location"
+            ],
+            IS_QUERY_URI: query_path,
+            IS_TARGET_URI: target_path,
         }
 
 
-def test_launch_interaction_screening_missing_fasta(wisps_client: TestClient):
-    """Missing fastaS3Uri in formData should return 422."""
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_records_base_work_dir_without_run_id(
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
+):
+    """Runs store the shared Seqera workdir as-is (no per-run id suffix), so two
+    launches record the same work_dir."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
+    get_settings_override = wisps_client.app.dependency_overrides.get(get_settings, get_settings)
+    expected_work_dir = get_settings_override().seqera.work_dir
+
+    run_ids = []
+    for run_name in ("workdir-run-1", "workdir-run-2"):
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {
+                    "workflow": "interaction-screening",
+                    "tool": "boltz",
+                    "runName": run_name,
+                },
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": IS_FORM_DATA,
+            },
+        )
+        assert response.status_code == 201
+        run_ids.append(UUID(response.json()["runId"]))
+
+    with Session(test_engine) as db:
+        work_dirs = db.scalars(
+            select(WorkflowRun.work_dir).where(WorkflowRun.id.in_(run_ids))
+        ).all()
+    assert work_dirs == [expected_work_dir, expected_work_dir]
+
+
+@pytest.mark.parametrize("missing", ["queryFastaS3Uri", "targetFastaS3Uri"])
+def test_launch_interaction_screening_missing_fasta(missing, wisps_client: TestClient):
+    """A missing query/target FASTA URI in formData should return 422."""
     payload = {
         "launch": {
             "workflow": "interaction-screening",
             "tool": "boltz",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": {k: v for k, v in IS_FORM_DATA.items() if k != missing},
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 422
-    assert "fastaS3Uri" in response.json()["detail"]
+    assert missing in response.json()["detail"]
 
 
-def test_launch_interaction_screening_missing_split_output_dir(wisps_client: TestClient):
-    """Missing splitOutputDir in formData should return 422."""
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"id": "query", "sequence": IS_QUERY_URI, "group": "g1", "type": "protein"}],
+        [
+            {"id": "query", "sequence": IS_QUERY_URI, "group": "g1", "type": "protein"},
+            {"id": "target", "sequence": "/local/target.fasta", "group": "g2", "type": "protein"},
+        ],
+    ],
+    ids=["missing-target-row", "non-s3-sequence"],
+)
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow")
+def test_launch_interaction_screening_rejects_bad_samplesheet(
+    mock_prepare, mock_read_csv, rows, wisps_client: TestClient
+):
+    """The samplesheet must have one g1 and one g2 row, each with an S3 URI."""
+    mock_read_csv.return_value = rows
     payload = {
-        "launch": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-        },
+        "launch": {"workflow": "interaction-screening", "tool": "boltz", "runName": "bad-sheet"},
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-        },
+        "formData": IS_FORM_DATA,
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 422
-    assert "splitOutputDir" in response.json()["detail"]
+    mock_prepare.assert_not_called()
 
 
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_configuration_error(
-    mock_prepare, wisps_client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
 ):
     """Local queue payload configuration errors should return 500."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
 
     payload = {
@@ -1086,12 +1169,7 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
             "runName": "wisps-run-cfg-err",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
@@ -1107,11 +1185,14 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
         assert count == 0
 
 
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_error(
-    mock_prepare, wisps_client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
 ):
     """Unexpected queue preparation errors should return 500."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     mock_prepare.side_effect = RuntimeError("queue build failed")
 
     payload = {
@@ -1121,12 +1202,7 @@ def test_launch_interaction_screening_queue_preparation_error(
             "runName": "wisps-run-exec-err",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
@@ -1142,9 +1218,14 @@ def test_launch_interaction_screening_queue_preparation_error(
         assert count == 0
 
 
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_with_workflow_field_in_launch(mock_prepare, wisps_client: TestClient, test_engine):
+def test_launch_with_workflow_field_in_launch(
+    mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
+):
     """The new frontend format using launch.workflow is accepted alongside launch.tool."""
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     payload = {
         "launch": {
             "workflow": "interaction-screening",
@@ -1152,12 +1233,7 @@ def test_launch_with_workflow_field_in_launch(mock_prepare, wisps_client: TestCl
             "runName": "wisps-run-workflow-field",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
 
     response = wisps_client.post("/api/workflows/launch", json=payload)
@@ -1388,24 +1464,35 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     assert credit_cost == 5  # persisted on the run for admin display
 
 
+def _fasta_with(count: int, prefix: str) -> str:
+    return "".join(f">{prefix}{i}\nMAGT\n" for i in range(count))
+
+
+@patch("app.routes.workflows.read_s3_file")
+@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_deducts_credits_when_enabled(
-    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+    mock_prepare,
+    mock_read_csv,
+    mock_upload_rows,
+    mock_read_file,
+    wisps_client: TestClient,
+    test_engine,
+    mock_settings,
 ):
     """With credits enabled, interaction-screening charges tool_multiplier ×
-    (query entries × target entries), derived from the samplesheet's group
-    column, not the client-supplied fastaContent (the reported bug: this used
-    to deduct nothing at all)."""
+    (query entries × target entries), counted from the FASTA records in the
+    files the samplesheet's g1/g2 rows reference, not the client-supplied
+    fastaContent."""
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
-    mock_read_csv.return_value = [
-        {"id": "q1", "sequence": "/split/q1.fasta", "group": "g1", "type": "protein"},
-        {"id": "q2", "sequence": "/split/q2.fasta", "group": "g1", "type": "protein"},
-        {"id": "q3", "sequence": "/split/q3.fasta", "group": "g1", "type": "protein"},
-        {"id": "t1", "sequence": "/split/t1.fasta", "group": "g2", "type": "protein"},
-        {"id": "t2", "sequence": "/split/t2.fasta", "group": "g2", "type": "protein"},
-    ]
+    _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
+    fasta_by_key = {
+        "input/20260101_120000_wisps-run_query.fasta": _fasta_with(3, "q"),
+        "input/20260101_120000_wisps-run_target.fasta": _fasta_with(2, "t"),
+    }
+    mock_read_file.side_effect = lambda key: fasta_by_key[key]
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1417,12 +1504,7 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
             "runName": "wisps-credit-run",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
@@ -1436,18 +1518,25 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     assert credit_cost == 6  # persisted on the run for admin display
 
 
+@patch("app.routes.workflows.read_s3_file")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_rejected_when_insufficient_credits(
-    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+    mock_prepare,
+    mock_read_csv,
+    mock_read_file,
+    wisps_client: TestClient,
+    test_engine,
+    mock_settings,
 ):
     """With credits enabled, an unaffordable WISPS launch is rejected (402) and not queued."""
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     mock_read_csv.return_value = [
-        {"id": "q1", "sequence": "/split/q1.fasta", "group": "g1", "type": "protein"},
-        {"id": "t1", "sequence": "/split/t1.fasta", "group": "g2", "type": "protein"},
+        {"id": "query", "sequence": IS_QUERY_URI, "group": "g1", "type": "protein"},
+        {"id": "target", "sequence": IS_TARGET_URI, "group": "g2", "type": "protein"},
     ]
+    mock_read_file.return_value = _fasta_with(1, "s")
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=0))
         db.commit()
@@ -1459,12 +1548,7 @@ def test_launch_interaction_screening_rejected_when_insufficient_credits(
             "runName": "wisps-insufficient",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "interaction-screening",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": IS_FORM_DATA,
     }
     response = wisps_client.post("/api/workflows/launch", json=payload)
 

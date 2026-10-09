@@ -10,12 +10,13 @@ import pytest
 from app.schemas.workflows.interaction_screening import WispsSequenceItem
 from app.services.datasets import (
     BULK_PREDICTION_BASE_PATH,
-    INTERACTION_SCREENING_BASE_PATH,
     _apply_bindcraft_design_target,
     _stringify_field,
     build_unique_dataset_name,
     convert_form_data_to_csv,
     upload_csv_to_s3,
+    upload_interaction_screening_samplesheet_to_s3,
+    upload_samplesheet_rows_to_s3,
     upload_wisps_samplesheet_to_s3,
 )
 from app.services.s3 import S3UploadResult
@@ -315,94 +316,84 @@ async def test_upload_csv_to_s3_leaves_rfdiffusion_untouched(mock_upload):
 # =============================================================================
 
 
+QUERY_URI = "s3://bucket/input/20260101_120000_my-run_query.fasta"
+TARGET_URI = "s3://bucket/input/20260101_120000_my-run_target.fasta"
+
+
 @pytest.mark.asyncio
 @patch("app.services.datasets.upload_file_to_s3")
 async def test_upload_interaction_screening_success(mock_upload):
     """Test successful interaction screening samplesheet upload."""
     mock_upload.return_value = _s3_result()
 
-    sequences = [
-        WispsSequenceItem(id="q1", group="query"),
-        WispsSequenceItem(id="t1", group="target"),
-    ]
-    result, split_output_dir = await upload_wisps_samplesheet_to_s3(
-        sequences,
-        "run-abc",
-        INTERACTION_SCREENING_BASE_PATH,
-        "interaction-screening",
-        include_group=True,
-    )
+    result = await upload_interaction_screening_samplesheet_to_s3(QUERY_URI, TARGET_URI, "run-abc")
 
     assert result.success is True
-    assert "run-abc" in split_output_dir or "interaction_screening" in split_output_dir
     mock_upload.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_upload_interaction_screening_empty_sequences_raises():
-    """Empty sequences list raises ValueError."""
-    with pytest.raises(ValueError, match="sequences cannot be empty"):
-        await upload_wisps_samplesheet_to_s3(
-            [],
-            "run-1",
-            INTERACTION_SCREENING_BASE_PATH,
-            "interaction-screening",
-            include_group=True,
-        )
+async def test_upload_interaction_screening_empty_uri_raises():
+    """A blank query or target URI raises ValueError."""
+    with pytest.raises(ValueError, match="queryFastaS3Uri and targetFastaS3Uri are required"):
+        await upload_interaction_screening_samplesheet_to_s3(QUERY_URI, "  ", "run-1")
 
 
 @pytest.mark.asyncio
 async def test_upload_interaction_screening_empty_run_id_raises():
     """Empty run_id raises ValueError."""
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_wisps_samplesheet_to_s3(
-            [WispsSequenceItem(id="s1", group="query")],
-            "",
-            INTERACTION_SCREENING_BASE_PATH,
-            "interaction-screening",
-            include_group=True,
-        )
+        await upload_interaction_screening_samplesheet_to_s3(QUERY_URI, TARGET_URI, "")
 
 
 @pytest.mark.asyncio
 @patch("app.services.datasets.upload_file_to_s3")
 async def test_upload_interaction_screening_csv_format(mock_upload):
-    """query → g1, target → g2 in the generated CSV."""
+    """Exactly two rows: query → g1, target → g2, each pointing at its FASTA."""
     mock_upload.return_value = _s3_result()
 
-    sequences = [
-        WispsSequenceItem(id="q1", group="query"),
-        WispsSequenceItem(id="t1", group="target"),
-    ]
-    await upload_wisps_samplesheet_to_s3(
-        sequences,
-        "my-run",
-        INTERACTION_SCREENING_BASE_PATH,
-        "interaction-screening",
-        include_group=True,
-    )
+    await upload_interaction_screening_samplesheet_to_s3(QUERY_URI, TARGET_URI, "my-run")
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
-    assert "g1" in file_bytes
-    assert "g2" in file_bytes
-    assert "q1" in file_bytes
-    assert "t1" in file_bytes
-    assert "protein" in file_bytes
+    assert file_bytes.splitlines() == [
+        "id,sequence,group,type",
+        f"query,{QUERY_URI},g1,protein",
+        f"target,{TARGET_URI},g2,protein",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upload_samplesheet_rows_empty_raises():
+    with pytest.raises(ValueError, match="rows cannot be empty"):
+        await upload_samplesheet_rows_to_s3([])
+
+
+@pytest.mark.asyncio
+async def test_upload_bulk_prediction_empty_sequences_raises():
+    """Empty sequences list raises ValueError."""
+    with pytest.raises(ValueError, match="sequences cannot be empty"):
+        await upload_wisps_samplesheet_to_s3(
+            [], "run-1", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
+        )
+
+
+@pytest.mark.asyncio
+async def test_upload_bulk_prediction_empty_run_id_raises():
+    """Empty run_id raises ValueError."""
+    with pytest.raises(ValueError, match="run_id is required"):
+        await upload_wisps_samplesheet_to_s3(
+            [WispsSequenceItem(id="s1")], "", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
+        )
 
 
 @pytest.mark.asyncio
 @patch("app.services.datasets.upload_file_to_s3")
-async def test_upload_interaction_screening_split_output_dir_matches_run_path(mock_upload):
+async def test_upload_bulk_prediction_split_output_dir_matches_run_path(mock_upload):
     """split_output_dir is derived from the same unique slug as the FASTA paths."""
     mock_upload.return_value = _s3_result()
 
-    sequences = [WispsSequenceItem(id="s1", group="query")]
     _, split_output_dir = await upload_wisps_samplesheet_to_s3(
-        sequences,
-        "test-run",
-        INTERACTION_SCREENING_BASE_PATH,
-        "interaction-screening",
-        include_group=True,
+        [WispsSequenceItem(id="s1")], "test-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
     )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
@@ -421,7 +412,7 @@ async def test_upload_bulk_prediction_csv_format(mock_upload):
         WispsSequenceItem(id="s2", sequence="ACDE"),
     ]
     _, _ = await upload_wisps_samplesheet_to_s3(
-        sequences, "bulk-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction", include_group=False
+        sequences, "bulk-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
     )
 
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
