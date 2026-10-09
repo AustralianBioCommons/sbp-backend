@@ -356,6 +356,53 @@ async def test_sync_workflow_run_terminal_non_success_records_status_without_res
     assert run.sync_completed_at is None
 
 
+@pytest.mark.asyncio
+async def test_sync_workflow_run_unknown_keeps_syncing_until_max_attempts(
+    test_db, persistent_models
+):
+    run = _create_run()
+    describe = AsyncMock(return_value={"workflow": {"status": "UNKNOWN"}})
+
+    for attempt in range(1, job_sync.MAX_SEQERA_UNKNOWN_ATTEMPTS):
+        result = await job_sync.sync_workflow_run(test_db, run, describe_func=describe)
+        test_db.refresh(run)
+        assert result.terminal is False
+        assert result.ui_status == "In progress"
+        assert run.seqera_final_status is None
+        assert job_sync._unknown_status_attempts[run.id] == attempt
+        assert run in job_sync.get_runs_requiring_sync(test_db)
+
+    result = await job_sync.sync_workflow_run(test_db, run, describe_func=describe)
+    test_db.refresh(run)
+    assert result.terminal is True
+    assert run.seqera_final_status == "UNKNOWN"
+    assert run.id not in job_sync._unknown_status_attempts
+    assert run not in job_sync.get_runs_requiring_sync(test_db)
+
+
+@pytest.mark.asyncio
+async def test_sync_workflow_run_unknown_then_succeeded_syncs_outputs(
+    test_db, persistent_models, monkeypatch
+):
+    run = _create_run()
+    describe = AsyncMock(
+        side_effect=[{"workflow": {"status": "UNKNOWN"}}, {"workflow": {"status": "SUCCEEDED"}}]
+    )
+    ensure_transfers = MagicMock(return_value=job_sync.OutputTransferState(ready=False))
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+
+    await job_sync.sync_workflow_run(test_db, run, describe_func=describe)
+    test_db.refresh(run)
+    assert job_sync._unknown_status_attempts[run.id] == 1
+
+    result = await job_sync.sync_workflow_run(test_db, run, describe_func=describe)
+    test_db.refresh(run)
+    assert result.seqera_status == "SUCCEEDED"
+    assert run.seqera_final_status == "SUCCEEDED"
+    assert run.id not in job_sync._unknown_status_attempts
+    ensure_transfers.assert_called_once()
+
+
 def test_get_runs_requiring_sync_excludes_non_success_terminal_runs(test_db, persistent_models):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="single-prediction", tool="boltz")

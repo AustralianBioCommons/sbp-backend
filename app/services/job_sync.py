@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..config import Settings
 from ..db.models.core import DataTransfer, WorkflowRun
 from ..schemas.workflows.shared import (
+    MAX_SEQERA_UNKNOWN_ATTEMPTS,
     TERMINAL_SEQERA_STATUSES,
     PipelineStatus,
     UIStatus,
@@ -33,6 +34,11 @@ from .seqera_errors import SeqeraAPIError
 logger = logging.getLogger(__name__)
 
 DescribeWorkflow = Callable[[str], Awaitable[dict[str, Any]]]
+
+# Consecutive UNKNOWN polls per run, kept in memory only (resets on restart).
+# UNKNOWN is often transient, so it's only stored as final after
+# MAX_SEQERA_UNKNOWN_ATTEMPTS polls in a row.
+_unknown_status_attempts: dict[UUID, int] = {}
 
 
 @dataclass(frozen=True)
@@ -180,13 +186,26 @@ async def sync_workflow_run(
             payload = await describe_workflow(run.seqera_run_id, settings=settings)
         else:
             payload = await describe_func(run.seqera_run_id)
-        status = _normalize_status(extract_pipeline_status(payload))
+        status = _normalize_status(extract_pipeline_status(payload)) or PipelineStatus.UNKNOWN.value
+        if status == PipelineStatus.UNKNOWN.value:
+            attempts = _unknown_status_attempts.get(run.id, 0) + 1
+            _unknown_status_attempts[run.id] = attempts
+            if attempts < MAX_SEQERA_UNKNOWN_ATTEMPTS:
+                logger.warning(
+                    "Seqera reported UNKNOWN for run %s (attempt %d/%d); will keep syncing",
+                    run.id,
+                    attempts,
+                    MAX_SEQERA_UNKNOWN_ATTEMPTS,
+                )
+                status = None
+        if status is not None:
+            _unknown_status_attempts.pop(run.id, None)
         if status not in TERMINAL_SEQERA_STATUSES:
             return WorkflowRunSyncResult(
                 run_id=run.id,
                 seqera_run_id=run.seqera_run_id,
-                seqera_status=status,
-                ui_status=_map_status_to_ui(status),
+                seqera_status=status or PipelineStatus.UNKNOWN.value,
+                ui_status=_map_status_to_ui(status or PipelineStatus.UNKNOWN.value),
                 terminal=False,
             )
 

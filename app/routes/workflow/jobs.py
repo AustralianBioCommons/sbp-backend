@@ -93,6 +93,9 @@ def _get_stored_terminal_ui_status(run: WorkflowRun) -> str | None:
     status = run.seqera_final_status.strip().upper()
     if status not in TERMINAL_SEQERA_STATUSES:
         return None
+    if status == PipelineStatus.UNKNOWN.value:
+        # Stored only once polling gave up on UNKNOWN - the run won't recover.
+        return UIStatus.FAILED.value
     if status != PipelineStatus.SUCCEEDED.value:
         return map_pipeline_status_to_ui(status)
     sync_status = run.results_sync_status

@@ -49,7 +49,8 @@ def map_pipeline_status_to_ui(pipeline_status: str) -> str:
         PipelineStatus.RUNNING.value: UIStatus.IN_PROGRESS.value,
         PipelineStatus.SUCCEEDED.value: UIStatus.COMPLETED.value,
         PipelineStatus.FAILED.value: UIStatus.FAILED.value,
-        PipelineStatus.UNKNOWN.value: UIStatus.FAILED.value,
+        # Live UNKNOWN is usually transient - the run is still being tracked.
+        PipelineStatus.UNKNOWN.value: UIStatus.IN_PROGRESS.value,
         PipelineStatus.CANCELLED.value: UIStatus.STOPPED.value,
     }
     return status_mapping.get(pipeline_status, UIStatus.FAILED.value)
@@ -402,10 +403,13 @@ TERMINAL_SEQERA_STATUSES = frozenset(
         PipelineStatus.SUCCEEDED.value,
         PipelineStatus.FAILED.value,
         PipelineStatus.CANCELLED.value,
-        # UNKNOWN status can't be recovered
+        # Only stored once polling gives up (see MAX_SEQERA_UNKNOWN_ATTEMPTS)
         PipelineStatus.UNKNOWN.value,
     }
 )
+
+# Consecutive UNKNOWN polls before a run's status is recorded as final UNKNOWN.
+MAX_SEQERA_UNKNOWN_ATTEMPTS = 5
 
 # UI statuses that only exist between "submitted to Seqera" and "terminal" - not
 # persisted anywhere, so filtering on them requires a live Seqera lookup and can't

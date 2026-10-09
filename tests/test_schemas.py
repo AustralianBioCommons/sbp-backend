@@ -315,9 +315,9 @@ def test_status_mapping_failed():
 
 
 def test_status_mapping_unknown():
-    """Test pipeline status UNKNOWN maps to 'Failed'."""
-    assert map_pipeline_status_to_ui("UNKNOWN") == "Failed"
-    assert map_pipeline_status_to_ui(PipelineStatus.UNKNOWN.value) == UIStatus.FAILED.value
+    """Test live pipeline status UNKNOWN maps to 'In progress' (it's often transient)."""
+    assert map_pipeline_status_to_ui("UNKNOWN") == "In progress"
+    assert map_pipeline_status_to_ui(PipelineStatus.UNKNOWN.value) == UIStatus.IN_PROGRESS.value
 
 
 def test_status_mapping_cancelled():
