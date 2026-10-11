@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..config import Settings
-from ..schemas.workflows.interaction_screening import WispsSequenceItem
 from .s3 import S3UploadResult, upload_file_to_s3
 
 logger = logging.getLogger(__name__)
@@ -54,9 +53,6 @@ def convert_form_data_to_csv(form_data: dict[str, Any]) -> str:
         writer.writerow(headers)
         writer.writerow(row)
         return output.getvalue()
-
-
-BULK_PREDICTION_BASE_PATH = "/g/data/yz52/sbp-service/input/bulk_prediction"
 
 
 def _apply_bindcraft_design_target(
@@ -163,43 +159,27 @@ async def upload_interaction_screening_samplesheet_to_s3(
     return result
 
 
-async def upload_wisps_samplesheet_to_s3(
-    sequences: list[WispsSequenceItem],
+async def upload_bulk_prediction_samplesheet_to_s3(
+    fasta_uri: str,
     run_id: str,
-    base_path: str,
-    label: str,
-    *,
     settings: Settings | None = None,
-) -> tuple[S3UploadResult, str]:
-    """Build and upload a bulk-prediction WISPS samplesheet to S3, returning
-    (result, split_output_dir). Each row references a per-sequence FASTA that the
-    prerun script splits out of the staged aggregated FASTA.
+) -> S3UploadResult:
+    """Build and upload the single-row bulk-prediction samplesheet.
+
+    The row's ``sequence`` holds the S3 URI of the multi-FASTA; the launch
+    endpoint stages it to Gadi and rewrites the column to the local path (see
+    _stage_referenced_samplesheet_file in routes/workflows.py). The pipeline
+    splits it into one interaction per FASTA record (``multi_fasta_file``).
     """
-    if not sequences:
-        raise ValueError("sequences cannot be empty")
     if not run_id:
         raise ValueError("run_id is required")
+    if not fasta_uri.strip():
+        raise ValueError("fastaS3Uri is required")
 
-    unique_run_path = build_unique_dataset_name(run_id)
-    split_output_dir = f"{base_path}/{unique_run_path}"
+    # WISPS ids must not contain "_" or "-"; per-record ids come from the FASTA headers.
+    rows = [{"id": "bulk", "sequence": fasta_uri.strip(), "type": "protein"}]
 
-    rows = [
-        {
-            "id": s.id,
-            "sequence": f"{split_output_dir}/{s.id}.fasta",
-            "type": "protein",
-        }
-        for s in sequences
-    ]
-
-    logger.info("Uploading %s samplesheet to S3", label, extra={"runId": run_id})
-
+    logger.info("Uploading bulk-prediction samplesheet to S3", extra={"runId": run_id})
     result = await upload_samplesheet_rows_to_s3(rows, settings=settings)
-
-    logger.info(
-        "%s samplesheet uploaded to S3",
-        label,
-        extra={"s3Key": result.file_key, "splitOutputDir": split_output_dir},
-    )
-
-    return result, split_output_dir
+    logger.info("bulk-prediction samplesheet uploaded to S3", extra={"s3Key": result.file_key})
+    return result

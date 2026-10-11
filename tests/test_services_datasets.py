@@ -7,17 +7,15 @@ from unittest.mock import patch
 
 import pytest
 
-from app.schemas.workflows.interaction_screening import WispsSequenceItem
 from app.services.datasets import (
-    BULK_PREDICTION_BASE_PATH,
     _apply_bindcraft_design_target,
     _stringify_field,
     build_unique_dataset_name,
     convert_form_data_to_csv,
+    upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
     upload_samplesheet_rows_to_s3,
-    upload_wisps_samplesheet_to_s3,
 )
 from app.services.s3 import S3UploadResult
 
@@ -369,54 +367,30 @@ async def test_upload_samplesheet_rows_empty_raises():
 
 
 @pytest.mark.asyncio
-async def test_upload_bulk_prediction_empty_sequences_raises():
-    """Empty sequences list raises ValueError."""
-    with pytest.raises(ValueError, match="sequences cannot be empty"):
-        await upload_wisps_samplesheet_to_s3(
-            [], "run-1", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
-        )
+async def test_upload_bulk_prediction_empty_fasta_uri_raises():
+    """Blank fastaS3Uri raises ValueError."""
+    with pytest.raises(ValueError, match="fastaS3Uri is required"):
+        await upload_bulk_prediction_samplesheet_to_s3("  ", "run-1")
 
 
 @pytest.mark.asyncio
 async def test_upload_bulk_prediction_empty_run_id_raises():
     """Empty run_id raises ValueError."""
     with pytest.raises(ValueError, match="run_id is required"):
-        await upload_wisps_samplesheet_to_s3(
-            [WispsSequenceItem(id="s1")], "", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
-        )
+        await upload_bulk_prediction_samplesheet_to_s3("s3://bucket/seqs.fasta", "")
 
 
 @pytest.mark.asyncio
 @patch("app.services.datasets.upload_file_to_s3")
-async def test_upload_bulk_prediction_split_output_dir_matches_run_path(mock_upload):
-    """split_output_dir is derived from the same unique slug as the FASTA paths."""
+async def test_upload_bulk_prediction_single_row_references_multi_fasta(mock_upload):
+    """Bulk-prediction CSV is one row whose sequence is the multi-FASTA S3 URI."""
     mock_upload.return_value = _s3_result()
 
-    _, split_output_dir = await upload_wisps_samplesheet_to_s3(
-        [WispsSequenceItem(id="s1")], "test-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
-    )
+    result = await upload_bulk_prediction_samplesheet_to_s3(" s3://bucket/seqs.fasta ", "bulk-run")
 
+    assert result.file_key == "inputs/samplesheets/samplesheet.csv"
     file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
-    unique_slug = split_output_dir.split("/")[-1]
-    assert unique_slug in file_bytes
-
-
-@pytest.mark.asyncio
-@patch("app.services.datasets.upload_file_to_s3")
-async def test_upload_bulk_prediction_csv_format(mock_upload):
-    """Bulk-prediction CSV has no group column."""
-    mock_upload.return_value = _s3_result()
-
-    sequences = [
-        WispsSequenceItem(id="s1", sequence="MAGT"),
-        WispsSequenceItem(id="s2", sequence="ACDE"),
+    assert file_bytes.splitlines() == [
+        "id,sequence,type",
+        "bulk,s3://bucket/seqs.fasta,protein",
     ]
-    _, _ = await upload_wisps_samplesheet_to_s3(
-        sequences, "bulk-run", BULK_PREDICTION_BASE_PATH, "bulk-prediction"
-    )
-
-    file_bytes = mock_upload.call_args.kwargs["file_content"].read().decode()
-    assert "group" not in file_bytes
-    assert "s1" in file_bytes
-    assert "s2" in file_bytes
-    assert "protein" in file_bytes

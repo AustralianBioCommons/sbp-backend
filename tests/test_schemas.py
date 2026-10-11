@@ -7,7 +7,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.workflows.interaction_screening import WispsDatasetUploadRequest, WispsSequenceItem
+from app.schemas.workflows.interaction_screening import BulkPredictionDatasetUploadRequest
 from app.schemas.workflows.shared import (
     CancelWorkflowResponse,
     DatasetUploadRequest,
@@ -415,57 +415,27 @@ def test_job_list_response_empty():
 
 
 # ============================================================================
-# Tests for WispsSequenceItem and WispsDatasetUploadRequest
+# Tests for BulkPredictionDatasetUploadRequest
 # ============================================================================
 
 
-def test_sequence_item_query():
-    item = WispsSequenceItem(id="seq-1", group="query")
-    assert item.id == "seq-1"
-    assert item.group == "query"
-
-
-def test_sequence_item_target():
-    item = WispsSequenceItem(id="seq-2", group="target")
-    assert item.group == "target"
-
-
-def test_sequence_item_invalid_group():
-    with pytest.raises(ValidationError):
-        WispsSequenceItem(id="seq-3", group="invalid")
-
-
-def test_sequence_item_extra_fields_forbidden():
-    with pytest.raises(ValidationError):
-        WispsSequenceItem(id="seq-4", group="query", extra="nope")
-
-
-def test_interaction_screening_request_valid():
-    req = WispsDatasetUploadRequest(
-        sequences=[
-            {"id": "q1", "group": "query"},
-            {"id": "t1", "group": "target"},
-        ],
-        runId="run-xyz",
-    )
-    assert len(req.sequences) == 2
+def test_bulk_prediction_request_valid():
+    req = BulkPredictionDatasetUploadRequest(runId="run-xyz", fastaS3Uri="s3://b/seqs.fasta")
     assert req.runId == "run-xyz"
-    assert req.sequences[0].group == "query"
-    assert req.sequences[1].group == "target"
+    assert req.fastaS3Uri == "s3://b/seqs.fasta"
 
 
-def test_interaction_screening_request_empty_sequences():
-    # Empty sequences list is accepted by the schema; enforcement is in the service layer
-    req = WispsDatasetUploadRequest(sequences=[], runId="run-1")
-    assert req.sequences == []
-
-
-def test_interaction_screening_request_extra_fields_forbidden():
+def test_bulk_prediction_request_requires_fasta_uri():
     with pytest.raises(ValidationError):
-        WispsDatasetUploadRequest(
-            sequences=[{"id": "q1", "group": "query"}],
+        BulkPredictionDatasetUploadRequest(runId="run-1", fastaS3Uri="")
+
+
+def test_bulk_prediction_request_rejects_old_sequences_payload():
+    with pytest.raises(ValidationError):
+        BulkPredictionDatasetUploadRequest(
             runId="run-1",
-            extra="bad",
+            fastaS3Uri="s3://b/seqs.fasta",
+            sequences=[{"id": "q1"}],
         )
 
 
@@ -648,12 +618,3 @@ def test_bulk_prediction_reexports_wisps_form_data():
     from app.schemas.workflows.interaction_screening import WispsFormData
 
     assert BulkWispsFormData is WispsFormData
-
-
-def test_wisps_sequence_item_rejects_glob_unsafe_id():
-    """Sequence IDs become Nextflow file paths, so brackets/spaces must be rejected."""
-    assert WispsSequenceItem(id="NP_414544.1").id == "NP_414544.1"
-    with pytest.raises(ValidationError):
-        WispsSequenceItem(
-            id="NP_414544.1 homoserine kinase [Escherichia coli str. K-12 substr. MG1655]"
-        )

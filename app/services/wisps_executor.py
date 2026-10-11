@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import os
 import shlex
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db.models import QueuedJob, WorkflowRun
-from ..schemas.workflows.interaction_screening import WispsFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .globus_transfer import build_gadi_input_path, build_gadi_output_path
+from .globus_transfer import build_gadi_output_path
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
-from .results_utils import s3_uri_to_key
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
@@ -92,23 +88,15 @@ async def prepare_wisps_workflow(
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
-    if form_data.workflow == "interaction-screening":
-        # The samplesheet already points at the staged query/target FASTAs
-        # (rewritten at launch), so there's nothing to split: skip the remote
-        # prerun script and just load the modules it would have.
-        prerun_script = get_executor_script(
-            prerun_script_path=None,
-            repo_gadi_path=workflow.repo_gadi_path,
-            repo_url=workflow.repo_url,
-            module_loads=DEFAULT_MODULE_LOADS,
-        )
-    else:
-        # wisps_prerun.sh loads its own modules and splits the aggregated FASTA.
-        prerun_script = _bulk_split_env(form_data, workflow_run, settings) + get_executor_script(
-            prerun_script_path=workflow.prerun_script_path,
-            repo_gadi_path=workflow.repo_gadi_path,
-            repo_url=workflow.repo_url,
-        )
+    # Each samplesheet row already points at a staged multi-FASTA (rewritten at
+    # launch) that the pipeline splits itself, so there's no remote prerun
+    # script: just load the modules the pipeline needs.
+    prerun_script = get_executor_script(
+        prerun_script_path=None,
+        repo_gadi_path=workflow.repo_gadi_path,
+        repo_url=workflow.repo_url,
+        module_loads=DEFAULT_MODULE_LOADS,
+    )
     if workflow.ref_database:
         prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
     launch_payload["preRunScript"] = prerun_script
@@ -126,39 +114,6 @@ async def prepare_wisps_workflow(
     else:
         db_session.flush()
     return queued_job
-
-
-def _bulk_split_env(
-    form_data: WorkflowFormData, workflow_run: WorkflowRun, settings: Settings
-) -> str:
-    """Shell vars wisps_prerun.sh reads to split the staged aggregated FASTA:
-    F (input) and D (per-sequence output dir). get_executor_script no longer
-    injects per-run env, so these are prepended to the script instead.
-    """
-    try:
-        wisps_fields = WispsFormData.model_validate(form_data.model_dump())
-    except ValidationError as exc:
-        raise WorkflowLaunchError(
-            "'fastaS3Uri'/'splitOutputDir' are required in formData for WISPS workflow launch"
-        ) from exc
-    fasta_uri = wisps_fields.fastaS3Uri.strip()
-    split_output_dir = wisps_fields.splitOutputDir.strip()
-    if not fasta_uri or not split_output_dir:
-        raise WorkflowLaunchError("Missing fastaS3Uri/splitOutputDir in formData")
-    fasta_key = s3_uri_to_key(fasta_uri)
-    if not fasta_key:
-        raise WorkflowLaunchError(f"Invalid S3 URI for fastaS3Uri: {fasta_uri}")
-    workflow = workflow_run.workflow
-    assert workflow is not None, "Queued job's workflow run has no associated workflow"
-    # Matches the destination_location computed by _stage_wisps_fasta at queue
-    # time (app/routes/workflows.py) - the aggregated FASTA Globus stages to.
-    staged_fasta_location = build_gadi_input_path(
-        workflow_run.id,
-        workflow.name.lower(),
-        os.path.basename(fasta_key),
-        globus_settings=settings.globus,
-    )
-    return f"F={shlex.quote(staged_fasta_location)}\nD={shlex.quote(split_output_dir)}\n"
 
 
 async def launch_wisps_workflow(
