@@ -8,7 +8,7 @@ import random
 import re
 import string
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,9 +28,9 @@ from ..db.models.core import (
     WorkflowRun,
 )
 from ..schemas.workflows.interaction_screening import (
+    BulkPredictionDatasetUploadRequest,
     InteractionScreeningDatasetUploadRequest,
     InteractionScreeningFormData,
-    WispsDatasetUploadRequest,
     WispsFormData,
 )
 from ..schemas.workflows.shared import (
@@ -56,11 +56,10 @@ from ..services.credits import (
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
-    BULK_PREDICTION_BASE_PATH,
+    upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
     upload_samplesheet_rows_to_s3,
-    upload_wisps_samplesheet_to_s3,
 )
 from ..services.globus_transfer import build_gadi_input_path
 from ..services.proteindj_executor import prepare_proteindj_workflow
@@ -220,12 +219,12 @@ async def _stage_referenced_samplesheet_file(
     return the s3InputKey of a corrected samplesheet with that column rewritten
     to the local path.
 
-    Some samplesheets (proteinfold's fasta) carry a raw S3 URI to a
-    separately-uploaded file. Globus stages the samplesheet CSV to Gadi as-is,
-    but the pipeline reads that column as a local file path, not an S3 URI
-    (unlike ProteinDJ, which takes its pdb path as a direct pipeline param,
-    never via a samplesheet) - so the referenced file must be staged
-    separately and the samplesheet corrected to point at where it lands.
+    Some samplesheets (proteinfold's fasta, bulk-prediction's sequence) carry
+    a raw S3 URI to a separately-uploaded file. Globus stages the samplesheet
+    CSV to Gadi as-is, but the pipeline reads that column as a local file path,
+    not an S3 URI (unlike ProteinDJ, which takes its pdb path as a direct
+    pipeline param, never via a samplesheet) - so the referenced file must be
+    staged separately and the samplesheet corrected to point at where it lands.
     """
     try:
         samplesheet_rows = await read_csv_from_s3(s3_input_key)
@@ -300,10 +299,11 @@ async def _count_wisps_samplesheet_entries(
 ) -> tuple[int | None, tuple[int, int] | None]:
     """Derive the server-side, non-spoofable credit quantity for a WISPS launch
     from the already-built samplesheet at s3_input_key (id/sequence[/group]/type
-    rows — see upload_wisps_samplesheet_to_s3), rather than trusting the
+    rows whose ``sequence`` is a multi-FASTA S3 URI), rather than trusting the
     client-supplied fastaContent.
 
-    Returns (fasta_entry_count, None) for bulk-prediction, or
+    Returns (fasta_entry_count, None) for bulk-prediction, where the count is
+    the number of FASTA records across every row's file, or
     (None, (query_count, target_count)) for interaction-screening, where each
     count is the number of FASTA records in the file its g1 (query) / g2
     (target) row references.
@@ -326,27 +326,35 @@ async def _count_wisps_samplesheet_entries(
             group = row.get("group")
             if group not in counts:
                 continue
-            fasta_key = s3_uri_to_key(row.get("sequence"))
-            if not fasta_key:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid S3 URI in samplesheet 'sequence' for group {group}.",
-                )
-            try:
-                fasta_text = await read_s3_file(fasta_key)
-            except S3ConfigurationError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"S3 configuration error: {exc}",
-                ) from exc
-            except S3ServiceError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Failed to read FASTA referenced by samplesheet: {exc}",
-                ) from exc
-            counts[group] += sum(1 for line in fasta_text.splitlines() if line.startswith(">"))
+            counts[group] += await _count_referenced_fasta_records(row, f"group {group}")
         return None, (counts["g1"], counts["g2"])
-    return len(rows), None
+    total = 0
+    for row in rows:
+        total += await _count_referenced_fasta_records(row, f"row {row.get('id')}")
+    return total, None
+
+
+async def _count_referenced_fasta_records(row: dict[str, str], label: str) -> int:
+    """Count the FASTA records in the S3 file a samplesheet row's ``sequence`` references."""
+    fasta_key = s3_uri_to_key(row.get("sequence"))
+    if not fasta_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid S3 URI in samplesheet 'sequence' for {label}.",
+        )
+    try:
+        fasta_text = await read_s3_file(fasta_key)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read FASTA referenced by samplesheet: {exc}",
+        ) from exc
+    return sum(1 for line in fasta_text.splitlines() if line.startswith(">"))
 
 
 async def _stage_interaction_screening_fastas(
@@ -426,52 +434,6 @@ async def _stage_interaction_screening_fastas(
             detail=f"Failed to re-upload corrected samplesheet: {exc}",
         ) from exc
     return csv_upload.file_key
-
-
-def _stage_wisps_fasta(
-    *,
-    db_session: Session,
-    fasta_uri: str,
-    run_id: UUID,
-    workflow_name: str,
-    globus_settings: GlobusSettings,
-) -> None:
-    """Stage the aggregated multi-sequence FASTA (formData.fastaS3Uri) to Gadi via
-    Globus.
-
-    Unlike bindcraft/proteinfold, WISPS's samplesheet never references this file
-    directly - each row instead references a future per-sequence split file
-    under formData.splitOutputDir, produced by the prerun script. So there's no
-    samplesheet column to rewrite here, just the raw file to stage so that
-    split step has something local to read.
-    """
-    fasta_key = s3_uri_to_key(fasta_uri)
-    if not fasta_key:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid S3 URI for fastaS3Uri.",
-        )
-    if db_session.get(S3Object, fasta_key) is None:
-        db_session.add(S3Object(object_key=fasta_key, uri=fasta_uri))
-    db_session.add(
-        RunInput(
-            run_id=run_id,
-            s3_object_id=fasta_key,
-            data_transfer=DataTransfer(
-                workflow_run_id=run_id,
-                direction="input",
-                provider="globus",
-                source_location=fasta_uri,
-                destination_location=build_gadi_input_path(
-                    run_id,
-                    workflow_name,
-                    os.path.basename(fasta_key),
-                    globus_settings=globus_settings,
-                ),
-                recursive=False,
-            ),
-        )
-    )
 
 
 @router.post("/me/sync")
@@ -682,7 +644,6 @@ async def launch_workflow(
     # to trigger before its own formData is validated).
     is_de_novo_design_launch = workflow_name in ("de-novo-design", "bindflow", "bindcraft")
     is_proteinfold_launch = workflow_name in ("single-prediction", "proteinfold")
-    is_wisps_launch = workflow_name in ("interaction-screening", "bulk-prediction")
     if is_proteinfold_launch:
         s3_input_key = await _stage_referenced_samplesheet_file(
             db_session=db_session,
@@ -700,11 +661,11 @@ async def launch_workflow(
             workflow_name=workflow_name,
             globus_settings=settings.globus,
         )
-    elif is_wisps_launch:
-        assert isinstance(wisps_form_data, WispsFormData)
-        _stage_wisps_fasta(
+    elif workflow_name == "bulk-prediction":
+        s3_input_key = await _stage_referenced_samplesheet_file(
             db_session=db_session,
-            fasta_uri=wisps_form_data.fastaS3Uri,
+            s3_input_key=s3_input_key,
+            field_name="sequence",
             run_id=run_id,
             workflow_name=workflow_name,
             globus_settings=settings.globus,
@@ -998,29 +959,19 @@ async def upload_interaction_screening_dataset_endpoint(
     )
 
 
-_WISPS_BASE_PATHS: dict[str, str] = {
-    "bulk-prediction": BULK_PREDICTION_BASE_PATH,
-}
-
-
-# Registered after the interaction-screening route above, which must match first.
 @router.post(
-    "/datasets/{workflow_name}/upload",
+    "/datasets/bulk-prediction/upload",
     response_model=S3DatasetUploadResponse,
 )
-async def upload_wisps_dataset_endpoint(
-    workflow_name: Literal["bulk-prediction"],
-    payload: WispsDatasetUploadRequest,
+async def upload_bulk_prediction_dataset_endpoint(
+    payload: BulkPredictionDatasetUploadRequest,
     settings: Settings = Depends(get_settings),
 ) -> S3DatasetUploadResponse:
-    """Build and upload a bulk-prediction WISPS samplesheet directly to S3."""
-    base_path = _WISPS_BASE_PATHS[workflow_name]
+    """Build and upload the single-row (multi-FASTA) bulk-prediction samplesheet."""
     try:
-        result, split_output_dir = await upload_wisps_samplesheet_to_s3(
-            payload.sequences,
+        result = await upload_bulk_prediction_samplesheet_to_s3(
+            payload.fastaS3Uri,
             payload.runId,
-            base_path,
-            workflow_name,
             settings=settings,
         )
     except ValueError as exc:
@@ -1037,11 +988,10 @@ async def upload_wisps_dataset_endpoint(
         ) from exc
 
     return S3DatasetUploadResponse(
-        message=f"{workflow_name} samplesheet uploaded to S3 successfully",
+        message="bulk-prediction samplesheet uploaded to S3 successfully",
         s3Key=result.file_key,
         s3Uri=result.file_url or f"s3://{result.bucket}/{result.file_key}",
         success=result.success,
-        splitOutputDir=split_output_dir,
     )
 
 

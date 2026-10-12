@@ -1419,25 +1419,98 @@ def _add_bulk_prediction_workflow(test_engine):
                     repo_url="https://github.com/test/wisps",
                     default_revision="main",
                     config_path="/some/config.nf",
-                    prerun_script_path="/some/wisps-prerun.sh",
                 )
             )
             db.commit()
 
 
+def _fasta_with(count: int, prefix: str) -> str:
+    return "".join(f">{prefix}{i}\nMAGT\n" for i in range(count))
+
+
+BULK_FASTA_URI = "s3://test-s3-bucket/input/20260101_120000_bulk-run_sequences.fasta"
+BULK_FORM_DATA = {
+    "workflow": "bulk-prediction",
+    "tool": "boltz",
+    "fastaS3Uri": BULK_FASTA_URI,
+}
+
+
+def _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv):
+    """Configure the single-row samplesheet that _stage_referenced_samplesheet_file
+    reads, rewrites and re-uploads for bulk-prediction."""
+    mock_read_csv.side_effect = lambda *_a, **_k: [
+        {"id": "bulk", "sequence": BULK_FASTA_URI, "type": "protein"}
+    ]
+    mock_upload_csv.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/corrected.csv", bucket="test-s3-bucket"
+    )
+
+
+@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_bulk_prediction_stages_single_multi_fasta(
+    mock_prepare, mock_read_csv, mock_upload_csv, wisps_client: TestClient, test_engine
+):
+    """Bulk-prediction stages the one multi-FASTA its samplesheet row references
+    and hands the pipeline a samplesheet pointing at the Gadi-local copy."""
+    _add_bulk_prediction_workflow(test_engine)
+    _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv)
+    payload = {
+        "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
+        "s3InputKey": "inputs/samplesheets/test.csv",
+        "formData": BULK_FORM_DATA,
+    }
+
+    response = wisps_client.post("/api/workflows/launch", json=payload)
+
+    assert response.status_code == 201
+    run_id = UUID(response.json()["runId"])
+    call_kwargs = mock_prepare.call_args.kwargs
+    assert call_kwargs["form_data"].fastaS3Uri == BULK_FASTA_URI
+    assert call_kwargs["staged_input_location"].endswith(f"/bulk-prediction/{run_id}/corrected.csv")
+    rewritten_row = mock_upload_csv.call_args.args[0]
+    fasta_path = rewritten_row["sequence"]
+    assert rewritten_row["id"] == "bulk"
+    assert fasta_path.endswith(
+        f"/bulk-prediction/{run_id}/20260101_120000_bulk-run_sequences.fasta"
+    )
+
+    with Session(test_engine) as db:
+        transfers = db.scalars(
+            select(DataTransfer).where(DataTransfer.workflow_run_id == run_id)
+        ).all()
+    assert {t.source_location: t.destination_location for t in transfers} == {
+        "s3://test-s3-bucket/inputs/samplesheets/corrected.csv": call_kwargs[
+            "staged_input_location"
+        ],
+        BULK_FASTA_URI: fasta_path,
+    }
+
+
+@patch("app.routes.workflows.read_s3_file")
+@patch("app.routes.workflows.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_deducts_credits_when_enabled(
-    mock_prepare, mock_read_csv, wisps_client: TestClient, test_engine, mock_settings
+    mock_prepare,
+    mock_read_csv,
+    mock_upload_csv,
+    mock_read_file,
+    wisps_client: TestClient,
+    test_engine,
+    mock_settings,
 ):
-    """With credits enabled, bulk-prediction charges tool_multiplier × samplesheet row count
-    (the reported bug: this used to deduct nothing at all)."""
+    """With credits enabled, bulk-prediction charges tool_multiplier × the FASTA
+    records in the multi-FASTA its samplesheet row references."""
     _add_bulk_prediction_workflow(test_engine)
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
-    mock_read_csv.return_value = [
-        {"id": f"seq{i}", "sequence": f"/split/seq{i}.fasta", "type": "protein"} for i in range(5)
-    ]
+    _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv)
+    mock_read_file.side_effect = lambda key: {
+        "input/20260101_120000_bulk-run_sequences.fasta": _fasta_with(5, "seq")
+    }[key]
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1445,12 +1518,7 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     payload = {
         "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": {
-            "workflow": "bulk-prediction",
-            "tool": "boltz",
-            "fastaS3Uri": "s3://bucket/test.fasta",
-            "splitOutputDir": "/data/split",
-        },
+        "formData": BULK_FORM_DATA,
     }
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
@@ -1464,8 +1532,34 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     assert credit_cost == 5  # persisted on the run for admin display
 
 
-def _fasta_with(count: int, prefix: str) -> str:
-    return "".join(f">{prefix}{i}\nMAGT\n" for i in range(count))
+@patch("app.routes.workflows.upload_bulk_prediction_samplesheet_to_s3")
+def test_upload_bulk_prediction_dataset_endpoint(mock_upload, wisps_client: TestClient):
+    mock_upload.return_value = S3UploadResult(
+        success=True, file_key="inputs/samplesheets/bulk.csv", bucket="test-s3-bucket"
+    )
+
+    response = wisps_client.post(
+        "/api/workflows/datasets/bulk-prediction/upload",
+        json={"runId": "bulk-run", "fastaS3Uri": BULK_FASTA_URI},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["s3Key"] == "inputs/samplesheets/bulk.csv"
+    assert body["splitOutputDir"] is None
+    assert mock_upload.call_args.args[:2] == (BULK_FASTA_URI, "bulk-run")
+
+
+def test_upload_bulk_prediction_dataset_endpoint_rejects_sequences_payload(
+    wisps_client: TestClient,
+):
+    """The old per-sequence payload is rejected now that one multi-FASTA is sent."""
+    response = wisps_client.post(
+        "/api/workflows/datasets/bulk-prediction/upload",
+        json={"runId": "bulk-run", "sequences": [{"id": "s1", "sequence": "MAGT"}]},
+    )
+
+    assert response.status_code == 422
 
 
 @patch("app.routes.workflows.read_s3_file")
