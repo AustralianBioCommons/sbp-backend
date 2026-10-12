@@ -1,14 +1,14 @@
 """Schemas for the interaction-screening workflow.
 
-``WispsFormData``/``WispsSequenceItem``/``WispsDatasetUploadRequest`` back
-bulk-prediction's split-FASTA flow (see ``bulk_prediction.py``). Interaction
-screening instead uploads one query and one target FASTA, and its samplesheet
-has exactly two rows (g1=query, g2=target) pointing at those files.
+``WispsFormData``/``BulkPredictionDatasetUploadRequest`` back bulk-prediction
+(see ``bulk_prediction.py``), whose samplesheet has a single row pointing at one
+multi-FASTA. Interaction screening instead uploads one query and one target
+FASTA, and its samplesheet has exactly two rows (g1=query, g2=target) pointing
+at those files. In both cases the pipeline splits each multi-FASTA itself
+(``multi_fasta_file``), so there is no prerun split.
 """
 
 from __future__ import annotations
-
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,31 +16,16 @@ from .shared import DatasetUploadResponse, S3DatasetUploadResponse, WorkflowForm
 
 
 class WispsFormData(WorkflowFormData):
-    """Form data for WISPS workflows (interaction-screening, bulk-prediction)."""
+    """Form data for bulk-prediction."""
 
-    fastaS3Uri: str = Field(
-        ..., description="S3 URI of the combined FASTA file to split and screen"
-    )
-    splitOutputDir: str = Field(
-        ..., description="Cluster filesystem path for per-sequence FASTA files"
-    )
+    fastaS3Uri: str = Field(..., description="S3 URI of the multi-FASTA file to predict")
 
 
-class WispsSequenceItem(BaseModel):
+class BulkPredictionDatasetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Used as the per-sequence split filename (`<id>.fasta`) that Nextflow reads,
-    # so characters Nextflow treats as glob syntax (e.g. "[", "]") must be excluded.
-    id: str = Field(pattern=r"^[A-Za-z0-9._-]+$")
-    sequence: str | None = None
-    group: Literal["query", "target"] | None = None
-
-
-class WispsDatasetUploadRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sequences: list[WispsSequenceItem]
     runId: str
+    fastaS3Uri: str = Field(min_length=1)
 
 
 class InteractionScreeningFormData(WorkflowFormData):

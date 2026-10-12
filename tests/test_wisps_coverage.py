@@ -72,7 +72,6 @@ def _queued_wisps_job(
             "workflow": "interaction-screening",
             "tool": "boltz",
             "fastaS3Uri": "s3://bucket/seqs.fa",
-            "splitOutputDir": "/tmp/split",
         },
     )
     launch_payload = {
@@ -447,17 +446,18 @@ def _wisps_form_and_data(**form_data_overrides) -> tuple[WorkflowLaunchForm, Wis
         "workflow": "bulk-prediction",
         "tool": "boltz",
         "fastaS3Uri": "s3://bucket/seqs.fa",
-        "splitOutputDir": "/tmp/split",
     }
     defaults.update(form_data_overrides)
     return form, WispsFormData(**defaults)
 
 
 @pytest.mark.anyio
-async def test_prepare_wisps_workflow_forwards_prerun_script_path(
+async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
     test_db, persistent_models, wisps_settings
 ):
-    """prerun_script_path is forwarded to get_executor_script at prepare time."""
+    """Bulk-prediction no longer runs the FASTA-splitting prerun script (the
+    pipeline splits the multi-FASTA itself), even when the workflow row still
+    has one - it only loads modules."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(
         prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
@@ -471,9 +471,7 @@ async def test_prepare_wisps_workflow_forwards_prerun_script_path(
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
-        patch(
-            "app.services.wisps_executor.get_executor_script", return_value="prerun_body"
-        ) as mock_script,
+        patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch,
     ):
         prepared_job = await prepare_wisps_workflow(
             form=form,
@@ -485,21 +483,15 @@ async def test_prepare_wisps_workflow_forwards_prerun_script_path(
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
-            staged_input_location="/test/input/interaction-screening/run-id/test.csv",
+            staged_input_location="/test/input/bulk-prediction/run-id/test.csv",
         )
 
-    call_kwargs = mock_script.call_args.kwargs
-    assert (
-        call_kwargs["prerun_script_path"]
-        == "https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh"
-    )
-    prerun_lines = prepared_job.launch_payload["preRunScript"].split("\n")
-    assert prerun_lines[0].startswith("F=/test/input/")
-    assert prerun_lines[0].endswith("seqs.fa")
-    assert prerun_lines[1] == "D=/tmp/split"
-    assert prerun_lines[-1] == "prerun_body"
-    # Bulk's module loads come from wisps_prerun.sh itself, not the backend.
-    assert "module_loads" not in call_kwargs
+    mock_fetch.assert_not_called()
+    prerun_script = prepared_job.launch_payload["preRunScript"]
+    assert "module load singularity" in prerun_script
+    assert "module load nextflow/" in prerun_script
+    assert "F=" not in prerun_script
+    assert "D=" not in prerun_script
 
 
 @pytest.mark.anyio
@@ -575,7 +567,6 @@ async def test_launch_wisps_workflow_missing_output_id(wisps_settings):
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
-        splitOutputDir="/tmp/split",
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
@@ -602,7 +593,6 @@ async def test_launch_wisps_workflow_empty_output_id(wisps_settings):
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
-        splitOutputDir="/tmp/split",
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
@@ -629,7 +619,6 @@ async def test_launch_wisps_workflow_missing_run_name(wisps_settings):
         workflow="interaction-screening",
         tool="boltz",
         fastaS3Uri="s3://bucket/seqs.fa",
-        splitOutputDir="/tmp/split",
     )
     with (
         _mock_wisps_db_context() as (db_session, workflow_run, *_),
