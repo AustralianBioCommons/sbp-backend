@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sbp-backend"
-version = "1.0.0"
+version = "0.1.0"
 description = "Structural Biology Platform Backend API"
 requires-python = ">=3.14, <3.15"
 dependencies = [
