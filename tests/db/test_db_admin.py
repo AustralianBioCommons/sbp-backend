@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from collections.abc import Generator
+from datetime import UTC, datetime
+from html import unescape
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import select
+from sqlalchemy import event, select
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette_admin._types import RequestAction
+from starlette_admin.contrib.sqla import Admin
 from starlette_admin.exceptions import ActionFailed
 
 from app.config import get_settings
@@ -28,10 +34,12 @@ from app.db.admin import (
     AppUserAdmin,
     DataTransferAdmin,
     NciServiceUnitsField,
+    QueuedJobAdmin,
     RunInputAdmin,
     RunOutputAdmin,
     S3ObjectAdmin,
     SbpCreditField,
+    WorkflowAdmin,
     WorkflowRunAdmin,
     _claims_has_admin_role,
     _decode_admin_pk,
@@ -39,10 +47,20 @@ from app.db.admin import (
     mount_db_admin,
     require_admin_access,
 )
-from app.db.models.core import AppUser, DataTransfer, RunInput, RunOutput, S3Object, WorkflowRun
+from app.db.models.core import (
+    AppUser,
+    DataTransfer,
+    RunInput,
+    RunOutput,
+    S3Object,
+    Workflow,
+    WorkflowRun,
+)
+from app.db.models.job_queue import QueuedJob
 from app.routes.dependencies import get_db
 from app.services.job_sync import ForceResyncOutcome
 from tests.conftest import SettingsNoEnv
+from tests.datagen import AppUserFactory, DataTransferFactory, WorkflowRunFactory
 
 DB_ADMIN_REQUIRED_ENV = {
     "AUTH_DOMAIN": "example.auth.test",
@@ -528,6 +546,106 @@ def _admin_action_request(action: RequestAction) -> Request:
     )
     request.state.action = action
     return request
+
+
+@pytest.mark.parametrize("transfer_count", [0, 3, 1001])
+async def test_workflow_run_detail_limits_transfer_links(
+    test_db, test_engine, persistent_models, transfer_count
+) -> None:
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(owner_user_id=user.id, workflow_id=None)
+    other_run = WorkflowRunFactory.create_sync(owner_user_id=user.id, workflow_id=None)
+    transfers = DataTransferFactory.batch(
+        transfer_count,
+        workflow_run_id=run.id,
+        direction="output",
+        provider="s3",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        error_message="Large transfer error " * 1000,
+    )
+    test_db.add_all(transfers)
+    DataTransferFactory.create_sync(workflow_run_id=other_run.id)
+    test_db.commit()
+    run_id = run.id
+    expected_ids = sorted((transfer.id for transfer in transfers), reverse=True)[:10]
+    test_db.expunge_all()
+
+    app = FastAPI()
+    admin = Admin(test_engine, templates_dir=_ADMIN_TEMPLATES_DIR)
+    for view in (
+        WorkflowRunAdmin(WorkflowRun),
+        AppUserAdmin(AppUser),
+        WorkflowAdmin(Workflow),
+        DataTransferAdmin(DataTransfer),
+        QueuedJobAdmin(QueuedJob),
+    ):
+        admin.add_view(view)
+    admin.mount_to(app)
+    statements = []
+
+    def capture_sql(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(test_engine, "before_cursor_execute", capture_sql)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/admin/workflow-run/detail/{run_id}")
+    finally:
+        event.remove(test_engine, "before_cursor_execute", capture_sql)
+
+    assert response.status_code == 200
+    assert f"Showing {min(transfer_count, 10)} of " in response.text
+    count_link = re.search(rf'href="([^"]+)">{transfer_count} transfers</a>', response.text)
+    assert count_link is not None
+    list_url = unescape(count_link[1])
+    assert urlsplit(list_url).path == "/admin/data-transfer/list"
+    filter_state = json.loads(parse_qs(urlsplit(list_url).query)["searchBuilder"][0])
+    assert filter_state == {
+        "logic": "AND",
+        "criteria": [
+            {
+                "condition": "=",
+                "data": "Workflow run id",
+                "origData": "workflow_run_id",
+                "type": "string",
+                "value": [str(run_id)],
+            }
+        ],
+    }
+    assert response.text.count("/admin/data-transfer/detail/") == min(transfer_count, 10)
+    link_positions = [
+        response.text.index(f"/admin/data-transfer/detail/{transfer_id}")
+        for transfer_id in expected_ids
+    ]
+    assert link_positions == sorted(link_positions)
+    assert "Large transfer error" not in response.text
+    transfer_queries = [statement for statement in statements if "data_transfers" in statement]
+    assert len(transfer_queries) == 2
+    assert all("JOIN" not in statement for statement in transfer_queries)
+    assert all("error_message" not in statement for statement in transfer_queries)
+    assert all("source_location" not in statement for statement in transfer_queries)
+    assert all("destination_location" not in statement for statement in transfer_queries)
+    assert any("LIMIT" in statement for statement in transfer_queries)
+
+    with TestClient(app) as client:
+        list_response = client.get(list_url)
+        assert list_response.status_code == 200
+        assert '"stateSave": true' in list_response.text
+
+        unfiltered_response = client.get("/admin/api/data-transfer", params={"limit": 10})
+        assert unfiltered_response.status_code == 200
+        assert unfiltered_response.json()["total"] == transfer_count + 1
+
+    request = _admin_action_request(RequestAction.LIST)
+    request.state.session = test_db
+    view = DataTransferAdmin(DataTransfer)
+    where = {"and": [{"workflow_run_id": {"eq": run_id}}, {"provider": {"eq": "s3"}}]}
+    assert view._validate_where(request, where) is None
+    assert await view.count(request, where=where) == transfer_count
+    for offset in (0, 10):
+        page = await view.find_all(request, skip=offset, limit=10, where=where)
+        assert len(page) == min(max(transfer_count - offset, 0), 10)
+        assert all(transfer.workflow_run_id == run_id for transfer in page)
 
 
 async def test_workflow_run_admin_force_resync_row_action_resyncs_succeeded_run(

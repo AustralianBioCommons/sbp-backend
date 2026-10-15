@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy import inspect as sqla_inspect
 from sqlalchemy.orm import Session, joinedload
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -32,7 +33,7 @@ from starlette_admin.actions import action, link_row_action, row_action
 from starlette_admin.auth import AdminUser, AuthProvider, LoginFailed
 from starlette_admin.contrib.sqla import Admin, ModelView
 from starlette_admin.exceptions import ActionFailed
-from starlette_admin.fields import FloatField, HasOne, IntegerField, StringField
+from starlette_admin.fields import BaseField, FloatField, HasOne, IntegerField, StringField
 
 from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..config import Settings, get_settings
@@ -225,6 +226,23 @@ class SbpCreditField(IntegerField):
         return obj.credit_cost
 
 
+class DataTransferLinksField(BaseField):
+    async def parse_obj(self, request: Request, obj: WorkflowRun) -> dict[str, Any]:
+        session: Session = request.state.session
+        run_filter = DataTransfer.workflow_run_id == obj.id
+        total = await run_in_threadpool(
+            session.scalar, select(func.count()).select_from(DataTransfer).where(run_filter)
+        )
+        transfers = await run_in_threadpool(
+            session.execute,
+            select(DataTransfer.id, DataTransfer.direction, DataTransfer.provider)
+            .where(run_filter)
+            .order_by(DataTransfer.created_at.desc(), DataTransfer.id.desc())
+            .limit(10),
+        )
+        return {"total": total, "transfers": transfers.mappings().all(), "run_id": str(obj.id)}
+
+
 class WorkflowRunAdmin(ModelView):
     fields = [
         "submission_timestamp",
@@ -243,7 +261,17 @@ class WorkflowRunAdmin(ModelView):
         "seqera_final_status",
         "sync_completed_at",
         "id",
-        HasMany("data_transfers", identity="data-transfer"),
+        HasMany("data_transfers", identity="data-transfer", exclude_from_detail=True),
+        DataTransferLinksField(
+            "data_transfer_links",
+            label="Data transfers",
+            display_template="displays/data_transfer_links.html",
+            exclude_from_list=True,
+            exclude_from_create=True,
+            exclude_from_edit=True,
+            searchable=False,
+            orderable=False,
+        ),
         HasMany("queued_jobs", identity="queued-job"),
     ]
     exclude_fields_from_list = ["submitted_form_data", "data_transfers", "queued_jobs"]
@@ -605,6 +633,7 @@ class DataTransferAdmin(ModelView):
     fields = [
         "id",
         HasOne("workflow_run", identity="workflow-run"),
+        StringField("workflow_run_id", exclude_from_create=True, exclude_from_edit=True),
         "direction",
         "provider",
         "source_location",
