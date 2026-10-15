@@ -1,0 +1,17 @@
+{% set transfer_filter = {
+    "logic": "AND",
+    "criteria": [{
+        "condition": "=",
+        "data": "Workflow run id",
+        "origData": "workflow_run_id",
+        "type": "string",
+        "value": [data.run_id]
+    }]
+} %}
+<div class="text-muted mb-2">Showing {{ data.transfers | length }} of <a href="{{ url_for(__name__ ~ ':list', identity='data-transfer').include_query_params(searchBuilder=transfer_filter | tojson) }}">{{ data.total }} transfers</a> (latest first)</div>
+<div class="d-flex flex-wrap">
+    {% for transfer in data.transfers %}
+        <a class="m-1 py-1 px-2 badge bg-blue-lt lead"
+           href="{{ url_for(__name__ ~ ':detail', identity='data-transfer', pk=transfer.id) }}">{{ transfer.direction }} transfer via {{ transfer.provider }}</a>
+    {% endfor %}
+</div>
