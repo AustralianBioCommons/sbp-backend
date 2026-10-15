@@ -53,6 +53,7 @@ from app.services.results_utils import (
     resolve_submitted_form_data,
     run_has_missing_required_categories,
     s3_uri_to_key,
+    sync_workflow_outputs,
 )
 from app.services.s3 import S3ServiceError
 from tests.datagen import (
@@ -1749,6 +1750,66 @@ def test_build_wisps_output_listing_prefixes_returns_empty_when_no_id():
 # wisps-based workflows flag structures as a hidden category, zipped like
 # bindcraft's ranked designs
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_workflow_outputs_links_files_to_globus_folder_transfer(
+    test_db, persistent_models
+):
+    """Files delivered by a recursive Globus folder transfer link back to it
+    instead of each getting their own bookkeeping DataTransfer row."""
+    run = WorkflowRunFactory.create_sync(
+        workflow=Workflow(
+            name="interaction-screening",
+            repo_url="https://github.com/test/interaction-screening",
+            default_revision="main",
+            config_path="/config/interaction-screening.config",
+        ),
+        tool="boltz",
+        seqera_run_id="wf-wisps-link-1",
+    )
+    test_db.commit()
+    spec = WORKFLOW_OUTPUT_SPECS["interaction-screening"]["boltz"]
+    globus_transfers = spec.create_output_transfers(test_db, run)
+
+    files_by_prefix = {
+        f"{run.id}/multiqc/": [f"{run.id}/multiqc/multiqc_report.html"],
+        f"{run.id}/collect/": [f"{run.id}/collect/boltz_confidence_scores_full.csv"],
+        f"{run.id}/boltz_predictions/cif/": [
+            f"{run.id}/boltz_predictions/cif/pair{i}_model_0.cif" for i in range(3)
+        ],
+        f"{run.id}/boltz_predictions/pae/": [
+            f"{run.id}/boltz_predictions/pae/pair{i}_model_0.npz" for i in range(3)
+        ],
+        f"{run.id}/": [f"{run.id}/UsageReport.csv"],
+    }
+
+    async def fake_list_s3_files(prefix: str, settings=None):
+        return [{"key": key} for key in files_by_prefix.get(prefix, [])]
+
+    with patch(
+        "app.services.results_utils.list_s3_files",
+        new=AsyncMock(side_effect=fake_list_s3_files),
+    ):
+        keys = await sync_workflow_outputs(test_db, run, spec)
+
+    assert len(keys) == 9
+    transfers = test_db.scalars(
+        select(DataTransfer).where(DataTransfer.workflow_run_id == run.id)
+    ).all()
+    assert {transfer.id for transfer in transfers} == {t.id for t in globus_transfers}
+
+    transfers_by_id = {transfer.id: transfer for transfer in transfers}
+    run_outputs = test_db.scalars(select(RunOutput).where(RunOutput.run_id == run.id)).all()
+    assert len(run_outputs) == 9
+    for run_output in run_outputs:
+        transfer = transfers_by_id[run_output.data_transfer_id]
+        assert transfer.covers(_build_s3_uri(run_output.s3_object_id))
+        expected_folder = run_output.s3_object_id.rsplit("/", 1)[0] + "/"
+        if run_output.s3_object_id.endswith("UsageReport.csv"):
+            assert not transfer.recursive
+        else:
+            assert transfer.destination_location.endswith(expected_folder)
 
 
 @pytest.mark.asyncio

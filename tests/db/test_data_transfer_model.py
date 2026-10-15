@@ -98,7 +98,7 @@ def test_run_input_links_to_data_transfer(test_db, persistent_models):
     assert run_input.data_transfer_id == transfer.id
     test_db.refresh(transfer)
     assert transfer.run_input.run_id == workflow_run.id
-    assert transfer.run_output is None
+    assert transfer.run_outputs == []
 
 
 def test_run_output_links_to_data_transfer(test_db, persistent_models):
@@ -115,7 +115,7 @@ def test_run_output_links_to_data_transfer(test_db, persistent_models):
 
     assert run_output.data_transfer_id == transfer.id
     test_db.refresh(transfer)
-    assert transfer.run_output.run_id == workflow_run.id
+    assert [output.run_id for output in transfer.run_outputs] == [workflow_run.id]
     assert transfer.run_input is None
 
 

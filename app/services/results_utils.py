@@ -1180,6 +1180,20 @@ def _sync_run_output_records(
     # wisps) or "out_dir" (proteindj) - the value is identical.
     run_outdir = _build_s3_uri(str(run.id), settings=settings)
 
+    # Most specific first, so a file under a nested folder links to that
+    # folder's transfer rather than a broader one.
+    globus_transfers = sorted(
+        db.scalars(
+            select(DataTransfer).where(
+                DataTransfer.workflow_run_id == run.id,
+                DataTransfer.provider == "globus",
+                DataTransfer.direction == "output",
+            )
+        ).all(),
+        key=lambda transfer: len(transfer.destination_location),
+        reverse=True,
+    )
+
     for key in keys:
         normalized = key.strip()
         if not normalized or normalized in existing_keys:
@@ -1193,17 +1207,22 @@ def _sync_run_output_records(
             )
             db.add(s3_object)
 
-        output_transfer = DataTransfer(
-            workflow_run_id=run.id,
-            direction="output",
-            provider="s3",
-            source_location=run_outdir,
-            destination_location=s3_object.uri,
-            recursive=False,
-            # Bookkeeping link, not a real job - the key was just found in S3.
-            status="completed",
+        output_transfer = next(
+            (transfer for transfer in globus_transfers if transfer.covers(s3_object.uri)), None
         )
-        db.add(output_transfer)
+        if output_transfer is None:
+            output_transfer = DataTransfer(
+                workflow_run_id=run.id,
+                direction="output",
+                provider="s3",
+                source_location=run_outdir,
+                destination_location=s3_object.uri,
+                recursive=False,
+                # Bookkeeping link, not a real job - the key was just found in
+                # S3 and no Globus output transfer delivered it.
+                status="completed",
+            )
+            db.add(output_transfer)
         db.add(RunOutput(run_id=run.id, s3_object_id=normalized, data_transfer=output_transfer))
         existing_keys.add(normalized)
         changed = True
