@@ -106,6 +106,19 @@ def _get_stored_terminal_ui_status(run: WorkflowRun) -> str | None:
     return UIStatus.COMPLETED.value
 
 
+def _get_live_ui_status(seqera_payload: dict[str, object]) -> str:
+    """Resolve UI status from a live Seqera payload, for a run whose final
+    status hasn't been stored yet.
+
+    Not stored yet means the sync hasn't created or finished output transfers,
+    so a SUCCEEDED pipeline is still In progress, not Completed.
+    """
+    pipeline_status = extract_pipeline_status(seqera_payload)
+    if pipeline_status.strip().upper() == PipelineStatus.SUCCEEDED.value:
+        return UIStatus.IN_PROGRESS.value
+    return map_pipeline_status_to_ui(pipeline_status)
+
+
 @router.post("/{run_id}/cancel", response_model=CancelWorkflowResponse)
 async def cancel_workflow(
     run_id: str,
@@ -166,8 +179,7 @@ def _build_job_list_item(
             return None
         if seqera_payload:
             payload = seqera_payload
-            pipeline_status = extract_pipeline_status(seqera_payload)
-            ui_status = map_pipeline_status_to_ui(pipeline_status)
+            ui_status = _get_live_ui_status(seqera_payload)
         else:
             seqera_unavailable = True
 
@@ -400,8 +412,7 @@ async def get_job_details(
     wf = coerce_workflow_payload(seqera_payload or {})
     ui_status = stored_ui_status
     if ui_status is None and seqera_payload is not None:
-        pipeline_status = extract_pipeline_status(seqera_payload)
-        ui_status = map_pipeline_status_to_ui(pipeline_status)
+        ui_status = _get_live_ui_status(seqera_payload)
     if ui_status is None:
         ui_status = "N/A"
     submitted_at = (

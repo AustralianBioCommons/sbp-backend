@@ -44,7 +44,8 @@ def mock_user_id():
 
 @pytest.mark.asyncio
 async def test_list_jobs_success(mock_db, mock_user_id):
-    """Test successful job listing."""
+    """Test successful job listing. Seqera SUCCEEDED but no stored final status
+    means results haven't synced yet, so the job is still In progress."""
     run_id = "run-123"
     seqera_run_id = "wf-123"
 
@@ -83,7 +84,8 @@ async def test_list_jobs_success(mock_db, mock_user_id):
     assert len(response.jobs) == 1
     assert response.jobs[0].id == run_id
     assert response.jobs[0].jobName == "Test Job"
-    assert response.jobs[0].status == "Completed"
+    assert response.jobs[0].status == "In progress"
+    assert response.jobs[0].score is None
     assert response.jobs[0].workflow == "BindCraft"
 
 
@@ -366,12 +368,12 @@ async def test_list_jobs_with_status_filter(mock_db, mock_user_id):
         patch(
             "app.routes.workflow.jobs.describe_workflow",
             new_callable=AsyncMock,
-            return_value={"workflow": {"status": "SUCCEEDED"}},
+            return_value={"workflow": {"status": "FAILED"}},
         ),
     ):
         response = await list_jobs(
             search=None,
-            status_filter=["Completed"],
+            status_filter=["Failed"],
             limit=50,
             offset=0,
             current_user_id=mock_user_id,
@@ -1101,7 +1103,8 @@ async def test_list_jobs_seqera_5xx_falls_back(mock_db, mock_user_id):
 
 @pytest.mark.asyncio
 async def test_get_job_details_success(mock_db, mock_user_id):
-    """Test successful job details retrieval."""
+    """Test successful job details retrieval. Seqera SUCCEEDED but no stored
+    final status means results haven't synced yet, so the job is In progress."""
     run_id = "wf-123"
     workflow = WorkflowFactory.build(name="BindCraft")
     owned_run = WorkflowRunFactory.build(
@@ -1137,7 +1140,7 @@ async def test_get_job_details_success(mock_db, mock_user_id):
 
     assert response.id == run_id
     assert response.jobName == "Test Job Details"
-    assert response.status == "Completed"
+    assert response.status == "In progress"
     assert response.workflow == "Bindcraft"
     assert response.score is None
 
