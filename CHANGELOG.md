@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/AustralianBioCommons/sbp-backend/compare/v0.1.0...v0.1.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* data transfer fixes ([#203](https://github.com/AustralianBioCommons/sbp-backend/issues/203)) ([dc248e6](https://github.com/AustralianBioCommons/sbp-backend/commit/dc248e687e3bada5c66d46aa2048b4ebfb81fa3b))
+
 ## 0.1.0 (2026-10-12)
 
 
