@@ -233,10 +233,9 @@ class RunInput(Base):
 
 class RunOutput(Base):
     __tablename__ = "run_outputs"
-    __table_args__ = (
-        PrimaryKeyConstraint("run_id", "s3_object_id"),
-        UniqueConstraint("data_transfer_id"),
-    )
+    # Not unique on data_transfer_id: one recursive Globus folder transfer
+    # brings in many output files, and each links back to it.
+    __table_args__ = (PrimaryKeyConstraint("run_id", "s3_object_id"),)
 
     run_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     s3_object_id: Mapped[str] = mapped_column(ForeignKey("s3_objects.object_key"), nullable=False)
@@ -246,7 +245,7 @@ class RunOutput(Base):
 
     run: Mapped[WorkflowRun] = relationship(back_populates="outputs")
     s3_object: Mapped[S3Object] = relationship(back_populates="run_outputs")
-    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_output")
+    data_transfer: Mapped[DataTransfer | None] = relationship(back_populates="run_outputs")
 
 
 class RunMetric(Base):
@@ -301,7 +300,14 @@ class DataTransfer(Base):
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
     run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
-    run_output: Mapped[RunOutput | None] = relationship(back_populates="data_transfer")
+    run_outputs: Mapped[list[RunOutput]] = relationship(back_populates="data_transfer")
+
+    def covers(self, uri: str) -> bool:
+        """Whether ``uri`` was delivered by this transfer: its exact
+        destination, or anything under its destination folder if recursive."""
+        if self.destination_location == uri:
+            return True
+        return self.recursive and uri.startswith(self.destination_location.rstrip("/") + "/")
 
     def reset_to_pending(self, session: Session, commit: bool = True):
         """
