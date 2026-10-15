@@ -227,6 +227,8 @@ class SbpCreditField(IntegerField):
 
 
 class DataTransferLinksField(BaseField):
+    default_limit: int = 10
+
     async def parse_obj(self, request: Request, obj: WorkflowRun) -> dict[str, Any]:
         session: Session = request.state.session
         run_filter = DataTransfer.workflow_run_id == obj.id
@@ -238,7 +240,7 @@ class DataTransferLinksField(BaseField):
             select(DataTransfer.id, DataTransfer.direction, DataTransfer.provider)
             .where(run_filter)
             .order_by(DataTransfer.created_at.desc(), DataTransfer.id.desc())
-            .limit(10),
+            .limit(self.default_limit),
         )
         return {"total": total, "transfers": transfers.mappings().all(), "run_id": str(obj.id)}
 
