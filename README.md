@@ -119,6 +119,20 @@ uv run python generate_migrations.py --check --print-schema
 
 After generating, commit the new file from `alembic/versions/` alongside your model changes.
 
+## Usage Report
+
+Prints users who logged in, SBP active users, users without a bundle, and workflow execution counts by status, scoped to since the soft launch date (15 Oct 2026), and also writes `usage_report_<date>.csv` in the current directory — one row per workflow run (owner's email, run time, status, workflow, tool), the same summary counts, and the full email lists for users with and without a bundle. Run manually (e.g. monthly), pointed at whichever environment's DB is in `.env`:
+
+```bash
+uv run python scripts/usage_report.py
+```
+
+**Prerequisite:** the database in `DATABASE_URL` must be reachable — if you're pointing at a local Postgres, make sure its Docker container is started first, or the script will exit with a connection error.
+
+The CSV contains real user emails, so it's gitignored (`usage_report_*.csv`) — don't commit it, and handle it the way you'd handle any other export of user data.
+
+The since-launch user counts also need `AUTH0_MGMT_DOMAIN`/`AUTH0_MGMT_CLIENT_ID`/`AUTH0_MGMT_CLIENT_SECRET` in `.env` (a separate Machine-to-Machine Auth0 application authorized for the Management API — `AUTH_CLIENT_ID`/`SECRET` above won't work for this). AppUser has no signup/login timestamp of its own, so this uses Auth0's `last_login` instead, which is tenant-wide across all biocommons apps (not SBP-specific) — treat those numbers as an approximation. Leave the credentials unset to get all-time counts instead.
+
 ## Testing
 
 Run the test suite with coverage:

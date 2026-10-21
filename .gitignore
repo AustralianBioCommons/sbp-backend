@@ -42,3 +42,6 @@ logs/
 
 # Database
 db/sample_seed.sql
+
+# Usage report output (contains real user emails)
+usage_report_*.csv
