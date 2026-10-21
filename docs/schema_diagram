@@ -247,10 +247,22 @@ digraph {
                          </TR><TR>
                          <TD BGCOLOR="#BBDEFB">error_message</TD>
                          <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">cleanup_status</TD>
+                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">cleanup_transfer_id</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">cleanup_error_message</TD>
+                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
+                         </TR><TR>
+                         <TD BGCOLOR="#BBDEFB">cleanup_attempts</TD>
+                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
                          </TR></TABLE>> URL="http://DataTransfer_details.html"]
 	DataTransfer -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and WorkflowRun"]
 	DataTransfer -> RunInput [label=run_input color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunInput"]
-	DataTransfer -> RunOutput [label=run_output color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunOutput"]
+	DataTransfer -> RunOutput [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunOutput"]
 	QueuedJob [label=<
         <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
         <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">QueuedJob</FONT></TD></TR>
