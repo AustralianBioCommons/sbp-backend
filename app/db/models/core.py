@@ -261,6 +261,9 @@ class RunMetric(Base):
 DataTransferDirection = Literal["input", "output"]
 # Driven by app/services/globus_transfer.py for provider="globus" rows.
 DataTransferStatus = Literal["pending", "in_progress", "completed", "failed"]
+# Mirrors DataTransferStatus - kept as its own alias since cleanup is a
+# distinct lifecycle on the same row, not the transfer's own status.
+DataCleanupStatus = Literal["pending", "in_progress", "completed", "failed"]
 
 
 class DataTransfer(Base):
@@ -297,6 +300,18 @@ class DataTransfer(Base):
     )
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # NULL means "not applicable yet": every input-direction row, and
+    # output-direction rows that haven't completed their S3 transfer. Set to
+    # "pending" once an output transfer completes, so its Gadi source gets
+    # deleted via a Globus delete task (see services/globus_transfer.py).
+    cleanup_status: Mapped[DataCleanupStatus | None] = mapped_column(
+        String(length=20), nullable=True
+    )
+    # Same submission-id-then-task-id reuse trick as transfer_id, but for the
+    # Globus delete task.
+    cleanup_transfer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="data_transfers")
     run_input: Mapped[RunInput | None] = relationship(back_populates="data_transfer")
@@ -320,6 +335,21 @@ class DataTransfer(Base):
         self.error_message = None
         self.attempts = 0
         self.updated_at = now
+        session.add(self)
+        if commit:
+            session.commit()
+
+    def reset_cleanup_to_pending(self, session: Session, commit: bool = True):
+        """
+        Reset a failed Gadi cleanup (post-transfer delete) to pending so it
+        gets attempted again, with a fresh retry budget. Leaves ``status``
+        alone - the underlying transfer is still "completed".
+        """
+        self.cleanup_status = "pending"
+        self.cleanup_transfer_id = None
+        self.cleanup_error_message = None
+        self.cleanup_attempts = 0
+        self.updated_at = datetime.now(UTC)
         session.add(self)
         if commit:
             session.commit()

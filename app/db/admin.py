@@ -39,7 +39,7 @@ from ..auth.validator import fetch_userinfo_claims, verify_access_token_claims
 from ..config import Settings, get_settings
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import PipelineStatus
-from ..services.globus_transfer import reset_failed_output_transfers
+from ..services.globus_transfer import reset_failed_cleanups, reset_failed_output_transfers
 from ..services.job_sync import force_resync_run_outputs
 from . import engine
 from .models import job_queue
@@ -647,8 +647,12 @@ class DataTransferAdmin(ModelView):
         "created_at",
         "updated_at",
         "error_message",
+        "cleanup_status",
+        "cleanup_transfer_id",
+        "cleanup_attempts",
+        "cleanup_error_message",
     ]
-    exclude_fields_from_list = ["error_message"]
+    exclude_fields_from_list = ["error_message", "cleanup_error_message"]
     fields_default_sort = [("created_at", True)]
 
     async def repr(self, obj: Any, request: Request) -> str:
@@ -703,6 +707,56 @@ class DataTransferAdmin(ModelView):
             raise ActionFailed("Only failed Globus output transfers can be reset.")
 
         return "Output transfer reset to pending."
+
+    @action(
+        name="retry_failed_cleanups",
+        text="Retry selected Gadi cleanups",
+        confirmation=(
+            "Reset selected failed Gadi cleanup deletes to pending? "
+            "The next data-transfer sync will submit new Globus delete tasks."
+        ),
+        submit_btn_text="Reset to pending",
+        submit_btn_class="btn-warning",
+        icon_class="fa-solid fa-rotate-right",
+    )
+    async def retry_failed_cleanups_action(self, request: Request, pks: list[Any]) -> str:
+        data_transfers = await self.find_by_pks(request, pks)
+        reset_count = reset_failed_cleanups(
+            request.state.session,
+            transfer_ids=[data_transfer.id for data_transfer in data_transfers],
+        )
+        if reset_count == 0:
+            raise ActionFailed("No failed Gadi cleanups were selected.")
+
+        if reset_count == 1:
+            return "1 Gadi cleanup reset to pending."
+        return f"{reset_count} Gadi cleanups reset to pending."
+
+    @row_action(
+        name="retry_cleanup",
+        text="Retry Gadi cleanup",
+        confirmation=(
+            "Reset this failed Gadi cleanup delete to pending? "
+            "The next data-transfer sync will submit a new Globus delete task."
+        ),
+        submit_btn_text="Reset to pending",
+        submit_btn_class="btn-warning",
+        action_btn_class="btn-warning",
+        icon_class="fa-solid fa-rotate-right",
+    )
+    async def row_action_4_retry_cleanup(self, request: Request, pk: Any) -> str:
+        data_transfer = await self.find_by_pk(request, pk)
+        if data_transfer is None:
+            raise ActionFailed("Data transfer not found.")
+
+        reset_count = reset_failed_cleanups(
+            request.state.session,
+            transfer_ids=[data_transfer.id],
+        )
+        if reset_count == 0:
+            raise ActionFailed("Only failed Gadi cleanups can be reset.")
+
+        return "Gadi cleanup reset to pending."
 
 
 class JSONTreeField(JSONField):
