@@ -20,9 +20,13 @@ from app.services.globus_transfer import (
     build_gadi_input_path,
     build_gadi_output_path,
     gadi_pbs_jobs_local_path,
+    poll_cleanup,
     poll_transfer,
+    reset_failed_cleanups,
     reset_failed_output_transfers,
+    submit_pending_cleanup,
     submit_pending_transfer,
+    sync_data_cleanups,
     sync_data_transfers,
     sync_gadi_pbs_jobs,
 )
@@ -405,6 +409,42 @@ def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_mo
     assert failed_s3_output.error_message == "s3 failed"
 
 
+def test_reset_failed_cleanups_clears_retry_state(test_db, persistent_models):
+    workflow_run = WorkflowRunFactory.create_sync()
+    failed_cleanup = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="failed",
+        cleanup_transfer_id="task-stale",
+        cleanup_error_message="no such file",
+        cleanup_attempts=3,
+    )
+    failed_input = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="input",
+        provider="globus",
+        status="failed",
+        cleanup_status=None,
+    )
+
+    reset_count = reset_failed_cleanups(
+        test_db,
+        transfer_ids=[failed_cleanup.id, failed_input.id],
+    )
+
+    assert reset_count == 1
+    assert failed_cleanup.status == "completed"
+    assert failed_cleanup.cleanup_status == "pending"
+    assert failed_cleanup.cleanup_transfer_id is None
+    assert failed_cleanup.cleanup_error_message is None
+    assert failed_cleanup.cleanup_attempts == 0
+    assert failed_cleanup.updated_at is not None
+
+    assert failed_input.cleanup_status is None
+
+
 # ============================================================================
 # poll_transfer
 # ============================================================================
@@ -449,6 +489,69 @@ def test_poll_transfer_succeeded_marks_completed(test_db, persistent_models, moc
     poll_transfer(test_db, data_transfer)
 
     assert data_transfer.status == "completed"
+
+
+def test_poll_transfer_output_succeeded_queues_cleanup(
+    test_db, persistent_models, mock_transfer_client
+):
+    """Once S3 has the output and the run itself succeeded, the Gadi source is
+    queued for deletion."""
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    workflow_run = WorkflowRunFactory.create_sync(seqera_final_status="SUCCEEDED")
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="in_progress",
+        transfer_id="task-abc",
+        cleanup_status=None,
+    )
+
+    poll_transfer(test_db, data_transfer)
+
+    assert data_transfer.status == "completed"
+    assert data_transfer.cleanup_status == "pending"
+
+
+def test_poll_transfer_output_succeeded_but_run_not_successful_does_not_queue_cleanup(
+    test_db, persistent_models, mock_transfer_client
+):
+    """A failed/cancelled run's partial outputs stay on Gadi for debugging, even
+    if their individual transfer to S3 succeeded."""
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    workflow_run = WorkflowRunFactory.create_sync(seqera_final_status="FAILED")
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="in_progress",
+        transfer_id="task-abc",
+        cleanup_status=None,
+    )
+
+    poll_transfer(test_db, data_transfer)
+
+    assert data_transfer.status == "completed"
+    assert data_transfer.cleanup_status is None
+
+
+def test_poll_transfer_input_succeeded_does_not_queue_cleanup(
+    test_db, persistent_models, mock_transfer_client
+):
+    """Input transfers stage the files a run still needs on Gadi - never queue
+    them for deletion."""
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    workflow_run = _workflow_run_without_repo_staging()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="input",
+        status="in_progress",
+        transfer_id="task-abc",
+        cleanup_status=None,
+    )
+
+    poll_transfer(test_db, data_transfer)
+
+    assert data_transfer.status == "completed"
+    assert data_transfer.cleanup_status is None
 
 
 def test_poll_transfer_failed_retries_before_giving_up(
@@ -843,3 +946,330 @@ def test_sync_data_transfers_isolates_failures_between_rows(
 
     test_db.refresh(healthy)
     assert healthy.status == "completed"
+
+
+# ============================================================================
+# submit_pending_cleanup
+# ============================================================================
+
+
+def test_submit_pending_cleanup_success(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_delete.return_value = {"task_id": "delete-task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        recursive=True,
+        cleanup_status="pending",
+        cleanup_transfer_id=None,
+    )
+
+    submit_pending_cleanup(test_db, data_transfer, globus_settings=globus_settings)
+
+    assert data_transfer.cleanup_status == "in_progress"
+    assert data_transfer.cleanup_transfer_id == "delete-task-abc"
+
+    submitted = mock_transfer_client.submit_delete.call_args[0][0]
+    assert submitted["endpoint"] == "test-gadi-collection-id"
+    assert submitted["submission_id"] == "sub-123"
+    assert submitted["recursive"] is True
+    assert submitted["DATA"][0]["path"] == "/output/single-prediction/run-1/reports/"
+
+
+def test_submit_pending_cleanup_reuses_existing_submission_id(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.submit_delete.return_value = {"task_id": "delete-task-abc"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        cleanup_status="pending",
+        # Simulates a crash after the submission id was committed but before
+        # submit_delete completed - it must be reused, not replaced.
+        cleanup_transfer_id="already-committed-sub-id",
+    )
+
+    submit_pending_cleanup(test_db, data_transfer, globus_settings=globus_settings)
+
+    mock_transfer_client.get_submission_id.assert_not_called()
+    submitted = mock_transfer_client.submit_delete.call_args[0][0]
+    assert submitted["submission_id"] == "already-committed-sub-id"
+
+
+def test_submit_pending_cleanup_api_error_marks_failed(
+    test_db, persistent_models, mock_transfer_client, globus_settings
+):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-123"}
+    mock_transfer_client.submit_delete.side_effect = _globus_api_error(
+        400, {"code": "Error", "message": "path does not exist"}
+    )
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        source_location="/test/output/single-prediction/run-1/reports/",
+        cleanup_status="pending",
+        cleanup_transfer_id=None,
+    )
+
+    submit_pending_cleanup(test_db, data_transfer, globus_settings=globus_settings)
+
+    assert data_transfer.cleanup_status == "failed"
+    assert data_transfer.cleanup_transfer_id is None
+    assert "path does not exist" in data_transfer.cleanup_error_message
+
+
+# ============================================================================
+# poll_cleanup
+# ============================================================================
+
+
+def test_poll_cleanup_no_transfer_id_raises(test_db, persistent_models):
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id=None,
+    )
+    with pytest.raises(GlobusTransferError, match="no cleanup_transfer_id"):
+        poll_cleanup(test_db, data_transfer)
+
+
+def test_poll_cleanup_api_error_records_message_without_changing_status(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.side_effect = _globus_api_error(
+        401, {"code": "AuthenticationFailed", "message": "token expired"}
+    )
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-abc",
+    )
+
+    with pytest.raises(GlobusTransferError, match="Failed to poll"):
+        poll_cleanup(test_db, data_transfer)
+
+    assert data_transfer.cleanup_status == "in_progress"
+    assert "Poll failed" in data_transfer.cleanup_error_message
+
+
+def test_poll_cleanup_succeeded_marks_completed(test_db, persistent_models, mock_transfer_client):
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-abc",
+    )
+
+    poll_cleanup(test_db, data_transfer)
+
+    assert data_transfer.cleanup_status == "completed"
+
+
+def test_poll_cleanup_failed_retries_before_giving_up(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.return_value = {
+        "status": "FAILED",
+        "fatal_error": {"description": "permission denied"},
+    }
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-abc",
+        cleanup_attempts=0,
+    )
+
+    poll_cleanup(test_db, data_transfer)
+
+    assert data_transfer.cleanup_status == "pending"
+    assert data_transfer.cleanup_transfer_id is None
+    assert data_transfer.cleanup_attempts == 1
+    assert data_transfer.cleanup_error_message == "permission denied"
+
+
+def test_poll_cleanup_failed_marks_terminal_once_retries_exhausted(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.return_value = {
+        "status": "FAILED",
+        "fatal_error": {"description": "permission denied"},
+    }
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-abc",
+        cleanup_attempts=MAX_TRANSFER_ATTEMPTS - 1,
+    )
+
+    poll_cleanup(test_db, data_transfer)
+
+    assert data_transfer.cleanup_status == "failed"
+    assert data_transfer.cleanup_attempts == MAX_TRANSFER_ATTEMPTS
+    assert data_transfer.cleanup_error_message == "permission denied"
+
+
+def test_poll_cleanup_active_stays_in_progress(test_db, persistent_models, mock_transfer_client):
+    mock_transfer_client.get_task.return_value = {"status": "ACTIVE"}
+    workflow_run = WorkflowRunFactory.create_sync()
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-abc",
+    )
+
+    poll_cleanup(test_db, data_transfer)
+
+    assert data_transfer.cleanup_status == "in_progress"
+
+
+# ============================================================================
+# sync_data_cleanups
+# ============================================================================
+
+
+def test_sync_data_cleanups_submits_and_polls(test_db, persistent_models, mock_transfer_client):
+    mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
+    mock_transfer_client.submit_delete.return_value = {"task_id": "delete-task-1"}
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    pending = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        source_location="/test/output/single-prediction/run-1/a.csv",
+        cleanup_status="pending",
+        cleanup_transfer_id=None,
+    )
+    in_progress = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-already-running",
+    )
+    pending.created_at = datetime.now(UTC) - timedelta(minutes=1)
+    in_progress.created_at = datetime.now(UTC)
+    test_db.add_all([pending, in_progress])
+    test_db.commit()
+
+    result = sync_data_cleanups(test_db)
+
+    assert result.checked == 2
+    assert result.submitted == 1
+    assert result.completed == 1
+    assert result.failed == 0
+    assert result.errored == 0
+    assert pending.cleanup_status == "in_progress"
+    assert in_progress.cleanup_status == "completed"
+
+
+def test_sync_data_cleanups_ignores_input_direction(
+    test_db, persistent_models, mock_transfer_client
+):
+    workflow_run = WorkflowRunFactory.create_sync()
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="input",
+        provider="globus",
+        status="completed",
+        cleanup_status="pending",
+    )
+
+    result = sync_data_cleanups(test_db)
+
+    assert result.checked == 0
+    mock_transfer_client.submit_delete.assert_not_called()
+
+
+def test_sync_data_cleanups_ignores_rows_not_yet_eligible(
+    test_db, persistent_models, mock_transfer_client
+):
+    """Output transfers that haven't completed yet, or whose cleanup already
+    finished/failed terminally, are left alone."""
+    workflow_run = WorkflowRunFactory.create_sync()
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="in_progress",
+        cleanup_status=None,
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="completed",
+        cleanup_transfer_id="delete-task-done",
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="failed",
+        cleanup_transfer_id=None,
+    )
+
+    result = sync_data_cleanups(test_db)
+
+    assert result.checked == 0
+    mock_transfer_client.submit_delete.assert_not_called()
+    mock_transfer_client.get_task.assert_not_called()
+
+
+def test_sync_data_cleanups_continues_after_unexpected_error(
+    test_db, persistent_models, mock_transfer_client
+):
+    mock_transfer_client.get_task.side_effect = RuntimeError("boom")
+
+    workflow_run = WorkflowRunFactory.create_sync()
+    DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="in_progress",
+        cleanup_transfer_id="delete-task-1",
+    )
+
+    result = sync_data_cleanups(test_db)
+
+    assert result.checked == 1
+    assert result.errored == 1

@@ -434,7 +434,9 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
     """Submit pending and poll in-progress Globus data transfers, notifying the
     workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
     run's input staging settles. Finalizing completed workflow runs once output
-    transfers settle is owned solely by sync_completed_workflow_runs."""
+    transfers settle is owned solely by sync_completed_workflow_runs. Also
+    submits/polls the Globus delete tasks that clean up a completed output
+    transfer's Gadi source once S3 has it (see sync_data_cleanups)."""
     db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for Globus data transfers to sync...")
     if dry_run:
@@ -446,7 +448,18 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
                 DataTransfer.status.in_(["pending", "in_progress"]),
             )
         )
-        logger.info(f"Dry run - found {pending_count} Globus data transfer(s) requiring sync.")
+        pending_cleanup_count = db_session.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(
+                DataTransfer.provider == "globus",
+                DataTransfer.cleanup_status.in_(["pending", "in_progress"]),
+            )
+        )
+        logger.info(
+            f"Dry run - found {pending_count} Globus data transfer(s) and "
+            f"{pending_cleanup_count} Globus cleanup(s) requiring sync."
+        )
         return
 
     result = globus_transfer.sync_data_transfers(db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT)
@@ -454,6 +467,16 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
         "Finished syncing Globus data transfers: "
         f"checked={result.checked}, submitted={result.submitted}, "
         f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+    )
+
+    cleanup_result = globus_transfer.sync_data_cleanups(
+        db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT
+    )
+    logger.info(
+        "Finished syncing Globus data cleanups: "
+        f"checked={cleanup_result.checked}, submitted={cleanup_result.submitted}, "
+        f"completed={cleanup_result.completed}, failed={cleanup_result.failed}, "
+        f"errored={cleanup_result.errored}."
     )
 
 

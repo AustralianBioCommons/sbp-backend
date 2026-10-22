@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from ..config import GlobusSettings, Settings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
 from ..db.models.job_queue import QueuedJob
+from ..schemas.workflows.shared import PipelineStatus
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 from .s3 import sanitize_filename
@@ -296,6 +297,17 @@ def poll_transfer(
         return
 
     data_transfer.status = new_status
+    if (
+        new_status == "completed"
+        and data_transfer.direction == "output"
+        and data_transfer.workflow_run.seqera_final_status == PipelineStatus.SUCCEEDED.value
+    ):
+        # Gadi source is no longer needed now that S3 has it - queue it for
+        # deletion via a Globus delete task (see submit_pending_cleanup). Only
+        # for a run that actually succeeded - a failed/cancelled run's partial
+        # outputs stay on Gadi for debugging even if their individual transfer
+        # to S3 succeeded.
+        data_transfer.cleanup_status = "pending"
     data_transfer.updated_at = datetime.now(UTC)
     db.add(data_transfer)
     db.commit()
@@ -327,6 +339,181 @@ def reset_failed_output_transfers(
     if transfers:
         db.commit()
     return len(transfers)
+
+
+def reset_failed_cleanups(
+    db: Session,
+    *,
+    transfer_ids: Iterable[UUID] | None = None,
+    workflow_run_id: UUID | None = None,
+) -> int:
+    """Reset failed Gadi cleanups (post-transfer deletes) so the sync worker
+    can retry them. Does not touch the underlying transfer's own status."""
+    conditions = [
+        DataTransfer.provider == "globus",
+        DataTransfer.direction == "output",
+        DataTransfer.cleanup_status == "failed",
+    ]
+    if transfer_ids is not None:
+        transfer_ids = list(transfer_ids)
+        if not transfer_ids:
+            return 0
+        conditions.append(DataTransfer.id.in_(transfer_ids))
+    if workflow_run_id is not None:
+        conditions.append(DataTransfer.workflow_run_id == workflow_run_id)
+
+    transfers = list(db.scalars(select(DataTransfer).where(*conditions)))
+    for data_transfer in transfers:
+        data_transfer.reset_cleanup_to_pending(session=db, commit=False)
+    if transfers:
+        db.commit()
+    return len(transfers)
+
+
+def submit_pending_cleanup(
+    db: Session,
+    data_transfer: DataTransfer,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> None:
+    """Submit a Globus delete task for a completed output DataTransfer's Gadi
+    source (``cleanup_status == "pending"``)."""
+    globus_settings = globus_settings or get_settings().globus
+    transfer_client = get_transfer_client(globus_settings)
+    gadi_path = _gadi_relative_path(data_transfer.source_location, globus_settings=globus_settings)
+
+    # Same idempotency trick as submit_pending_transfer: persist the
+    # submission_id before calling the API, and reuse it on retry.
+    submission_id = data_transfer.cleanup_transfer_id
+    if not submission_id:
+        submission_id = cast(str, transfer_client.get_submission_id()["value"])
+        data_transfer.cleanup_transfer_id = submission_id
+        db.add(data_transfer)
+        db.commit()
+
+    try:
+        delete_data = globus_sdk.DeleteData(
+            endpoint=globus_settings.gadi_collection_id,
+            submission_id=submission_id,
+            label=f"sbp-cleanup-{data_transfer.workflow_run_id}",
+            recursive=data_transfer.recursive,
+        )
+        delete_data.add_item(gadi_path)
+        result = transfer_client.submit_delete(delete_data)
+    except globus_sdk.GlobusAPIError as exc:
+        logger.warning("Globus cleanup submission failed for %s: %s", data_transfer.id, exc)
+        data_transfer.cleanup_status = "failed"
+        data_transfer.cleanup_transfer_id = None
+        data_transfer.cleanup_error_message = str(exc)
+        data_transfer.updated_at = datetime.now(UTC)
+        db.add(data_transfer)
+        db.commit()
+        return
+
+    data_transfer.cleanup_transfer_id = result["task_id"]
+    data_transfer.cleanup_status = "in_progress"
+    data_transfer.updated_at = datetime.now(UTC)
+    db.add(data_transfer)
+    db.commit()
+
+
+def poll_cleanup(
+    db: Session,
+    data_transfer: DataTransfer,
+    *,
+    globus_settings: GlobusSettings | None = None,
+) -> None:
+    """Poll Globus for an ``in_progress`` cleanup delete task's status."""
+    if not data_transfer.cleanup_transfer_id:
+        raise GlobusTransferError(
+            f"DataTransfer {data_transfer.id} has no cleanup_transfer_id to poll"
+        )
+
+    globus_settings = globus_settings or get_settings().globus
+    transfer_client = get_transfer_client(globus_settings)
+    try:
+        task = transfer_client.get_task(data_transfer.cleanup_transfer_id)
+    except globus_sdk.GlobusAPIError as exc:
+        data_transfer.cleanup_error_message = f"Poll failed: {exc}"
+        data_transfer.updated_at = datetime.now(UTC)
+        db.add(data_transfer)
+        db.commit()
+        raise GlobusTransferError(f"Failed to poll Globus cleanup: {exc}") from exc
+
+    globus_status = task["status"]
+    if globus_status == "SUCCEEDED":
+        data_transfer.cleanup_status = "completed"
+    elif globus_status == "FAILED":
+        fatal_error = task.get("fatal_error") or {}
+        data_transfer.cleanup_attempts += 1
+        data_transfer.cleanup_error_message = (
+            fatal_error.get("description") or "Globus cleanup failed"
+        )
+        if data_transfer.cleanup_attempts < MAX_TRANSFER_ATTEMPTS:
+            data_transfer.cleanup_status = "pending"
+            data_transfer.cleanup_transfer_id = None
+        else:
+            data_transfer.cleanup_status = "failed"
+    else:
+        return
+
+    data_transfer.updated_at = datetime.now(UTC)
+    db.add(data_transfer)
+    db.commit()
+
+
+def sync_data_cleanups(
+    db: Session,
+    *,
+    limit: int = 100,
+    globus_settings: GlobusSettings | None = None,
+) -> DataTransferSyncResult:
+    """Submit pending and poll in-progress Gadi cleanup deletes for one batch."""
+    globus_settings = globus_settings or get_settings().globus
+    stmt = (
+        select(DataTransfer)
+        .where(
+            DataTransfer.provider == "globus",
+            DataTransfer.direction == "output",
+            DataTransfer.cleanup_status.in_(["pending", "in_progress"]),
+        )
+        .order_by(DataTransfer.created_at.asc())
+        .limit(limit)
+    )
+    transfers = list(db.scalars(stmt))
+
+    submitted = completed = failed = errored = 0
+    for data_transfer in transfers:
+        try:
+            if data_transfer.cleanup_status == "pending":
+                submit_pending_cleanup(db, data_transfer, globus_settings=globus_settings)
+                if data_transfer.cleanup_status == "in_progress":
+                    submitted += 1
+            else:
+                poll_cleanup(db, data_transfer, globus_settings=globus_settings)
+        except (GlobusConfigurationError, GlobusTransferError) as exc:
+            db.rollback()
+            logger.warning("Failed to sync Globus cleanup %s: %s", data_transfer.id, exc)
+            errored += 1
+            continue
+        except Exception:
+            db.rollback()
+            logger.exception("Unexpected error syncing Globus cleanup %s", data_transfer.id)
+            errored += 1
+            continue
+
+        if data_transfer.cleanup_status == "failed":
+            failed += 1
+        elif data_transfer.cleanup_status == "completed":
+            completed += 1
+
+    return DataTransferSyncResult(
+        checked=len(transfers),
+        submitted=submitted,
+        completed=completed,
+        failed=failed,
+        errored=errored,
+    )
 
 
 def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
