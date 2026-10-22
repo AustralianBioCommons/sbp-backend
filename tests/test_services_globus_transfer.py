@@ -494,9 +494,10 @@ def test_poll_transfer_succeeded_marks_completed(test_db, persistent_models, moc
 def test_poll_transfer_output_succeeded_queues_cleanup(
     test_db, persistent_models, mock_transfer_client
 ):
-    """Once S3 has the output, the Gadi source is queued for deletion."""
+    """Once S3 has the output and the run itself succeeded, the Gadi source is
+    queued for deletion."""
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
-    workflow_run = WorkflowRunFactory.create_sync()
+    workflow_run = WorkflowRunFactory.create_sync(seqera_final_status="SUCCEEDED")
     data_transfer = DataTransferFactory.create_sync(
         workflow_run=workflow_run,
         direction="output",
@@ -509,6 +510,27 @@ def test_poll_transfer_output_succeeded_queues_cleanup(
 
     assert data_transfer.status == "completed"
     assert data_transfer.cleanup_status == "pending"
+
+
+def test_poll_transfer_output_succeeded_but_run_not_successful_does_not_queue_cleanup(
+    test_db, persistent_models, mock_transfer_client
+):
+    """A failed/cancelled run's partial outputs stay on Gadi for debugging, even
+    if their individual transfer to S3 succeeded."""
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    workflow_run = WorkflowRunFactory.create_sync(seqera_final_status="FAILED")
+    data_transfer = DataTransferFactory.create_sync(
+        workflow_run=workflow_run,
+        direction="output",
+        status="in_progress",
+        transfer_id="task-abc",
+        cleanup_status=None,
+    )
+
+    poll_transfer(test_db, data_transfer)
+
+    assert data_transfer.status == "completed"
+    assert data_transfer.cleanup_status is None
 
 
 def test_poll_transfer_input_succeeded_does_not_queue_cleanup(

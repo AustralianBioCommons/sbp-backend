@@ -23,7 +23,11 @@ def upgrade() -> None:
         """
         UPDATE data_transfers
         SET cleanup_status = 'pending'
-        WHERE direction = 'output' AND status = 'completed'
+        FROM workflow_runs
+        WHERE data_transfers.workflow_run_id = workflow_runs.id
+          AND data_transfers.direction = 'output'
+          AND data_transfers.status = 'completed'
+          AND workflow_runs.seqera_final_status = 'SUCCEEDED'
         """
     )
 

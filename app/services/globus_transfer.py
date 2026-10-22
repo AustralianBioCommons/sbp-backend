@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from ..config import GlobusSettings, Settings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
 from ..db.models.job_queue import QueuedJob
+from ..schemas.workflows.shared import PipelineStatus
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
 from .s3 import sanitize_filename
@@ -296,9 +297,16 @@ def poll_transfer(
         return
 
     data_transfer.status = new_status
-    if new_status == "completed" and data_transfer.direction == "output":
+    if (
+        new_status == "completed"
+        and data_transfer.direction == "output"
+        and data_transfer.workflow_run.seqera_final_status == PipelineStatus.SUCCEEDED.value
+    ):
         # Gadi source is no longer needed now that S3 has it - queue it for
-        # deletion via a Globus delete task (see submit_pending_cleanup).
+        # deletion via a Globus delete task (see submit_pending_cleanup). Only
+        # for a run that actually succeeded - a failed/cancelled run's partial
+        # outputs stay on Gadi for debugging even if their individual transfer
+        # to S3 succeeded.
         data_transfer.cleanup_status = "pending"
     data_transfer.updated_at = datetime.now(UTC)
     db.add(data_transfer)
