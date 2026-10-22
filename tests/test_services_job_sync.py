@@ -220,6 +220,38 @@ async def test_sync_workflow_run_sync_completed_reflects_finalized_state(
 
 
 @pytest.mark.asyncio
+async def test_force_resync_run_outputs_blocked_once_gadi_source_cleaned_up(
+    test_db, persistent_models, monkeypatch
+):
+    """Once any output transfer's Gadi source has been deleted, there's nothing
+    left to resync from - must refuse without touching transfers at all."""
+    run = _create_run(
+        seqera_final_status="SUCCEEDED",
+        sync_completed_at=datetime.now(tz=UTC),
+    )
+    DataTransferFactory.create_sync(
+        workflow_run=run,
+        direction="output",
+        provider="globus",
+        status="completed",
+        cleanup_status="completed",
+    )
+    ensure_transfers = MagicMock()
+    finalize = AsyncMock()
+
+    monkeypatch.setattr(job_sync, "_ensure_completed_run_output_transfers", ensure_transfers)
+    monkeypatch.setattr(job_sync, "finalize_completed_workflow_run", finalize)
+
+    outcome = await job_sync.force_resync_run_outputs(test_db, run)
+
+    ensure_transfers.assert_not_called()
+    finalize.assert_not_awaited()
+    assert outcome.blocked is True
+    assert outcome.ready is False
+    assert outcome.outputs_synced == 0
+
+
+@pytest.mark.asyncio
 async def test_force_resync_run_outputs_submits_new_transfer_before_resyncing(
     test_db, persistent_models, monkeypatch
 ):

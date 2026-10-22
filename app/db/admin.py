@@ -379,6 +379,7 @@ async def _force_resync_workflow_runs(db: Session, runs: list[WorkflowRun]) -> s
     processed = 0
     submitted = 0
     skipped = 0
+    blocked = 0
     errored = 0
     outputs_synced = 0
 
@@ -394,13 +395,15 @@ async def _force_resync_workflow_runs(db: Session, runs: list[WorkflowRun]) -> s
             errored += 1
             continue
 
-        if outcome.ready:
+        if outcome.blocked:
+            blocked += 1
+        elif outcome.ready:
             processed += 1
             outputs_synced += outcome.outputs_synced
         else:
             submitted += 1
 
-    if processed == 0 and submitted == 0 and errored == 0:
+    if processed == 0 and submitted == 0 and errored == 0 and blocked == 0:
         raise ActionFailed(
             "No completed runs were selected - only SUCCEEDED runs can be force-resynced."
         )
@@ -410,6 +413,8 @@ async def _force_resync_workflow_runs(db: Session, runs: list[WorkflowRun]) -> s
         summary.append(f"{submitted} submitted new output transfer(s), not yet ready to resync")
     if skipped:
         summary.append(f"{skipped} skipped (not completed)")
+    if blocked:
+        summary.append(f"{blocked} skipped (Gadi source already cleaned up)")
     if errored:
         summary.append(f"{errored} errored")
     return ", ".join(summary) + "."
