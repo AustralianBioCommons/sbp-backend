@@ -980,6 +980,7 @@ def test_submit_pending_cleanup_success(
     assert submitted["endpoint"] == "test-gadi-collection-id"
     assert submitted["submission_id"] == "sub-123"
     assert submitted["recursive"] is True
+    assert submitted["ignore_missing"] is True
     assert submitted["DATA"][0]["path"] == "/output/single-prediction/run-1/reports/"
 
 
