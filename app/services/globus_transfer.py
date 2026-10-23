@@ -397,6 +397,11 @@ def submit_pending_cleanup(
             submission_id=submission_id,
             label=f"sbp-cleanup-{data_transfer.workflow_run_id}",
             recursive=data_transfer.recursive,
+            # The backlog backfill (and any retry) can point at a path that's
+            # already gone - already-deleted manually, or by a retried delete
+            # that half-succeeded. That's the end state this is trying to
+            # reach anyway, not a failure, so don't let Globus treat it as one.
+            ignore_missing=True,
         )
         delete_data.add_item(gadi_path)
         result = transfer_client.submit_delete(delete_data)
