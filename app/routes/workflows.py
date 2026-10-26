@@ -598,7 +598,7 @@ async def launch_workflow(
         sample_id=sample_id,
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
-        work_dir=settings.seqera.work_dir,
+        work_dir=f"{settings.seqera.work_dir}/{run_id}",
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
         tool=selected_tool,

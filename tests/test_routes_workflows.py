@@ -1071,11 +1071,11 @@ def test_launch_interaction_screening_success(
 @patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_records_base_work_dir_without_run_id(
+def test_launch_records_per_run_work_dir(
     mock_prepare, mock_read_csv, mock_upload_rows, wisps_client: TestClient, test_engine
 ):
-    """Runs store the shared Seqera workdir as-is (no per-run id suffix), so two
-    launches record the same work_dir."""
+    """Each run gets its own workdir, "<base workdir>/<run id>", recorded on
+    workflow_runs and sent to Seqera."""
     _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     get_settings_override = wisps_client.app.dependency_overrides.get(get_settings, get_settings)
     expected_work_dir = get_settings_override().seqera.work_dir
@@ -1098,10 +1098,14 @@ def test_launch_records_base_work_dir_without_run_id(
         run_ids.append(UUID(response.json()["runId"]))
 
     with Session(test_engine) as db:
-        work_dirs = db.scalars(
-            select(WorkflowRun.work_dir).where(WorkflowRun.id.in_(run_ids))
-        ).all()
-    assert work_dirs == [expected_work_dir, expected_work_dir]
+        work_dirs = dict(
+            db.execute(
+                select(WorkflowRun.id, WorkflowRun.work_dir).where(WorkflowRun.id.in_(run_ids))
+            ).all()
+        )
+    assert work_dirs == {run_id: f"{expected_work_dir}/{run_id}" for run_id in run_ids}
+    sent_work_dirs = [call.kwargs["workflow_run"].work_dir for call in mock_prepare.call_args_list]
+    assert sent_work_dirs == [f"{expected_work_dir}/{run_id}" for run_id in run_ids]
 
 
 @pytest.mark.parametrize("missing", ["queryFastaS3Uri", "targetFastaS3Uri"])

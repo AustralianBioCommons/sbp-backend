@@ -361,7 +361,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
     assert queued_job.launch_payload["runName"] == "queued-proteinfold-run"
     assert queued_job.launch_payload["pipeline"] == "https://github.com/nf-core/proteinfold"
-    assert queued_job.launch_payload["workDir"] == "/work/dir"
+    assert queued_job.launch_payload["workDir"] == workflow_run.work_dir
     assert queued_job.launch_payload["workspaceId"] == "ws_123"
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]
