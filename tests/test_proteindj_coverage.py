@@ -148,9 +148,7 @@ def test_proteindj_form_data_allows_exactly_max_hotspot_residues():
 
 
 def test_proteindj_form_data_strips_whitespace_between_hotspot_tokens():
-    fields = ProteinDjFormData(
-        **_proteindj_form_kwargs(target_hotspot_residues=" A20,  A21 ,A22")
-    )
+    fields = ProteinDjFormData(**_proteindj_form_kwargs(target_hotspot_residues=" A20,  A21 ,A22"))
     assert fields.target_hotspot_residues == "A20,A21,A22"
 
 
