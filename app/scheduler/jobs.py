@@ -35,9 +35,7 @@ LAUNCH_MISFIRE_GRACE_SECONDS = 30 * 60
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
 # The Gadi PBS snapshot refreshes every 5 minutes (see run_scheduler.py's
-# GADI_PBS_JOBS_SYNC_INTERVAL); anything older than this means that sync is
-# stuck (e.g. a wedged Globus transfer - see refresh_gadi_pbs_jobs), not just
-# running a little behind.
+# GADI_PBS_JOBS_SYNC_INTERVAL)
 STALE_PBS_SNAPSHOT_TIMEOUT = timedelta(minutes=30)
 
 
