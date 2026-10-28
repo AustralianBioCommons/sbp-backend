@@ -34,6 +34,10 @@ LAUNCH_MISFIRE_GRACE_SECONDS = 30 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
 
+# The Gadi PBS snapshot refreshes every 5 minutes (see run_scheduler.py's
+# GADI_PBS_JOBS_SYNC_INTERVAL)
+STALE_PBS_SNAPSHOT_TIMEOUT = timedelta(minutes=30)
+
 
 def with_scheduler_db_session[SchedulerJob: Callable[..., object]](
     func: SchedulerJob,
@@ -244,20 +248,39 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     this scheduler submitted after the snapshot was generated are counted too -
     otherwise consecutive ticks would each fill the full cap from the same
     stale count.
+
+    If the snapshot itself is stuck (e.g. a wedged Globus transfer keeps
+    refresh_gadi_pbs_jobs from ever landing a fresh one), that "since the
+    snapshot" window would otherwise grow without bound and wedge every
+    submission shut indefinitely. Past STALE_PBS_SNAPSHOT_TIMEOUT, the snapshot
+    count is dropped entirely and the window is capped to that same timeout,
+    so this fails safe (capacity reopens on its own) instead of fails shut.
     """
     settings = settings or get_settings()
     max_jobs = settings.seqera.max_concurrent_workflows
     snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
-    pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
-        snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
-    )
+    snapshot_age = datetime.now(UTC) - snapshot.generated_at
+    if snapshot_age > STALE_PBS_SNAPSHOT_TIMEOUT:
+        logger.warning(
+            f"Gadi PBS snapshot is stale ({snapshot_age} old, generated at "
+            f"{snapshot.generated_at.isoformat()}) - ignoring its job count and only "
+            f"counting submissions from the last {STALE_PBS_SNAPSHOT_TIMEOUT} to avoid "
+            "wedging job submission shut indefinitely."
+        )
+        pbs_count = 0
+        since = datetime.now(UTC) - STALE_PBS_SNAPSHOT_TIMEOUT
+    else:
+        pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
+            snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
+        )
+        since = snapshot.generated_at
     submitted_since_snapshot = (
         db_session.scalar(
             select(func.count())
             .select_from(QueuedJob)
             .where(
                 QueuedJob.status == "submitted",
-                QueuedJob.submitted_at > snapshot.generated_at,
+                QueuedJob.submitted_at > since,
             )
         )
         or 0
