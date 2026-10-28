@@ -258,6 +258,32 @@ def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
 
 
+def test_get_available_workflow_capacity_ignores_stale_snapshot(
+    test_db, persistent_models, monkeypatch, mock_settings
+):
+    """A snapshot stuck for longer than STALE_PBS_SNAPSHOT_TIMEOUT (e.g. a wedged
+    Globus transfer - see refresh_gadi_pbs_jobs) must not wedge capacity shut
+    forever: its own job count is dropped, and only recent submissions count."""
+    generated_at = datetime.now(UTC) - scheduler_jobs.STALE_PBS_SNAPSHOT_TIMEOUT - timedelta(days=1)
+    long_ago = _create_queued_job(status="submitted")
+    long_ago.submitted_at = generated_at + timedelta(minutes=1)
+    recent = _create_queued_job(status="submitted")
+    recent.submitted_at = datetime.now(UTC) - timedelta(minutes=5)
+    test_db.add_all([long_ago, recent])
+    test_db.commit()
+    _patch_pbs_snapshot(
+        monkeypatch,
+        # Would otherwise count for 5 - must be ignored once stale.
+        [_pbs_job(str(i), queue="workflow-exec", state="R") for i in range(5)],
+        generated_at,
+    )
+    mock_settings.seqera.max_concurrent_workflows = 10
+
+    # Snapshot's own 5 jobs ignored; "long_ago" falls outside the rolling
+    # STALE_PBS_SNAPSHOT_TIMEOUT window so only "recent" counts.
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 9
+
+
 def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mock_settings):
     _patch_pbs_snapshot(
         monkeypatch,
