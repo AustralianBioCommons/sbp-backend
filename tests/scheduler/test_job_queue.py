@@ -226,17 +226,20 @@ def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec
             _pbs_job("1", queue="workflow-exec", state="R"),
             _pbs_job("2", queue="workflow-exec", state="R"),
             _pbs_job("3", queue="workflow-exec", state="Q"),
+            # Also counted: the "workflow" route queue jobs are routed through
+            # before landing in "workflow-exec".
+            _pbs_job("4", queue="workflow", state="Q"),
             # Not counted: other states / other queues.
-            _pbs_job("4", queue="workflow-exec", state="H"),
-            _pbs_job("5", queue="workflow-exec", state="F"),
-            _pbs_job("6", queue="normal", state="R"),
-            _pbs_job("7", queue="gpuhopper", state="Q"),
+            _pbs_job("5", queue="workflow-exec", state="H"),
+            _pbs_job("6", queue="workflow-exec", state="F"),
+            _pbs_job("7", queue="normal", state="R"),
+            _pbs_job("8", queue="gpuhopper", state="Q"),
         ],
         generated_at=datetime.now(UTC),
     )
     mock_settings.seqera.max_concurrent_workflows = 10
 
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 6
 
 
 def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
@@ -258,30 +261,28 @@ def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
 
 
-def test_get_available_workflow_capacity_ignores_stale_snapshot(
-    test_db, persistent_models, monkeypatch, mock_settings
+def test_get_available_workflow_capacity_falls_back_to_seqera_for_stale_snapshot(
+    test_db, monkeypatch, mock_settings
 ):
     """A snapshot stuck for longer than STALE_PBS_SNAPSHOT_TIMEOUT (e.g. a wedged
     Globus transfer - see refresh_gadi_pbs_jobs) must not wedge capacity shut
-    forever: its own job count is dropped, and only recent submissions count."""
+    forever, but also must not fail open unboundedly: it falls back to
+    Seqera's own live active-workflow count instead of the unusable PBS count."""
     generated_at = datetime.now(UTC) - scheduler_jobs.STALE_PBS_SNAPSHOT_TIMEOUT - timedelta(days=1)
-    long_ago = _create_queued_job(status="submitted")
-    long_ago.submitted_at = generated_at + timedelta(minutes=1)
-    recent = _create_queued_job(status="submitted")
-    recent.submitted_at = datetime.now(UTC) - timedelta(minutes=5)
-    test_db.add_all([long_ago, recent])
-    test_db.commit()
     _patch_pbs_snapshot(
         monkeypatch,
         # Would otherwise count for 5 - must be ignored once stale.
         [_pbs_job(str(i), queue="workflow-exec", state="R") for i in range(5)],
         generated_at,
     )
+
+    async def _count_active_workflows(**_kwargs):
+        return 3
+
+    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
     mock_settings.seqera.max_concurrent_workflows = 10
 
-    # Snapshot's own 5 jobs ignored; "long_ago" falls outside the rolling
-    # STALE_PBS_SNAPSHOT_TIMEOUT window so only "recent" counts.
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 9
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
 
 
 def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mock_settings):
