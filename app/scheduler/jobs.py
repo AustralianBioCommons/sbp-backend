@@ -243,24 +243,15 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     """
     How many more workflows can be submitted to Gadi right now, per sbp_service's
     queued + running jobs in the workflow/workflow-exec queues (see
-    MAX_CONCURRENT_WORKFLOWS, gadi_pbs_jobs.WORKFLOW_QUEUE/WORKFLOW_EXEC_QUEUE).
-    Both are counted - Gadi's own per-user job limit isn't documented, so this
-    doesn't assume only the execution queue matters.
+    MAX_CONCURRENT_WORKFLOWS). Both queues count, since Gadi's own job limit
+    isn't documented to only consider the exec queue.
 
-    The PBS snapshot lags behind reality (Gadi-side push + Globus sync), so jobs
-    this scheduler submitted after the snapshot was generated are counted too -
-    otherwise consecutive ticks would each fill the full cap from the same
-    stale count.
+    Also counts jobs submitted after the snapshot (it lags reality), so
+    consecutive ticks don't each fill the cap from the same stale count.
 
-    If the snapshot itself is stuck (e.g. a wedged Globus transfer keeps
-    refresh_gadi_pbs_jobs from ever landing a fresh one), its job count can't be
-    trusted at all. A rolling "count submissions from the last N minutes"
-    fallback would still fail open the longer the snapshot stays stuck - real
-    workflows run far longer than N minutes, so each tick would forget
-    older-but-still-running submissions and keep granting fresh capacity,
-    unbounded. Instead this falls back entirely to Seqera's own live
-    active-workflow count (see seqera.count_active_workflows), which isn't fed
-    by the same (stuck) Gadi push pipeline so it can't go stale the same way.
+    If the snapshot is stuck, falls back to Seqera's own live active-workflow
+    count instead of a rolling time window - a window would still fail open
+    the longer the snapshot stays stuck, since long-running jobs age out of it.
     """
     settings = settings or get_settings()
     max_jobs = settings.seqera.max_concurrent_workflows

@@ -226,8 +226,7 @@ def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec
             _pbs_job("1", queue="workflow-exec", state="R"),
             _pbs_job("2", queue="workflow-exec", state="R"),
             _pbs_job("3", queue="workflow-exec", state="Q"),
-            # Also counted: the "workflow" route queue jobs are routed through
-            # before landing in "workflow-exec".
+            # Also counted: the "workflow" route queue.
             _pbs_job("4", queue="workflow", state="Q"),
             # Not counted: other states / other queues.
             _pbs_job("5", queue="workflow-exec", state="H"),
@@ -264,10 +263,8 @@ def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
 def test_get_available_workflow_capacity_falls_back_to_seqera_for_stale_snapshot(
     test_db, monkeypatch, mock_settings
 ):
-    """A snapshot stuck for longer than STALE_PBS_SNAPSHOT_TIMEOUT (e.g. a wedged
-    Globus transfer - see refresh_gadi_pbs_jobs) must not wedge capacity shut
-    forever, but also must not fail open unboundedly: it falls back to
-    Seqera's own live active-workflow count instead of the unusable PBS count."""
+    """A stuck snapshot must fall back to Seqera's live count, not a rolling
+    window that would fail open unboundedly the longer it stays stuck."""
     generated_at = datetime.now(UTC) - scheduler_jobs.STALE_PBS_SNAPSHOT_TIMEOUT - timedelta(days=1)
     _patch_pbs_snapshot(
         monkeypatch,

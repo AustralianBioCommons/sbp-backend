@@ -69,11 +69,9 @@ _PBS_TIMEZONE = ZoneInfo("Australia/Sydney")
 # currently occupying a submission slot (see scheduler's capacity check).
 WORKFLOW_EXEC_QUEUE = "workflow-exec"
 
-# The Route queue PBS Pro briefly parks a submission in before routing it to
-# WORKFLOW_EXEC_QUEUE (same "normal"/"normal-exec" pairing seen on Gadi).
-# Counted alongside it for capacity purposes - Gadi's own per-user job limit
-# isn't documented, so this stays safe rather than assuming only the
-# execution queue counts.
+# Route queue PBS parks a submission in before WORKFLOW_EXEC_QUEUE (same
+# "normal"/"normal-exec" pairing seen on Gadi) - counted alongside it since
+# Gadi's job limit isn't documented to only consider the exec queue.
 WORKFLOW_QUEUE = "workflow"
 
 # Job states that count as occupying a slot in a queue.
