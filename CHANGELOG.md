@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/AustralianBioCommons/sbp-backend/compare/v0.1.1...v0.1.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* bump outdated deps ([9ac4128](https://github.com/AustralianBioCommons/sbp-backend/commit/9ac4128a03e1a4639a73eafff53e62045cff0b36))
+* update outdated dependencies ([efff28b](https://github.com/AustralianBioCommons/sbp-backend/commit/efff28bc4c2147c4d6bd9f5d5779718b95a91998))
+
 ## [0.1.1](https://github.com/AustralianBioCommons/sbp-backend/compare/v0.1.0...v0.1.1) (2026-10-15)
 
 
