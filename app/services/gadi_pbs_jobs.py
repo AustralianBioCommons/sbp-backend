@@ -69,6 +69,11 @@ _PBS_TIMEZONE = ZoneInfo("Australia/Sydney")
 # currently occupying a submission slot (see scheduler's capacity check).
 WORKFLOW_EXEC_QUEUE = "workflow-exec"
 
+# Route queue PBS parks a submission in before WORKFLOW_EXEC_QUEUE (same
+# "normal"/"normal-exec" pairing seen on Gadi) - counted alongside it since
+# Gadi's job limit isn't documented to only consider the exec queue.
+WORKFLOW_QUEUE = "workflow"
+
 # Job states that count as occupying a slot in a queue.
 _ACTIVE_JOB_STATES = frozenset({"Q", "R"})
 

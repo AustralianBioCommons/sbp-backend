@@ -16,7 +16,7 @@ from ..db.models.core import AppUser, DataTransfer, Workflow
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
-from ..services import gadi_pbs_jobs, globus_transfer, health, workflow_repo_staging
+from ..services import gadi_pbs_jobs, globus_transfer, health, seqera, workflow_repo_staging
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
@@ -242,45 +242,47 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
 def get_available_workflow_capacity(db_session: Session, settings: Settings | None = None) -> int:
     """
     How many more workflows can be submitted to Gadi right now, per sbp_service's
-    queued + running jobs in the workflow-exec queue (see MAX_CONCURRENT_WORKFLOWS).
+    queued + running jobs in the workflow/workflow-exec queues (see
+    MAX_CONCURRENT_WORKFLOWS). Both queues count, since Gadi's own job limit
+    isn't documented to only consider the exec queue.
 
-    The PBS snapshot lags behind reality (Gadi-side push + Globus sync), so jobs
-    this scheduler submitted after the snapshot was generated are counted too -
-    otherwise consecutive ticks would each fill the full cap from the same
-    stale count.
+    Also counts jobs submitted after the snapshot (it lags reality), so
+    consecutive ticks don't each fill the cap from the same stale count.
 
-    If the snapshot itself is stuck (e.g. a wedged Globus transfer keeps
-    refresh_gadi_pbs_jobs from ever landing a fresh one), that "since the
-    snapshot" window would otherwise grow without bound and wedge every
-    submission shut indefinitely. Past STALE_PBS_SNAPSHOT_TIMEOUT, the snapshot
-    count is dropped entirely and the window is capped to that same timeout,
-    so this fails safe (capacity reopens on its own) instead of fails shut.
+    If the snapshot is stuck, falls back to Seqera's own live active-workflow
+    count instead of a rolling time window - a window would still fail open
+    the longer the snapshot stays stuck, since long-running jobs age out of it.
     """
     settings = settings or get_settings()
     max_jobs = settings.seqera.max_concurrent_workflows
     snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
     snapshot_age = datetime.now(UTC) - snapshot.generated_at
+
     if snapshot_age > STALE_PBS_SNAPSHOT_TIMEOUT:
         logger.warning(
             f"Gadi PBS snapshot is stale ({snapshot_age} old, generated at "
-            f"{snapshot.generated_at.isoformat()}) - ignoring its job count and only "
-            f"counting submissions from the last {STALE_PBS_SNAPSHOT_TIMEOUT} to avoid "
-            "wedging job submission shut indefinitely."
+            f"{snapshot.generated_at.isoformat()}) - falling back to Seqera's own "
+            "active-workflow count instead of the unusable PBS job count."
         )
-        pbs_count = 0
-        since = datetime.now(UTC) - STALE_PBS_SNAPSHOT_TIMEOUT
-    else:
-        pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
-            snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
+        active_count = asyncio.run(seqera.count_active_workflows(settings=settings))
+        capacity = max(0, max_jobs - active_count)
+        logger.info(
+            f"{active_count}/{max_jobs} jobs active per Seqera (PBS snapshot unusable); "
+            f"{capacity} submission slot(s) available."
         )
-        since = snapshot.generated_at
+        return capacity
+
+    pbs_count = sum(
+        gadi_pbs_jobs.count_active_jobs_in_queue(snapshot, queue)
+        for queue in (gadi_pbs_jobs.WORKFLOW_QUEUE, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE)
+    )
     submitted_since_snapshot = (
         db_session.scalar(
             select(func.count())
             .select_from(QueuedJob)
             .where(
                 QueuedJob.status == "submitted",
-                QueuedJob.submitted_at > since,
+                QueuedJob.submitted_at > snapshot.generated_at,
             )
         )
         or 0
@@ -288,9 +290,10 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     active_count = pbs_count + submitted_since_snapshot
     capacity = max(0, max_jobs - active_count)
     logger.info(
-        f"{active_count}/{max_jobs} jobs active in Gadi {gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE} queue "
-        f"({pbs_count} in PBS snapshot from {snapshot.generated_at.isoformat()}, "
-        f"{submitted_since_snapshot} submitted since; {capacity} submission slot(s) available)."
+        f"{active_count}/{max_jobs} jobs active in Gadi workflow/"
+        f"{gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE} queues ({pbs_count} in PBS snapshot from "
+        f"{snapshot.generated_at.isoformat()}, {submitted_since_snapshot} submitted since; "
+        f"{capacity} submission slot(s) available)."
     )
     return capacity
 
