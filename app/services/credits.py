@@ -14,7 +14,7 @@ module as the one place to edit them.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import cast, Optional
+from typing import cast
 
 from pydantic import BaseModel, Field
 
@@ -182,7 +182,7 @@ def launch_credit_cost(
     tool: str,
     final_design_count: int | None,
     *,
-    wisps_input_info: Optional[WispsInputInfo] = None,
+    wisps_input_info: WispsInputInfo | None = None,
 ) -> int | None:
     """Authoritative per-run cost for workflows charged server-side at launch.
 

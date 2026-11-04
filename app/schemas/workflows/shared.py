@@ -6,7 +6,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -418,6 +418,6 @@ LIVE_ONLY_UI_STATUSES = frozenset({UIStatus.IN_QUEUE.value, UIStatus.IN_PROGRESS
 
 
 class WispsInputInfo(BaseModel):
-    fasta_entry_lengths: Optional[list[int]] = None
-    query_count: Optional[int] = None
-    target_count: Optional[int] = None
+    fasta_entry_lengths: list[int] | None = None
+    query_count: int | None = None
+    target_count: int | None = None
