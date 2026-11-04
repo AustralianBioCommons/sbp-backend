@@ -1,4 +1,4 @@
-"""Dataset helpers — CSV generation and S3 upload for workflow samplesheets."""
+"""Dataset helpers — FASTA lengths, CSV generation and S3 workflow samplesheets."""
 
 from __future__ import annotations
 
@@ -12,10 +12,25 @@ import string
 from datetime import UTC, datetime
 from typing import Any
 
+from Bio.SeqIO.FastaIO import SimpleFastaParser
+
 from ..config import Settings
 from .s3 import S3UploadResult, upload_file_to_s3
 
 logger = logging.getLogger(__name__)
+
+
+def get_fasta_entry_lengths(fasta_text: str) -> list[int]:
+    """Count residues per FASTA record, excluding whitespace and chain separators."""
+    if not fasta_text.lstrip().startswith(">"):
+        raise ValueError("FASTA content must start with a header beginning with >.")
+    lengths = [
+        len("".join(sequence.split()).replace(":", ""))
+        for _, sequence in SimpleFastaParser(io.StringIO(fasta_text.lstrip()))
+    ]
+    if not lengths or any(length == 0 for length in lengths):
+        raise ValueError("Each FASTA record must contain a non-empty sequence.")
+    return lengths
 
 
 def _stringify_field(value: Any) -> str:
