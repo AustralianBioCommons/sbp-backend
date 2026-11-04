@@ -1292,8 +1292,14 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
     assert single["toolMultipliers"] == {"boltz": 50, "colabfold": 50, "alphafold2": 50}
 
     bulk = by_category["bulk-prediction"]
-    assert bulk["basis"] == CreditBasis.FASTA_ENTRY_COUNT.value
+    assert bulk["basis"] == CreditBasis.FASTA_SIZE_PER_ENTRY.value
     assert bulk["toolMultipliers"] == {"boltz": 1, "colabfold": 3}
+    assert bulk["sizeMultipliers"] == [
+        {"minLength": 1, "maxLength": 1000, "multiplier": 1},
+        {"minLength": 1001, "maxLength": 1999, "multiplier": 4},
+        {"minLength": 2000, "maxLength": 2999, "multiplier": 10},
+        {"minLength": 3000, "maxLength": 4000, "multiplier": 16},
+    ]
 
     screening = by_category["interaction-screening"]
     assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
@@ -1451,11 +1457,17 @@ def _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv):
     )
 
 
+@patch("app.routes.workflows.read_s3_file")
 @patch("app.routes.workflows.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_stages_single_multi_fasta(
-    mock_prepare, mock_read_csv, mock_upload_csv, wisps_client: TestClient, test_engine
+    mock_prepare,
+    mock_read_csv,
+    mock_upload_csv,
+    mock_read_file,
+    wisps_client: TestClient,
+    test_engine,
 ):
     """Bulk-prediction stages the one multi-FASTA its samplesheet row references
     and hands the pipeline a samplesheet pointing at the Gadi-local copy."""
@@ -1470,6 +1482,7 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    mock_read_file.assert_not_called()  # Credits disabled: no FASTA pricing read.
     run_id = UUID(response.json()["runId"])
     call_kwargs = mock_prepare.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == BULK_FASTA_URI
@@ -1493,6 +1506,22 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     }
 
 
+@pytest.mark.parametrize(
+    ("tool", "fasta_text", "expected_cost"),
+    [
+        ("boltz", _fasta_with(5, "seq"), 5),
+        (
+            "boltz",
+            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "B" * 700 + "\n",
+            5,
+        ),
+        (
+            "colabfold",
+            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "B" * 700 + "\n",
+            15,
+        ),
+    ],
+)
 @patch("app.routes.workflows.read_s3_file")
 @patch("app.routes.workflows.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
@@ -1505,24 +1534,26 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     wisps_client: TestClient,
     test_engine,
     mock_settings,
+    tool,
+    fasta_text,
+    expected_cost,
 ):
-    """With credits enabled, bulk-prediction charges tool_multiplier × the FASTA
-    records in the multi-FASTA its samplesheet row references."""
+    """Charge the sum of S3 record size multipliers, including combined chains."""
     _add_bulk_prediction_workflow(test_engine)
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv)
     mock_read_file.side_effect = lambda key: {
-        "input/20260101_120000_bulk-run_sequences.fasta": _fasta_with(5, "seq")
+        "input/20260101_120000_bulk-run_sequences.fasta": fasta_text
     }[key]
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
 
     payload = {
-        "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
+        "launch": {"workflow": "bulk-prediction", "tool": tool, "runName": "bulk-run"},
         "s3InputKey": "inputs/samplesheets/test.csv",
-        "formData": BULK_FORM_DATA,
+        "formData": {**BULK_FORM_DATA, "tool": tool, "fastaContent": _fasta_with(1, "fake")},
     }
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
@@ -1532,8 +1563,57 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
         credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
-    assert credit == 95  # 100 − (1 × 5 entries)
-    assert credit_cost == 5  # persisted on the run for admin display
+    assert credit == 100 - expected_cost
+    assert credit_cost == expected_cost
+
+
+@pytest.mark.parametrize(
+    ("fasta_text", "balance", "expected_status"),
+    [
+        (">complex\n" + "A" * 800 + ":" + "B" * 700, 3, 402),
+        (">oversize\n" + "A" * 4000, 100, 422),
+        (">empty\n", 100, 422),
+        ("", 100, 422),
+        ("ACDE\n>record\nACDE", 100, 422),
+    ],
+)
+@patch("app.routes.workflows.read_s3_file")
+@patch("app.routes.workflows.read_csv_from_s3")
+@patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_bulk_prediction_rejects_invalid_or_unaffordable_inputs(
+    mock_prepare,
+    mock_read_csv,
+    mock_read_file,
+    wisps_client,
+    test_engine,
+    mock_settings,
+    fasta_text,
+    balance,
+    expected_status,
+):
+    _add_bulk_prediction_workflow(test_engine)
+    mock_settings.enable_credits = True
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    mock_read_csv.return_value = [{"id": "bulk", "sequence": BULK_FASTA_URI, "type": "protein"}]
+    mock_read_file.return_value = fasta_text
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=balance))
+        db.commit()
+
+    response = wisps_client.post(
+        "/api/workflows/launch",
+        json={
+            "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
+            "s3InputKey": "inputs/samplesheets/test.csv",
+            "formData": BULK_FORM_DATA,
+        },
+    )
+
+    assert response.status_code == expected_status
+    mock_prepare.assert_not_called()
+    with Session(test_engine) as db:
+        assert db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID)) == balance
+        assert db.scalar(select(func.count()).select_from(WorkflowRun)) == 0
 
 
 @patch("app.routes.workflows.upload_bulk_prediction_samplesheet_to_s3")
