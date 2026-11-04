@@ -6,7 +6,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import (
     BaseModel,
@@ -415,3 +415,9 @@ MAX_SEQERA_UNKNOWN_ATTEMPTS = 5
 # persisted anywhere, so filtering on them requires a live Seqera lookup and can't
 # be expressed as a DB query.
 LIVE_ONLY_UI_STATUSES = frozenset({UIStatus.IN_QUEUE.value, UIStatus.IN_PROGRESS.value})
+
+
+class WispsInputInfo(BaseModel):
+    fasta_entry_lengths: Optional[list[int]] = None
+    query_count: Optional[int] = None
+    target_count: Optional[int] = None

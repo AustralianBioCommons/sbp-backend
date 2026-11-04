@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.schemas.workflows.shared import WispsInputInfo
 from app.services.credits import get_sequence_size_multiplier, launch_credit_cost
 
 
@@ -28,21 +29,46 @@ def test_sequence_size_boundaries(length, expected):
 @pytest.mark.parametrize("length", [-1, 0, 4001, 10000])
 def test_unsupported_sequence_size(length):
     with pytest.raises(ValueError, match="unsupported"):
-        launch_credit_cost("bulk-prediction", "boltz", None, fasta_entry_lengths=[length])
+        launch_credit_cost(
+            "bulk-prediction",
+            "boltz",
+            None,
+            wisps_input_info=WispsInputInfo(fasta_entry_lengths=[length]),
+        )
 
 
 @pytest.mark.parametrize(
-    ("category", "tool", "designs", "kwargs", "expected"),
+    ("category", "tool", "designs", "wisps_input_info", "expected"),
     [
-        ("bulk-prediction", "boltz", None, {"fasta_entry_lengths": [800, 1500, 2500, 3500]}, 31),
-        (" BULK-PREDICTION ", " COLABFOLD ", None, {"fasta_entry_lengths": [800, 1500]}, 15),
-        ("bulk-prediction", "boltz", None, {}, None),
-        ("bulk-prediction", "boltz", None, {"fasta_entry_lengths": []}, None),
-        ("bulk-prediction", "unknown", None, {"fasta_entry_lengths": [800]}, None),
-        ("single-prediction", "boltz", None, {}, 50),
-        ("de-novo-design", "bindcraft", 3, {}, 30),
-        ("interaction-screening", "colabfold", None, {"fasta_pair_counts": (3, 2)}, 30),
+        (
+            "bulk-prediction",
+            "boltz",
+            None,
+            WispsInputInfo(fasta_entry_lengths=[800, 1500, 2500, 3500]),
+            31,
+        ),
+        (
+            " BULK-PREDICTION ",
+            " COLABFOLD ",
+            None,
+            WispsInputInfo(fasta_entry_lengths=[800, 1500]),
+            15,
+        ),
+        ("bulk-prediction", "boltz", None, WispsInputInfo(), None),
+        ("bulk-prediction", "boltz", None, WispsInputInfo(fasta_entry_lengths=[]), None),
+        ("bulk-prediction", "unknown", None, WispsInputInfo(fasta_entry_lengths=[800]), None),
+        ("single-prediction", "boltz", None, None, 50),
+        ("de-novo-design", "bindcraft", 3, None, 30),
+        (
+            "interaction-screening",
+            "colabfold",
+            None,
+            WispsInputInfo(query_count=3, target_count=2),
+            30,
+        ),
     ],
 )
-def test_launch_cost(category, tool, designs, kwargs, expected):
-    assert launch_credit_cost(category, tool, designs, **kwargs) == expected
+def test_launch_cost(category, tool, designs, wisps_input_info, expected):
+    assert (
+        launch_credit_cost(category, tool, designs, wisps_input_info=wisps_input_info) == expected
+    )

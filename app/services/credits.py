@@ -14,12 +14,12 @@ module as the one place to edit them.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import cast
+from typing import cast, Optional
 
 from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
-from ..schemas.workflows.shared import WorkflowName, WorkflowTool
+from ..schemas.workflows.shared import WispsInputInfo, WorkflowName, WorkflowTool
 
 
 def is_credits_enabled(settings: Settings | None = None) -> bool:
@@ -182,8 +182,7 @@ def launch_credit_cost(
     tool: str,
     final_design_count: int | None,
     *,
-    fasta_entry_lengths: list[int] | None = None,
-    fasta_pair_counts: tuple[int, int] | None = None,
+    wisps_input_info: Optional[WispsInputInfo] = None,
 ) -> int | None:
     """Authoritative per-run cost for workflows charged server-side at launch.
 
@@ -206,15 +205,17 @@ def launch_credit_cost(
             return None
         return compute_cost(cat, tool, final_design_count)
     if cat == "bulk-prediction":
-        if not fasta_entry_lengths:
+        if not wisps_input_info.fasta_entry_lengths:
             return None
-        quantity = sum(get_sequence_size_multiplier(length) for length in fasta_entry_lengths)
+        quantity = sum(get_sequence_size_multiplier(length)
+                       for length in wisps_input_info.fasta_entry_lengths)
         return compute_cost(cat, tool, quantity)
     if cat == "interaction-screening":
-        if fasta_pair_counts is None:
+        if wisps_input_info is None:
             return None
-        query_count, target_count = fasta_pair_counts
-        if query_count < 1 or target_count < 1:
+        if wisps_input_info.query_count is None or wisps_input_info.target_count is None:
             return None
-        return compute_cost(cat, tool, query_count * target_count)
+        if wisps_input_info.query_count < 1 or wisps_input_info.target_count < 1:
+            return None
+        return compute_cost(cat, tool, wisps_input_info.query_count * wisps_input_info.target_count)
     return None

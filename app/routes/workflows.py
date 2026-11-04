@@ -8,11 +8,11 @@ import random
 import re
 import string
 from datetime import UTC, datetime
-from typing import cast, Optional
+from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import ValidationError, BaseModel
+from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,7 @@ from ..schemas.workflows.shared import (
     ListRunsResponse,
     RunInputPresignedUrlResponse,
     S3DatasetUploadResponse,
+    WispsInputInfo,
     WorkflowFormData,
     WorkflowLaunchPayload,
     WorkflowLaunchResponse,
@@ -293,13 +294,6 @@ async def _stage_referenced_samplesheet_file(
             detail=f"Failed to re-upload corrected samplesheet: {exc}",
         ) from exc
     return csv_upload.file_key
-
-
-class WispsInputInfo(BaseModel):
-    fasta_entry_lengths: Optional[list[int]] = None
-    query_count: Optional[int] = None
-    target_count: Optional[int] = None
-    
 
 
 async def _read_wisps_credit_inputs(
@@ -579,18 +573,15 @@ async def launch_workflow(
         wisps_input_info = await _read_wisps_credit_inputs(
             s3_input_key, requested_workflow
         )
+    else:
+        wisps_input_info = None
     try:
         if is_credits_enabled(settings):
-            if wisps_input_info.query_count is None or wisps_input_info.target_count is None:
-                pair_counts = None
-            else:
-                pair_counts = (wisps_input_info.query_count, wisps_input_info.target_count)
             run_credit_cost = launch_credit_cost(
                     requested_workflow,
                     selected_tool,
                     final_design_count,
-                    fasta_entry_lengths=wisps_input_info.fasta_entry_lengths,
-                    fasta_pair_counts=pair_counts,
+                    wisps_input_info=wisps_input_info,
             )
         else:
             run_credit_cost = None
