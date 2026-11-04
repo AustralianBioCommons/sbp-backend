@@ -207,8 +207,9 @@ def launch_credit_cost(
     if cat == "bulk-prediction":
         if wisps_input_info is None or not wisps_input_info.fasta_entry_lengths:
             return None
-        quantity = sum(get_sequence_size_multiplier(length)
-                       for length in wisps_input_info.fasta_entry_lengths)
+        quantity = sum(
+            get_sequence_size_multiplier(length) for length in wisps_input_info.fasta_entry_lengths
+        )
         return compute_cost(cat, tool, quantity)
     if cat == "interaction-screening":
         if wisps_input_info is None:

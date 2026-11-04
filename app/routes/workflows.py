@@ -296,9 +296,7 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
-async def _read_wisps_credit_inputs(
-    s3_input_key: str, workflow_name: str
-) -> WispsInputInfo:
+async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> WispsInputInfo:
     """Derive the server-side, non-spoofable credit quantity for a WISPS launch
     from the already-built samplesheet at s3_input_key (id/sequence[/group]/type
     rows whose ``sequence`` is a multi-FASTA S3 URI), rather than trusting the
@@ -329,7 +327,9 @@ async def _read_wisps_credit_inputs(
             if group not in counts:
                 continue
             counts[group] += len(await _read_referenced_fasta_lengths(row, f"group {group}"))
-        return WispsInputInfo(fasta_entry_lengths=None, query_count=counts["g1"], target_count=counts["g2"])
+        return WispsInputInfo(
+            fasta_entry_lengths=None, query_count=counts["g1"], target_count=counts["g2"]
+        )
     lengths = []
     for row in rows:
         lengths.extend(await _read_referenced_fasta_lengths(row, f"row {row.get('id')}"))
@@ -570,18 +570,16 @@ async def launch_workflow(
         "interaction-screening",
         "bulk-prediction",
     ):
-        wisps_input_info = await _read_wisps_credit_inputs(
-            s3_input_key, requested_workflow
-        )
+        wisps_input_info = await _read_wisps_credit_inputs(s3_input_key, requested_workflow)
     else:
         wisps_input_info = None
     try:
         if is_credits_enabled(settings):
             run_credit_cost = launch_credit_cost(
-                    requested_workflow,
-                    selected_tool,
-                    final_design_count,
-                    wisps_input_info=wisps_input_info,
+                requested_workflow,
+                selected_tool,
+                final_design_count,
+                wisps_input_info=wisps_input_info,
             )
         else:
             run_credit_cost = None
