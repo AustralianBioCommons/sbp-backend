@@ -19,7 +19,7 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
-from ..schemas.workflows.shared import WorkflowName, WorkflowTool
+from ..schemas.workflows.shared import WispsInputInfo, WorkflowName, WorkflowTool
 
 
 def is_credits_enabled(settings: Settings | None = None) -> bool:
@@ -50,10 +50,29 @@ class CreditBasis(StrEnum):
     FINAL_DESIGN_COUNT = "final_design_count"
     # Always 1 — a single prediction.
     CONSTANT = "constant"
-    # Number of entries in the FASTA input (bulk prediction).
-    FASTA_ENTRY_COUNT = "fasta_entry_count"
+    # Sum of size multipliers for each FASTA record (bulk prediction).
+    FASTA_SIZE_PER_ENTRY = "fasta_size_per_entry"
     # Product of the entry counts of the two FASTA inputs (interaction screening).
     FASTA_PAIR_PRODUCT = "fasta_pair_product"
+
+
+class FastaSizeMultiplier(BaseModel):
+    """
+    Size-based multipliers for FASTA entries (cost is calculated
+    per entry, and added across entries
+    """
+
+    minLength: int = Field(..., ge=1)
+    maxLength: int = Field(..., ge=1)
+    multiplier: int = Field(..., ge=1)
+
+
+FASTA_SIZE_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
+    FastaSizeMultiplier(minLength=1, maxLength=1000, multiplier=1),
+    FastaSizeMultiplier(minLength=1001, maxLength=1999, multiplier=4),
+    FastaSizeMultiplier(minLength=2000, maxLength=2999, multiplier=10),
+    FastaSizeMultiplier(minLength=3000, maxLength=4000, multiplier=16),
+)
 
 
 class WorkflowCreditConfig(BaseModel):
@@ -69,6 +88,10 @@ class WorkflowCreditConfig(BaseModel):
     basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
     toolMultipliers: dict[WorkflowTool, int] = Field(
         ..., description="Per-tool credit multiplier, keyed by tool id"
+    )
+    sizeMultipliers: tuple[FastaSizeMultiplier, ...] = Field(
+        default=(),
+        description="Size ranges for fasta_size_per_entry;",
     )
 
 
@@ -96,8 +119,9 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
     WorkflowCreditConfig(
         category="bulk-prediction",
         displayName="Bulk Prediction",
-        basis=CreditBasis.FASTA_ENTRY_COUNT,
+        basis=CreditBasis.FASTA_SIZE_PER_ENTRY,
         toolMultipliers={"boltz": 1, "colabfold": 3},
+        sizeMultipliers=FASTA_SIZE_MULTIPLIERS,
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
@@ -142,23 +166,34 @@ def compute_cost(category: str, tool: str, quantity: int) -> int | None:
     return multiplier * max(0, quantity)
 
 
+def get_sequence_size_multiplier(length: int) -> int:
+    """Return the credit multiplier for a record's combined chain length."""
+    for band in FASTA_SIZE_MULTIPLIERS:
+        if band.minLength <= length <= band.maxLength:
+            return band.multiplier
+    raise ValueError(
+        f"FASTA record length {length} is unsupported; expected "
+        f"{FASTA_SIZE_MULTIPLIERS[0].minLength}–{FASTA_SIZE_MULTIPLIERS[-1].maxLength} residues."
+    )
+
+
 def launch_credit_cost(
     category: str,
     tool: str,
     final_design_count: int | None,
     *,
-    fasta_entry_count: int | None = None,
-    fasta_pair_counts: tuple[int, int] | None = None,
+    wisps_input_info: WispsInputInfo | None = None,
 ) -> int | None:
     """Authoritative per-run cost for workflows charged server-side at launch.
 
     quantity per category:
     - single-prediction: constant (1).
     - de-novo-design: ``final_design_count`` (from the launch payload).
-    - bulk-prediction: ``fasta_entry_count`` (WISPS samplesheet row count).
+    - bulk-prediction: sum of size multipliers for ``fasta_entry_lengths``.
     - interaction-screening: product of ``fasta_pair_counts`` (query, target
       WISPS samplesheet row counts).
 
+    Raises ValueError for bulk records outside the supported size bands.
     Returns None when the category's quantity isn't available/valid, leaving
     the run uncosted (caller decides how to treat that, e.g. don't charge).
     """
@@ -170,14 +205,18 @@ def launch_credit_cost(
             return None
         return compute_cost(cat, tool, final_design_count)
     if cat == "bulk-prediction":
-        if fasta_entry_count is None or fasta_entry_count < 1:
+        if wisps_input_info is None or not wisps_input_info.fasta_entry_lengths:
             return None
-        return compute_cost(cat, tool, fasta_entry_count)
+        quantity = sum(
+            get_sequence_size_multiplier(length) for length in wisps_input_info.fasta_entry_lengths
+        )
+        return compute_cost(cat, tool, quantity)
     if cat == "interaction-screening":
-        if fasta_pair_counts is None:
+        if wisps_input_info is None:
             return None
-        query_count, target_count = fasta_pair_counts
-        if query_count < 1 or target_count < 1:
+        if wisps_input_info.query_count is None or wisps_input_info.target_count is None:
             return None
-        return compute_cost(cat, tool, query_count * target_count)
+        if wisps_input_info.query_count < 1 or wisps_input_info.target_count < 1:
+            return None
+        return compute_cost(cat, tool, wisps_input_info.query_count * wisps_input_info.target_count)
     return None

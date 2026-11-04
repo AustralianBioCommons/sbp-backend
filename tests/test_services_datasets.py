@@ -12,12 +12,27 @@ from app.services.datasets import (
     _stringify_field,
     build_unique_dataset_name,
     convert_form_data_to_csv,
+    get_fasta_entry_lengths,
     upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
     upload_samplesheet_rows_to_s3,
 )
 from app.services.s3 import S3UploadResult
+
+
+def test_fasta_lengths_combine_chains_and_wrapped_lines():
+    fasta = "\n>first description\n" + "A" * 800 + ":\n" + "B" * 700 + "\n>second\nAC D\tE\nFG\n"
+    assert get_fasta_entry_lengths(fasta) == [1500, 6]
+
+
+@pytest.mark.parametrize(
+    "fasta",
+    ["", "ACDE", "ACDE\n>record\nACDE", ">empty\n", ">empty\n>valid\nACDE", ">empty\n : \n"],
+)
+def test_fasta_lengths_reject_empty_or_invalid_records(fasta):
+    with pytest.raises(ValueError):
+        get_fasta_entry_lengths(fasta)
 
 
 def _s3_result(key: str = "inputs/samplesheets/samplesheet.csv") -> S3UploadResult:
