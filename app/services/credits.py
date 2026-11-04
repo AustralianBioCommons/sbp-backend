@@ -71,7 +71,7 @@ FASTA_SIZE_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
     FastaSizeMultiplier(minLength=1, maxLength=1000, multiplier=1),
     FastaSizeMultiplier(minLength=1001, maxLength=1999, multiplier=4),
     FastaSizeMultiplier(minLength=2000, maxLength=2999, multiplier=10),
-    FastaSizeMultiplier(minLength=3000, maxLength=3999, multiplier=16),
+    FastaSizeMultiplier(minLength=3000, maxLength=4000, multiplier=16),
 )
 
 
