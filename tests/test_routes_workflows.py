@@ -1571,7 +1571,7 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     ("fasta_text", "balance", "expected_status"),
     [
         (">complex\n" + "A" * 800 + ":" + "B" * 700, 3, 402),
-        (">oversize\n" + "A" * 4000, 100, 422),
+        (">oversize\n" + "A" * 4001, 100, 422),
         (">empty\n", 100, 422),
         ("", 100, 422),
         ("ACDE\n>record\nACDE", 100, 422),
