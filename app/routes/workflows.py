@@ -8,11 +8,11 @@ import random
 import re
 import string
 from datetime import UTC, datetime
-from typing import cast
+from typing import cast, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,7 @@ from ..services.credits import (
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
+    get_fasta_entry_lengths,
     upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
@@ -294,16 +295,23 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
-async def _count_wisps_samplesheet_entries(
+class WispsInputInfo(BaseModel):
+    fasta_entry_lengths: Optional[list[int]] = None
+    query_count: Optional[int] = None
+    target_count: Optional[int] = None
+    
+
+
+async def _read_wisps_credit_inputs(
     s3_input_key: str, workflow_name: str
-) -> tuple[int | None, tuple[int, int] | None]:
+) -> WispsInputInfo:
     """Derive the server-side, non-spoofable credit quantity for a WISPS launch
     from the already-built samplesheet at s3_input_key (id/sequence[/group]/type
     rows whose ``sequence`` is a multi-FASTA S3 URI), rather than trusting the
     client-supplied fastaContent.
 
-    Returns (fasta_entry_count, None) for bulk-prediction, where the count is
-    the number of FASTA records across every row's file, or
+    Returns (fasta_entry_lengths, None) for bulk-prediction, with combined
+    chain lengths for the FASTA records across every row's file, or
     (None, (query_count, target_count)) for interaction-screening, where each
     count is the number of FASTA records in the file its g1 (query) / g2
     (target) row references.
@@ -326,16 +334,21 @@ async def _count_wisps_samplesheet_entries(
             group = row.get("group")
             if group not in counts:
                 continue
-            counts[group] += await _count_referenced_fasta_records(row, f"group {group}")
-        return None, (counts["g1"], counts["g2"])
-    total = 0
+            counts[group] += len(await _read_referenced_fasta_lengths(row, f"group {group}"))
+        return WispsInputInfo(fasta_entry_lengths=None, query_count=counts["g1"], target_count=counts["g2"])
+    lengths = []
     for row in rows:
-        total += await _count_referenced_fasta_records(row, f"row {row.get('id')}")
-    return total, None
+        lengths.extend(await _read_referenced_fasta_lengths(row, f"row {row.get('id')}"))
+    if not lengths:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Bulk-prediction samplesheet must reference at least one FASTA record.",
+        )
+    return WispsInputInfo(fasta_entry_lengths=lengths)
 
 
-async def _count_referenced_fasta_records(row: dict[str, str], label: str) -> int:
-    """Count the FASTA records in the S3 file a samplesheet row's ``sequence`` references."""
+async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> list[int]:
+    """Read record lengths from the S3 FASTA a samplesheet's ``sequence`` references."""
     fasta_key = s3_uri_to_key(row.get("sequence"))
     if not fasta_key:
         raise HTTPException(
@@ -354,7 +367,13 @@ async def _count_referenced_fasta_records(row: dict[str, str], label: str) -> in
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to read FASTA referenced by samplesheet: {exc}",
         ) from exc
-    return sum(1 for line in fasta_text.splitlines() if line.startswith(">"))
+    try:
+        return get_fasta_entry_lengths(fasta_text)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid FASTA for {label}: {exc}",
+        ) from exc
 
 
 async def _stage_interaction_screening_fastas(
@@ -553,26 +572,33 @@ async def launch_workflow(
     # quantity comes from the already-built WISPS samplesheet at s3_input_key, not
     # the client-supplied fastaContent. Gated by the ENABLE_CREDITS flag so the
     # feature can be rolled out independently.
-    wisps_entry_count: int | None = None
-    wisps_pair_counts: tuple[int, int] | None = None
     if is_credits_enabled(settings) and requested_workflow in (
         "interaction-screening",
         "bulk-prediction",
     ):
-        wisps_entry_count, wisps_pair_counts = await _count_wisps_samplesheet_entries(
+        wisps_input_info = await _read_wisps_credit_inputs(
             s3_input_key, requested_workflow
         )
-    run_credit_cost = (
-        launch_credit_cost(
-            requested_workflow,
-            selected_tool,
-            final_design_count,
-            fasta_entry_count=wisps_entry_count,
-            fasta_pair_counts=wisps_pair_counts,
-        )
-        if is_credits_enabled(settings)
-        else None
-    )
+    try:
+        if is_credits_enabled(settings):
+            if wisps_input_info.query_count is None or wisps_input_info.target_count is None:
+                pair_counts = None
+            else:
+                pair_counts = (wisps_input_info.query_count, wisps_input_info.target_count)
+            run_credit_cost = launch_credit_cost(
+                    requested_workflow,
+                    selected_tool,
+                    final_design_count,
+                    fasta_entry_lengths=wisps_input_info.fasta_entry_lengths,
+                    fasta_pair_counts=pair_counts,
+            )
+        else:
+            run_credit_cost = None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     if run_credit_cost is not None:
         balance = db_session.scalar(select(AppUser.credit).where(AppUser.id == current_user_id))
         if balance is None or balance < run_credit_cost:
