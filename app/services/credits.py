@@ -205,7 +205,7 @@ def launch_credit_cost(
             return None
         return compute_cost(cat, tool, final_design_count)
     if cat == "bulk-prediction":
-        if not wisps_input_info.fasta_entry_lengths:
+        if wisps_input_info is None or not wisps_input_info.fasta_entry_lengths:
             return None
         quantity = sum(get_sequence_size_multiplier(length)
                        for length in wisps_input_info.fasta_entry_lengths)
