@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/AustralianBioCommons/sbp-backend/compare/v0.1.2...v0.2.0) (2026-11-05)
+
+
+### Features
+
+* calculate bulk prediction cost based on size of each entry ([3c544c2](https://github.com/AustralianBioCommons/sbp-backend/commit/3c544c2d8e404de2cc5fbd32033cd0f236e19e47))
+* update credit cost calculation for bulk prediction (SBP-703) ([6da9753](https://github.com/AustralianBioCommons/sbp-backend/commit/6da97539a34c72562fc4d311caf2a7b7cb97426f))
+* use biopython to parse FASTA and get lengths ([0b05fa0](https://github.com/AustralianBioCommons/sbp-backend/commit/0b05fa0a46538509afe3d854a947dba3176c625f))
+
+
+### Bug Fixes
+
+* bound PBS-snapshot cap fallback, count workflow-exec queues ([216e027](https://github.com/AustralianBioCommons/sbp-backend/commit/216e0276672b7a71cc8667d56ae631092ef409cf))
+* check for missing wisps_input_info ([880b997](https://github.com/AustralianBioCommons/sbp-backend/commit/880b9972e616454906090569f4dffedc8d15eca4))
+* make 4000 the limit, not 3999 ([1ede12f](https://github.com/AustralianBioCommons/sbp-backend/commit/1ede12fc4106e8207238ce03e238505db3c1e579))
+
 ## [0.1.2](https://github.com/AustralianBioCommons/sbp-backend/compare/v0.1.1...v0.1.2) (2026-11-03)
 
 
