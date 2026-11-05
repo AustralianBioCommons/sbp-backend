@@ -16,7 +16,7 @@ from ..db.models.core import AppUser, DataTransfer, Workflow
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
-from ..services import gadi_pbs_jobs, globus_transfer, health, workflow_repo_staging
+from ..services import gadi_pbs_jobs, globus_transfer, health, seqera, workflow_repo_staging
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
@@ -33,6 +33,10 @@ LAUNCH_JOB_OFFSET_SECONDS = 30
 LAUNCH_MISFIRE_GRACE_SECONDS = 30 * 60
 
 DATA_TRANSFER_SYNC_BATCH_LIMIT = int(os.getenv("DATA_TRANSFER_SYNC_BATCH_LIMIT", "100"))
+
+# The Gadi PBS snapshot refreshes every 5 minutes (see run_scheduler.py's
+# GADI_PBS_JOBS_SYNC_INTERVAL)
+STALE_PBS_SNAPSHOT_TIMEOUT = timedelta(minutes=30)
 
 
 def with_scheduler_db_session[SchedulerJob: Callable[..., object]](
@@ -238,18 +242,39 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
 def get_available_workflow_capacity(db_session: Session, settings: Settings | None = None) -> int:
     """
     How many more workflows can be submitted to Gadi right now, per sbp_service's
-    queued + running jobs in the workflow-exec queue (see MAX_CONCURRENT_WORKFLOWS).
+    queued + running jobs in the workflow/workflow-exec queues (see
+    MAX_CONCURRENT_WORKFLOWS). Both queues count, since Gadi's own job limit
+    isn't documented to only consider the exec queue.
 
-    The PBS snapshot lags behind reality (Gadi-side push + Globus sync), so jobs
-    this scheduler submitted after the snapshot was generated are counted too -
-    otherwise consecutive ticks would each fill the full cap from the same
-    stale count.
+    Also counts jobs submitted after the snapshot (it lags reality), so
+    consecutive ticks don't each fill the cap from the same stale count.
+
+    If the snapshot is stuck, falls back to Seqera's own live active-workflow
+    count instead of a rolling time window - a window would still fail open
+    the longer the snapshot stays stuck, since long-running jobs age out of it.
     """
     settings = settings or get_settings()
     max_jobs = settings.seqera.max_concurrent_workflows
     snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
-    pbs_count = gadi_pbs_jobs.count_active_jobs_in_queue(
-        snapshot, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE
+    snapshot_age = datetime.now(UTC) - snapshot.generated_at
+
+    if snapshot_age > STALE_PBS_SNAPSHOT_TIMEOUT:
+        logger.warning(
+            f"Gadi PBS snapshot is stale ({snapshot_age} old, generated at "
+            f"{snapshot.generated_at.isoformat()}) - falling back to Seqera's own "
+            "active-workflow count instead of the unusable PBS job count."
+        )
+        active_count = asyncio.run(seqera.count_active_workflows(settings=settings))
+        capacity = max(0, max_jobs - active_count)
+        logger.info(
+            f"{active_count}/{max_jobs} jobs active per Seqera (PBS snapshot unusable); "
+            f"{capacity} submission slot(s) available."
+        )
+        return capacity
+
+    pbs_count = sum(
+        gadi_pbs_jobs.count_active_jobs_in_queue(snapshot, queue)
+        for queue in (gadi_pbs_jobs.WORKFLOW_QUEUE, gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE)
     )
     submitted_since_snapshot = (
         db_session.scalar(
@@ -265,9 +290,10 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     active_count = pbs_count + submitted_since_snapshot
     capacity = max(0, max_jobs - active_count)
     logger.info(
-        f"{active_count}/{max_jobs} jobs active in Gadi {gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE} queue "
-        f"({pbs_count} in PBS snapshot from {snapshot.generated_at.isoformat()}, "
-        f"{submitted_since_snapshot} submitted since; {capacity} submission slot(s) available)."
+        f"{active_count}/{max_jobs} jobs active in Gadi workflow/"
+        f"{gadi_pbs_jobs.WORKFLOW_EXEC_QUEUE} queues ({pbs_count} in PBS snapshot from "
+        f"{snapshot.generated_at.isoformat()}, {submitted_since_snapshot} submitted since; "
+        f"{capacity} submission slot(s) available)."
     )
     return capacity
 
@@ -434,7 +460,9 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
     """Submit pending and poll in-progress Globus data transfers, notifying the
     workflow launcher (flips QueuedJob "staging" -> "pending"/"failed") once a
     run's input staging settles. Finalizing completed workflow runs once output
-    transfers settle is owned solely by sync_completed_workflow_runs."""
+    transfers settle is owned solely by sync_completed_workflow_runs. Also
+    submits/polls the Globus delete tasks that clean up a completed output
+    transfer's Gadi source once S3 has it (see sync_data_cleanups)."""
     db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for Globus data transfers to sync...")
     if dry_run:
@@ -446,7 +474,18 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
                 DataTransfer.status.in_(["pending", "in_progress"]),
             )
         )
-        logger.info(f"Dry run - found {pending_count} Globus data transfer(s) requiring sync.")
+        pending_cleanup_count = db_session.scalar(
+            select(func.count())
+            .select_from(DataTransfer)
+            .where(
+                DataTransfer.provider == "globus",
+                DataTransfer.cleanup_status.in_(["pending", "in_progress"]),
+            )
+        )
+        logger.info(
+            f"Dry run - found {pending_count} Globus data transfer(s) and "
+            f"{pending_cleanup_count} Globus cleanup(s) requiring sync."
+        )
         return
 
     result = globus_transfer.sync_data_transfers(db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT)
@@ -454,6 +493,16 @@ def sync_data_transfers(dry_run: bool = False, *, db_session: Session | None = N
         "Finished syncing Globus data transfers: "
         f"checked={result.checked}, submitted={result.submitted}, "
         f"completed={result.completed}, failed={result.failed}, errored={result.errored}."
+    )
+
+    cleanup_result = globus_transfer.sync_data_cleanups(
+        db_session, limit=DATA_TRANSFER_SYNC_BATCH_LIMIT
+    )
+    logger.info(
+        "Finished syncing Globus data cleanups: "
+        f"checked={cleanup_result.checked}, submitted={cleanup_result.submitted}, "
+        f"completed={cleanup_result.completed}, failed={cleanup_result.failed}, "
+        f"errored={cleanup_result.errored}."
     )
 
 

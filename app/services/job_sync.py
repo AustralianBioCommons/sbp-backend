@@ -351,6 +351,9 @@ class ForceResyncOutcome:
     # results weren't re-synced this pass.
     ready: bool
     outputs_synced: int
+    # True if this run's Gadi output has already been cleaned up (see
+    # globus_transfer.sync_data_cleanups) - nothing was attempted.
+    blocked: bool = False
 
 
 async def force_resync_run_outputs(
@@ -368,7 +371,15 @@ async def force_resync_run_outputs(
     every completed output transfer is reset to pending for the scheduler
     to redo. Unlike sync_workflow_run(force=True), never re-polls Seqera -
     callers must confirm seqera_final_status is SUCCEEDED first.
+
+    Refuses to run at all once any of this run's output transfers has
+    already had its Gadi source deleted - there's nothing left on Gadi to
+    submit a new transfer from, so a spec change can never be picked up for
+    this run again.
     """
+    if check_any_output_transfer_cleaned_up(db, run):
+        return ForceResyncOutcome(ready=False, outputs_synced=0, blocked=True)
+
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
     if not output_transfer_state.ready:
         return ForceResyncOutcome(ready=False, outputs_synced=0)
@@ -406,6 +417,24 @@ def check_all_output_transfers_completed(db: Session, run: WorkflowRun) -> bool:
     # "failed" here always means retries were exhausted (see globus_transfer.poll_transfer) -
     # don't let a permanently failed transfer block completion forever.
     return all(transfer.status in ("completed", "failed") for transfer in output_transfers)
+
+
+def check_any_output_transfer_cleaned_up(db: Session, run: WorkflowRun) -> bool:
+    """Whether any of this run's output transfers has already had its Gadi
+    source deleted (see globus_transfer.sync_data_cleanups)."""
+    return (
+        db.scalar(
+            select(DataTransfer.id)
+            .where(
+                DataTransfer.workflow_run_id == run.id,
+                DataTransfer.provider == "globus",
+                DataTransfer.direction == "output",
+                DataTransfer.cleanup_status == "completed",
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 async def _sync_completed_run_results(

@@ -34,6 +34,7 @@ dependencies = [
     "pillow~=13.0",
     "pyjwt>=2.15.1",
     "urllib3>=2.8.0,<3.0",
+    "biopython>=1.88",
 ]
 
 [tool.setuptools]

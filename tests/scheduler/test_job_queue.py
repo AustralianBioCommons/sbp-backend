@@ -226,17 +226,19 @@ def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec
             _pbs_job("1", queue="workflow-exec", state="R"),
             _pbs_job("2", queue="workflow-exec", state="R"),
             _pbs_job("3", queue="workflow-exec", state="Q"),
+            # Also counted: the "workflow" route queue.
+            _pbs_job("4", queue="workflow", state="Q"),
             # Not counted: other states / other queues.
-            _pbs_job("4", queue="workflow-exec", state="H"),
-            _pbs_job("5", queue="workflow-exec", state="F"),
-            _pbs_job("6", queue="normal", state="R"),
-            _pbs_job("7", queue="gpuhopper", state="Q"),
+            _pbs_job("5", queue="workflow-exec", state="H"),
+            _pbs_job("6", queue="workflow-exec", state="F"),
+            _pbs_job("7", queue="normal", state="R"),
+            _pbs_job("8", queue="gpuhopper", state="Q"),
         ],
         generated_at=datetime.now(UTC),
     )
     mock_settings.seqera.max_concurrent_workflows = 10
 
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 6
 
 
 def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
@@ -256,6 +258,28 @@ def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
 
     # 1 in the snapshot + 1 submitted since it was generated.
     assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
+
+
+def test_get_available_workflow_capacity_falls_back_to_seqera_for_stale_snapshot(
+    test_db, monkeypatch, mock_settings
+):
+    """A stuck snapshot must fall back to Seqera's live count, not a rolling
+    window that would fail open unboundedly the longer it stays stuck."""
+    generated_at = datetime.now(UTC) - scheduler_jobs.STALE_PBS_SNAPSHOT_TIMEOUT - timedelta(days=1)
+    _patch_pbs_snapshot(
+        monkeypatch,
+        # Would otherwise count for 5 - must be ignored once stale.
+        [_pbs_job(str(i), queue="workflow-exec", state="R") for i in range(5)],
+        generated_at,
+    )
+
+    async def _count_active_workflows(**_kwargs):
+        return 3
+
+    monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
+    mock_settings.seqera.max_concurrent_workflows = 10
+
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
 
 
 def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mock_settings):

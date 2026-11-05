@@ -74,7 +74,6 @@ async def prepare_proteinfold_workflow(
     """Build and queue a proteinfold launch payload."""
     workspace_id = settings.seqera.work_space
     compute_env_id = settings.seqera.compute_id
-    work_dir = settings.seqera.work_dir
 
     if not output_id or not output_id.strip():
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
@@ -100,7 +99,7 @@ async def prepare_proteinfold_workflow(
         "computeEnvId": compute_env_id,
         "runName": form.runName,
         "pipeline": pipeline,
-        "workDir": work_dir,
+        "workDir": workflow_run.work_dir,
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,

@@ -82,6 +82,7 @@ class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
     __set_relationships__ = False
     recursive = False
     attempts = 0
+    cleanup_attempts = 0
 
 
 class UserJobListRowFactory(DataclassFactory[UserJobListRow]):

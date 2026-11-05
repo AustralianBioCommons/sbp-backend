@@ -369,7 +369,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["computeEnvId"] == "ce1"
     assert queued_job.launch_payload["runName"] == "queued-run"
     assert queued_job.launch_payload["pipeline"] == "nf-core/wisps"
-    assert queued_job.launch_payload["workDir"] == "s3://work"
+    assert queued_job.launch_payload["workDir"] == workflow_run.work_dir
     assert queued_job.launch_payload["workspaceId"] == "ws1"
     assert queued_job.launch_payload["revision"] == "dev"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]

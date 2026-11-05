@@ -38,16 +38,15 @@ class ProteinDjFormData(WorkflowFormData):
     @field_validator("target_hotspot_residues")
     @classmethod
     def _validate_hotspot_residues(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
+        tokens = [token.strip() for token in value.split(",") if token.strip()]
+        if not tokens:
             raise ValueError("This field is required")
-        residue_count = len([token for token in stripped.split(",") if token.strip()])
-        if residue_count > MAX_HOTSPOT_RESIDUES:
+        if len(tokens) > MAX_HOTSPOT_RESIDUES:
             raise ValueError(
-                f"Too many hotspot residues ({residue_count}); only up to "
+                f"Too many hotspot residues ({len(tokens)}); only up to "
                 f"{MAX_HOTSPOT_RESIDUES} are supported"
             )
-        return stripped
+        return ",".join(tokens)
 
     @model_validator(mode="after")
     def _validate_length_range(self) -> ProteinDjFormData:

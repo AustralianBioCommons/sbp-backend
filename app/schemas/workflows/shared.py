@@ -415,3 +415,9 @@ MAX_SEQERA_UNKNOWN_ATTEMPTS = 5
 # persisted anywhere, so filtering on them requires a live Seqera lookup and can't
 # be expressed as a DB query.
 LIVE_ONLY_UI_STATUSES = frozenset({UIStatus.IN_QUEUE.value, UIStatus.IN_PROGRESS.value})
+
+
+class WispsInputInfo(BaseModel):
+    fasta_entry_lengths: list[int] | None = None
+    query_count: int | None = None
+    target_count: int | None = None

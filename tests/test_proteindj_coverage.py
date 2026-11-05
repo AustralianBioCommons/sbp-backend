@@ -147,6 +147,16 @@ def test_proteindj_form_data_allows_exactly_max_hotspot_residues():
     assert fields.target_hotspot_residues == "A1,A2,A3,A4,A5,A6,A7,A8"
 
 
+def test_proteindj_form_data_strips_whitespace_between_hotspot_tokens():
+    fields = ProteinDjFormData(**_proteindj_form_kwargs(target_hotspot_residues=" A20,  A21 ,A22"))
+    assert fields.target_hotspot_residues == "A20,A21,A22"
+
+
+def test_proteindj_form_data_rejects_whitespace_only_hotspot_residues():
+    with pytest.raises(ValueError, match="This field is required"):
+        ProteinDjFormData(**_proteindj_form_kwargs(target_hotspot_residues="   "))
+
+
 def test_proteindj_form_data_rejects_min_length_below_floor():
     with pytest.raises(ValueError, match="min_length"):
         ProteinDjFormData(**_proteindj_form_kwargs(min_length=64, max_length=150))
@@ -340,7 +350,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
     assert queued_job.launch_payload["runName"] == "queued-proteindj-run"
     assert queued_job.launch_payload["pipeline"] == "https://github.com/org/proteindj"
-    assert queued_job.launch_payload["workDir"] == "/work/dir"
+    assert queued_job.launch_payload["workDir"] == workflow_run.work_dir
     assert queued_job.launch_payload["workspaceId"] == "ws_123"
     assert queued_job.launch_payload["revision"] == "main"
     assert queued_job.launch_payload["configProfiles"] == ["singularity"]

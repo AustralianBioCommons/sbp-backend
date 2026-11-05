@@ -67,7 +67,6 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     """Build and queue a proteindj launch payload."""
     workspace_id = settings.seqera.work_space
     compute_env_id = settings.seqera.compute_id
-    work_dir = settings.seqera.work_dir
 
     run_name = (form.runName or "").strip()
     if not run_name:
@@ -128,7 +127,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "computeEnvId": compute_env_id,
         "runName": run_name,
         "pipeline": pipeline,
-        "workDir": work_dir,
+        "workDir": workflow_run.work_dir,
         "workspaceId": workspace_id,
         "revision": revision or "dev",
         "paramsText": params_text,
