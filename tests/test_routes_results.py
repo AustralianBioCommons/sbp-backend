@@ -40,6 +40,7 @@ from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
     ("workflow_name", "tool", "structure", "pae"),
     [
         ("bulk-prediction", "boltz", "cif/seq_model_0.cif", "pae/pae_seq_model_0.npz"),
+        ("interaction-screening", "boltz", "cif/seq_model_0.cif", "pae/seq_model_0.npz"),
         (
             "interaction-screening",
             "colabfold",

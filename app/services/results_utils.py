@@ -1488,17 +1488,22 @@ async def get_prediction_downloads_zipped(
     if pae_key is None:
         raise KeyError(key)
 
+    pae_keys = (
+        (pae_key, f"{prefix}/pae/{match[1]}.npz") if tool == "boltz" and match else (pae_key,)
+    )
     settings = settings or get_settings()
     outputs = await _collect_outputs_with_fallback(
         db,
         run,
         get_output_spec(run),
-        is_complete=lambda outputs: key in outputs and pae_key in outputs,
+        is_complete=lambda outputs: key in outputs
+        and any(candidate in outputs for candidate in pae_keys),
         settings=settings,
     )
     if key not in outputs or outputs[key].category != "pdb":
         raise KeyError(key)
-    if pae_key not in outputs or outputs[pae_key].category != "pae":
+    pae_key = next((candidate for candidate in pae_keys if candidate in outputs), None)
+    if pae_key is None or outputs[pae_key].category != "pae":
         raise FileNotFoundError("No matching PAE file found for this prediction")
 
     zip_file = BytesIO()
