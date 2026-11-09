@@ -27,7 +27,7 @@ class DataTransferMode(StrEnum):
 
 class ComputeBackend(Base):
     __tablename__ = 'compute_backend'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, defaul=uuid7)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid7)
     name: Mapped[ComputeBackendName] = mapped_column(
         SAEnum(
             ComputeBackendName,
