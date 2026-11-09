@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
 from uuid import uuid7
 
-from schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
 from sqlalchemy import UUID, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from ...schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
 from .. import Base
 from . import core
 
