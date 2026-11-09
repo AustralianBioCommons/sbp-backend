@@ -1,9 +1,10 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models.backends import BackendWorkflowSettings, ComputeBackend
-from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
-from tests.datagen import ComputeBackendFactory, WorkflowFactory, BackendWorkflowSettingsFactory
+from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
+from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode, RepositoryStatus
+from tests.datagen import ComputeBackendFactory, WorkflowFactory, BackendWorkflowSettingsFactory, \
+    WorkflowRepoStatusFactory
 
 
 def test_compute_backend_model(test_db):
@@ -63,4 +64,40 @@ def test_backend_workflow_settings_unique(test_db, persistent_models):
             compute_backend=backend, workflow=workflow
         )
         test_db.add(duplicate_settings)
+        test_db.flush()
+
+
+def test_workflow_repo_status_model(test_db, persistent_models):
+    """
+    Basic test of WorkflowRepoStatus construction
+    """
+    backend = ComputeBackendFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    repo_status = WorkflowRepoStatus(
+        compute_backend=backend,
+        workflow=workflow,
+        staged_commit_sha="abcd1234",
+        location="/data/project/dev/my-workflow",
+        status=RepositoryStatus.PENDING,
+        transfer_id="efgh5678",
+    )
+    test_db.add(repo_status)
+    test_db.commit()
+    test_db.refresh(repo_status)
+    assert repo_status.id
+    assert repo_status.compute_backend.name == backend.name
+
+
+def test_workflow_repo_status_unique(test_db, persistent_models):
+    backend = ComputeBackendFactory.create_sync()
+    workflow = WorkflowFactory.create_sync()
+    repo_status =  WorkflowRepoStatusFactory.create_sync(
+        compute_backend=backend, workflow=workflow
+    )
+    test_db.flush()
+    with pytest.raises(IntegrityError):
+        duplicate_status = WorkflowRepoStatusFactory.build(
+            compute_backend=backend, workflow=workflow
+        )
+        test_db.add(duplicate_status)
         test_db.flush()

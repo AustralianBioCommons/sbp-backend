@@ -180,6 +180,7 @@ def persistent_models(test_db):
         datagen.DataTransferFactory,
         datagen.ComputeBackendFactory,
         datagen.BackendWorkflowSettingsFactory,
+        datagen.WorkflowRepoStatusFactory,
     ]
 
     for factory in factories:
