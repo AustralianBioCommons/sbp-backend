@@ -1,6 +1,9 @@
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from app.db.models.backends import BackendWorkflowSettings, ComputeBackend
 from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
-from tests.datagen import ComputeBackendFactory, WorkflowFactory
+from tests.datagen import ComputeBackendFactory, WorkflowFactory, BackendWorkflowSettingsFactory
 
 
 def test_compute_backend_model(test_db):
@@ -41,3 +44,23 @@ def test_backend_workflow_settings_model(test_db, persistent_models):
     test_db.refresh(workflow_settings)
     assert workflow_settings.compute_backend.name == ComputeBackendName.GADI.value
     assert workflow_settings.enabled is True
+
+
+def test_backend_workflow_settings_unique(test_db, persistent_models):
+    """
+    Test BackendWorkflowSettings has a unique constraint on
+    (compute_backend, workflow)
+    """
+    backend = ComputeBackendFactory.build()
+    workflow = WorkflowFactory.build()
+    workflow_settings = BackendWorkflowSettingsFactory.build(
+        compute_backend=backend, workflow=workflow
+    )
+    test_db.add(workflow_settings)
+    test_db.commit()
+    with pytest.raises(IntegrityError):
+        duplicate_settings = BackendWorkflowSettingsFactory.build(
+            compute_backend=backend, workflow=workflow
+        )
+        test_db.add(duplicate_settings)
+        test_db.flush()
