@@ -27,6 +27,7 @@ from ...services.results_utils import (
     format_log_entries,
     get_all_downloads_zipped,
     get_category_downloads_zipped,
+    get_prediction_downloads_zipped,
     get_result_output_downloads,
     get_result_report_download,
     get_result_snapshot_downloads,
@@ -258,6 +259,45 @@ async def get_result_download_all(
         ) from exc
     except S3ServiceError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/{run_id}/download-prediction", response_class=StreamingResponse)
+async def get_result_download_prediction(
+    run_id: str,
+    key: str = Query(..., description="S3 object key of this prediction's structure"),
+    current_user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Download one prediction's structure and matching PAE together."""
+    owned_run = get_owned_run_by_id(db, current_user_id, run_id)
+    if not owned_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    raise_if_results_syncing_for_download(owned_run)
+
+    try:
+        zipped_prediction = await get_prediction_downloads_zipped(
+            db, owned_run, key, settings=settings
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Structure not found for this run"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    filename = f"{Path(key).stem}.zip"
+    return StreamingResponse(
+        zipped_prediction,
+        media_type="application/zip",
+        headers={"Content-Disposition": _format_attachment_content_disposition(filename)},
+    )
 
 
 @router.get("/{run_id}/download-category/{category}", response_class=StreamingResponse)
