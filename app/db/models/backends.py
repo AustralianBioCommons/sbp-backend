@@ -1,6 +1,7 @@
 from datetime import datetime, UTC
 from enum import StrEnum
 from typing import Literal
+from uuid import uuid7
 
 from sqlalchemy import UUID, Text, Boolean, String, Integer, DateTime, func
 from sqlalchemy import Enum as SAEnum
@@ -26,7 +27,7 @@ class DataTransferMode(StrEnum):
 
 class ComputeBackend(Base):
     __tablename__ = 'compute_backend'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, defaul=uuid7)
     name: Mapped[ComputeBackendName] = mapped_column(
         SAEnum(
             ComputeBackendName,
