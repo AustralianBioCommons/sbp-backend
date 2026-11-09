@@ -1,29 +1,13 @@
-from datetime import datetime, UTC
-from enum import StrEnum
-from typing import Literal
+from datetime import UTC, datetime
 from uuid import uuid7
 
-from sqlalchemy import UUID, Text, Boolean, String, Integer, DateTime, func, ForeignKey
+from schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
+from sqlalchemy import UUID, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from . import core
 from .. import Base
-
-
-class ComputeBackendName(StrEnum):
-    GADI = "gadi"
-    SETONIX = "setonix"
-
-
-class RepositoryTransferMode(StrEnum):
-    NATIVE = "native"
-    GLOBUS = "globus"
-
-
-class DataTransferMode(StrEnum):
-    NATIVE = "native"
-    GLOBUS = "globus"
+from . import core
 
 
 class ComputeBackend(Base):
