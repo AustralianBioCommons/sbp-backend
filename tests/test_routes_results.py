@@ -21,6 +21,7 @@ from app.db.models.core import (
 from app.routes.workflow.results import (
     get_result_download_all,
     get_result_download_category,
+    get_result_download_prediction,
     get_result_downloads,
     get_result_file,
     get_result_logs,
@@ -32,6 +33,81 @@ from app.services.results_utils import ResultOutputDownloads
 from app.services.s3 import S3ConfigurationError, S3ServiceError
 from app.services.seqera_errors import SeqeraAPIError
 from tests.datagen import AppUserFactory, WorkflowFactory, WorkflowRunFactory
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("workflow_name", "tool", "structure", "pae"),
+    [
+        ("bulk-prediction", "boltz", "cif/seq_model_0.cif", "pae/pae_seq_model_0.npz"),
+        (
+            "interaction-screening",
+            "colabfold",
+            "pdb/seq_unrelaxed_rank_001_alphafold2_multimer_v3_model_3_seed_000.pdb",
+            "confidence/seq_scores_rank_001_alphafold2_multimer_v3_model_3_seed_000.json",
+        ),
+    ],
+)
+async def test_download_prediction_pairs_exact_model(
+    test_db, persistent_models, mock_settings, workflow_name, tool, structure, pae
+):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user, workflow=WorkflowFactory.create_sync(name=workflow_name), tool=tool
+    )
+    prefix = f"{run.id}/{tool}_predictions"
+    key, pae_key = f"{prefix}/{structure}", f"{prefix}/{pae}"
+    contents = {
+        key: b"structure",
+        pae_key: b"pae",
+        pae_key.replace("seq_", "other_", 1): b"other prediction",
+        pae_key.replace("model_0", "model_2").replace("model_3", "model_4"): b"other model",
+    }
+    with (
+        patch(
+            "app.services.results_utils.list_s3_files",
+            new=AsyncMock(return_value=[{"key": k} for k in contents]),
+        ),
+        patch(
+            "app.services.results_utils.read_s3_bytes",
+            new=AsyncMock(side_effect=lambda k, **kw: contents[k]),
+        ),
+    ):
+        response = await get_result_download_prediction(
+            str(run.id), key, user.id, test_db, mock_settings
+        )
+        with pytest.raises(HTTPException, match="Structure not found for this run"):
+            await get_result_download_prediction(
+                str(run.id), key.replace("seq_", "missing_", 1), user.id, test_db, mock_settings
+            )
+
+    assert test_db.get(S3Object, pae_key) is not None
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    with ZipFile(BytesIO(body)) as archive:
+        assert len(archive.namelist()) == 2
+        assert archive.read(f'pdb/{structure.rsplit("/", 1)[-1]}') == b"structure"
+        assert [archive.read(name) for name in archive.namelist() if name.startswith("pae/")] == [
+            b"pae"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_download_prediction_requires_matching_pae(test_db, persistent_models, mock_settings):
+    user = AppUserFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        owner=user, workflow=WorkflowFactory.create_sync(name="bulk-prediction"), tool="boltz"
+    )
+    key = f"{run.id}/boltz_predictions/cif/seq_model_0.cif"
+    with (
+        patch(
+            "app.services.results_utils.list_s3_files", new=AsyncMock(return_value=[{"key": key}])
+        ),
+        patch("app.services.results_utils.read_s3_bytes", new=AsyncMock()) as read,
+    ):
+        with pytest.raises(HTTPException, match="No matching PAE file") as exc:
+            await get_result_download_prediction(str(run.id), key, user.id, test_db, mock_settings)
+    assert exc.value.status_code == 404
+    read.assert_not_awaited()
 
 
 def _configure_bindcraft_run(run: WorkflowRun) -> None:
@@ -1568,7 +1644,8 @@ async def test_get_result_file_returns_pae_matrix_as_text(
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_returns_404_while_results_sync(test_db, mock_settings):
+@pytest.mark.parametrize("download", [get_result_file, get_result_download_prediction])
+async def test_get_result_file_returns_404_while_results_sync(test_db, mock_settings, download):
     user = AppUser(
         auth0_user_id="auth0|file-syncing",
         name="File Syncing",
@@ -1589,7 +1666,7 @@ async def test_get_result_file_returns_404_while_results_sync(test_db, mock_sett
         new=AsyncMock(),
     ) as read_file:
         with pytest.raises(HTTPException) as exc_info:
-            await get_result_file(str(run.id), "run/output.cif", user.id, test_db, mock_settings)
+            await download(str(run.id), "run/output.cif", user.id, test_db, mock_settings)
 
     read_file.assert_not_awaited()
     assert exc_info.value.status_code == 404
@@ -1616,7 +1693,8 @@ async def test_get_result_file_rejects_a_key_the_run_does_not_own(
 
 
 @pytest.mark.asyncio
-async def test_get_result_file_requires_an_owned_run(test_db, mock_settings):
+@pytest.mark.parametrize("download", [get_result_file, get_result_download_prediction])
+async def test_get_result_file_requires_an_owned_run(test_db, mock_settings, download):
     user = AppUser(
         auth0_user_id="auth0|file-not-owner",
         name="File Not Owner",
@@ -1626,7 +1704,7 @@ async def test_get_result_file_requires_an_owned_run(test_db, mock_settings):
     test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_result_file(
+        await download(
             "00000000-0000-0000-0000-000000000000", "any/key", user.id, test_db, mock_settings
         )
 

@@ -1464,6 +1464,53 @@ async def get_category_downloads_zipped(
     return zip_file
 
 
+async def get_prediction_downloads_zipped(
+    db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
+) -> BytesIO:
+    """Zip one WISPS structure with its exact model's PAE artifact."""
+    if get_workflow_name(run) not in ("bulk-prediction", "interaction-screening"):
+        raise KeyError(key)
+
+    tool = get_tool_name(run)
+    prefix = f"{run.id}/{tool}_predictions"
+    if tool == "boltz":
+        match = re.fullmatch(rf"{re.escape(prefix)}/cif/(.+_model_\d+)\.cif", key)
+        pae_key = f"{prefix}/pae/pae_{match[1]}.npz" if match else None
+    elif tool == "colabfold":
+        match = re.fullmatch(rf"{re.escape(prefix)}/pdb/(.+)_unrelaxed_rank_(\d+)(.*)\.pdb", key)
+        pae_key = (
+            f"{prefix}/confidence/{match[1]}_scores_rank_{match[2]}{match[3]}.json"
+            if match
+            else None
+        )
+    else:
+        pae_key = None
+    if pae_key is None:
+        raise KeyError(key)
+
+    settings = settings or get_settings()
+    outputs = await _collect_outputs_with_fallback(
+        db,
+        run,
+        get_output_spec(run),
+        is_complete=lambda outputs: key in outputs and pae_key in outputs,
+        settings=settings,
+    )
+    if key not in outputs or outputs[key].category != "pdb":
+        raise KeyError(key)
+    if pae_key not in outputs or outputs[pae_key].category != "pae":
+        raise FileNotFoundError("No matching PAE file found for this prediction")
+
+    zip_file = BytesIO()
+    with ZipFile(zip_file, "w") as zip_obj:
+        for output_key in (key, pae_key):
+            output = outputs[output_key]
+            content = await read_s3_bytes(output_key, settings=settings)
+            zip_obj.writestr(get_safe_zip_filename(output.category, output.label), content)
+    zip_file.seek(0)
+    return zip_file
+
+
 async def read_result_output_file(
     db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
 ) -> tuple[bytes, str]:
