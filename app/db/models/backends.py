@@ -1,7 +1,18 @@
 from datetime import UTC, datetime
+from uuid import UUID as PyUUID
 from uuid import uuid7
 
-from sqlalchemy import UUID, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    UUID,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+    UniqueConstraint,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,7 +23,7 @@ from . import core
 
 class ComputeBackend(Base):
     __tablename__ = 'compute_backend'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     name: Mapped[ComputeBackendName] = mapped_column(
         SAEnum(
             ComputeBackendName,
@@ -66,6 +77,7 @@ class ComputeBackend(Base):
         DateTime(timezone=True),
         default=None,
         nullable=True,
+        onupdate=func.now(),
     )
 
 
@@ -76,9 +88,12 @@ class BackendWorkflowSettings(Base):
     setting specific config
     """
     __tablename__ = 'backend_workflow_settings'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
-    compute_backend_id: Mapped[UUID] = mapped_column(ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False)
-    workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("compute_backend_id", "workflow_id"),
+    )
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    compute_backend_id: Mapped[PyUUID] = mapped_column(ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False)
+    workflow_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_path: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
 

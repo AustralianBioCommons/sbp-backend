@@ -1,5 +1,6 @@
 """SQLAlchemy models package."""
 
+from .backends import BackendWorkflowSettings, ComputeBackend
 from .core import (  # noqa: F401
     AppUser,
     DataTransfer,
