@@ -3,10 +3,11 @@ from enum import StrEnum
 from typing import Literal
 from uuid import uuid7
 
-from sqlalchemy import UUID, Text, Boolean, String, Integer, DateTime, func
+from sqlalchemy import UUID, Text, Boolean, String, Integer, DateTime, func, ForeignKey
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from . import core
 from .. import Base
 
 
@@ -84,4 +85,18 @@ class ComputeBackend(Base):
     )
 
 
+class BackendWorkflowSettings(Base):
+    """
+    Backend-specific settings for workflows, e.g.
+    disabling a particular workflow for the backend,
+    setting specific config
+    """
+    __tablename__ = 'backend_workflow_settings'
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid7)
+    compute_backend_id: Mapped[UUID] = mapped_column(ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False)
+    workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config_path: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
 
+    compute_backend: Mapped[ComputeBackend] = relationship()
+    workflow: Mapped[core.Workflow] = relationship(core.Workflow)
