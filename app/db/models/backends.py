@@ -10,14 +10,18 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    func,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from schemas.backend import RepositoryStatus
-from ...schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
+from ...schemas.backend import (
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryStatus,
+    RepositoryTransferMode,
+)
 from .. import Base
 from . import core
 
@@ -97,6 +101,8 @@ class BackendWorkflowSettings(Base):
     workflow_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_path: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
+    # Base directory of the reference database
+    ref_database_dir: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
 
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
