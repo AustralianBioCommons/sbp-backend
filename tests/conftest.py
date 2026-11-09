@@ -178,6 +178,8 @@ def persistent_models(test_db):
         datagen.S3ObjectFactory,
         datagen.QueuedJobFactory,
         datagen.DataTransferFactory,
+        datagen.ComputeBackendFactory,
+        datagen.BackendWorkflowSettingsFactory,
     ]
 
     for factory in factories:

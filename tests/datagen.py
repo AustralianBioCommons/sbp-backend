@@ -15,6 +15,7 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
+from app.db.models.backends import ComputeBackend, BackendWorkflowSettings
 from app.services.job_utils import UserJobListRow
 
 fake = Faker()
@@ -118,3 +119,11 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
             final_design_count=kwargs.pop("final_design_count", None),
             queued_status=kwargs.pop("queued_status", None),
         )
+
+
+class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
+    __set_relationships__ = False
+
+
+class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings]):
+    __set_relationships__ = False
