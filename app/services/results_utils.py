@@ -100,6 +100,7 @@ class WorkflowResultsSpec:
     # to bundle as one zip instead of listing individually; still returned
     # in `downloads` itself for callers that read files directly.
     hidden_download_categories: frozenset[OutputCategory] = frozenset()
+    get_prediction_pae_keys: Callable[[WorkflowRun, str], tuple[str, ...]] | None = None
 
     def get_transfer_prefixes(self, run: WorkflowRun) -> list[str]:
         """Return run-scoped output prefixes that should be transferred from Gadi."""
@@ -848,6 +849,21 @@ def make_wisps_classifier(tool: WorkflowTool) -> OutputClassifier:
     return _classify
 
 
+def get_wisps_prediction_pae_keys(run: WorkflowRun, key: str) -> tuple[str, ...]:
+    """Return exact PAE candidates for a run-scoped WISPS structure."""
+    tool = get_tool_name(run)
+    prefix = f"{run.id}/{tool}_predictions"
+    if tool == "boltz":
+        match = re.fullmatch(rf"{re.escape(prefix)}/cif/(.+_model_\d+)\.cif", key)
+        if match:
+            return (f"{prefix}/pae/pae_{match[1]}.npz", f"{prefix}/pae/{match[1]}.npz")
+    if tool == "colabfold":
+        match = re.fullmatch(rf"{re.escape(prefix)}/pdb/(.+)_unrelaxed_rank_(\d+)(.*)\.pdb", key)
+        if match:
+            return (f"{prefix}/confidence/{match[1]}_scores_rank_{match[2]}{match[3]}.json",)
+    return ()
+
+
 def get_wisps_score_file(keys: list[str], sample_id: str | None) -> str | None:
     for key in keys:
         normalized = key.strip().lower()
@@ -1013,6 +1029,7 @@ def _make_wisps_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         extract_max_score=extract_wisps_max_score,
         classifier=make_wisps_classifier(tool),
         hidden_download_categories=frozenset({"pdb", "pae"}),
+        get_prediction_pae_keys=get_wisps_prediction_pae_keys,
     )
 
 
@@ -1026,6 +1043,7 @@ def _make_bulk_prediction_spec(tool: WorkflowTool) -> WorkflowResultsSpec:
         hidden_download_categories=frozenset({"pdb", "pae"}),
         extract_max_score=extract_bulk_prediction_max_score,
         classifier=make_wisps_classifier(tool),
+        get_prediction_pae_keys=get_wisps_prediction_pae_keys,
     )
 
 
@@ -1467,35 +1485,24 @@ async def get_category_downloads_zipped(
 async def get_prediction_downloads_zipped(
     db: Session, run: WorkflowRun, key: str, settings: Settings | None = None
 ) -> BytesIO:
-    """Zip one WISPS structure with its exact model's PAE artifact."""
-    if get_workflow_name(run) not in ("bulk-prediction", "interaction-screening"):
-        raise KeyError(key)
-
-    tool = get_tool_name(run)
-    prefix = f"{run.id}/{tool}_predictions"
-    if tool == "boltz":
-        match = re.fullmatch(rf"{re.escape(prefix)}/cif/(.+_model_\d+)\.cif", key)
-        pae_key = f"{prefix}/pae/pae_{match[1]}.npz" if match else None
-    elif tool == "colabfold":
-        match = re.fullmatch(rf"{re.escape(prefix)}/pdb/(.+)_unrelaxed_rank_(\d+)(.*)\.pdb", key)
-        pae_key = (
-            f"{prefix}/confidence/{match[1]}_scores_rank_{match[2]}{match[3]}.json"
-            if match
-            else None
-        )
-    else:
-        pae_key = None
-    if pae_key is None:
-        raise KeyError(key)
-
+    """Zip one structure with its exact model's PAE artifact."""
+    try:
+        results_spec = get_output_spec(run)
+    except ValueError as exc:
+        raise KeyError(key) from exc
     pae_keys = (
-        (pae_key, f"{prefix}/pae/{match[1]}.npz") if tool == "boltz" and match else (pae_key,)
+        results_spec.get_prediction_pae_keys(run, key)
+        if results_spec.get_prediction_pae_keys is not None
+        else ()
     )
+    if not pae_keys:
+        raise KeyError(key)
+
     settings = settings or get_settings()
     outputs = await _collect_outputs_with_fallback(
         db,
         run,
-        get_output_spec(run),
+        results_spec,
         is_complete=lambda outputs: key in outputs
         and any(candidate in outputs for candidate in pae_keys),
         settings=settings,
