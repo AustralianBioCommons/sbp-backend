@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from schemas.backend import RepositoryStatus
 from ...schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
 from .. import Base
 from . import core
@@ -99,3 +100,47 @@ class BackendWorkflowSettings(Base):
 
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
+
+
+class WorkflowRepoStatus(Base):
+    __tablename__ = 'workflow_repo_status'
+    __table_args__ = (
+        UniqueConstraint("compute_backend_id", "workflow_id"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    compute_backend_id: Mapped[PyUUID] = mapped_column(
+        ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[PyUUID] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
+    staged_commit_sha: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
+    # File path on the backend
+    location: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[RepositoryStatus] = mapped_column(
+        SAEnum(
+            RepositoryStatus,
+            name="repository_status",
+            values_callable=lambda members: [member.value for member in members],
+            validate_strings=True
+        )
+    )
+    transfer_id: Mapped[str | None] = mapped_column(String(length=48), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(tz=UTC),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True,
+        onupdate=func.now(),
+    )
+
+
+    compute_backend: Mapped[ComputeBackend] = relationship()
+    workflow: Mapped[core.Workflow] = relationship(core.Workflow)
+
