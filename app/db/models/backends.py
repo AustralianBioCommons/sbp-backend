@@ -12,7 +12,7 @@ from . import core
 
 class ComputeBackend(Base):
     __tablename__ = 'compute_backend'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid7)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     name: Mapped[ComputeBackendName] = mapped_column(
         SAEnum(
             ComputeBackendName,
@@ -76,7 +76,7 @@ class BackendWorkflowSettings(Base):
     setting specific config
     """
     __tablename__ = 'backend_workflow_settings'
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid7)
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     compute_backend_id: Mapped[UUID] = mapped_column(ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False)
     workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
