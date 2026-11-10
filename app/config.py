@@ -1,5 +1,6 @@
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any, Self, ClassVar
+from typing_extensions import sentinel
 
 from pydantic import AfterValidator, BeforeValidator, Field, HttpUrl, TypeAdapter, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -191,6 +192,41 @@ class Settings(BaseSettings):
     github: GithubSettings = Field(default_factory=GithubSettings)
 
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="only_existing")
+
+
+class ComputeBackendSettings(BaseSettings):
+    """
+    Settings for an individual compute backend.
+
+    NOTE: should always be accessed via load() method - which sets
+    the prefixes correctly for environment variables
+    """
+    _LOAD_CHECK: ClassVar[object] = sentinel("_LOAD_CHECK")
+    
+    enable_agent_healthcheck: bool = False
+    healthcheck_timeout_seconds: int = 20
+    globus: GlobusSettings | None = None
+
+    def __init__(self, *, _load_check=None, **data: Any):
+        if _load_check is not type(self)._LOAD_CHECK:
+            raise TypeError("ComputeBackendSettings should be created via load() method")
+        super().__init__(**data)
+
+    @classmethod
+    def load(cls, env_prefix: str, *, globus_enabled: bool = False, env_file: str | None = ".env") -> Self:
+        """
+        Load settings based on env_prefix. This load() method should
+        be used whenever we're loading these settings, to ensure env_prefix is set
+        """
+        if globus_enabled:
+            prefix = env_prefix + "GLOBUS_"
+            globus_settings = GlobusSettings(_env_prefix=prefix, _env_file=env_file)
+        else:
+            globus_settings = None
+        return cls(
+            _load_check=cls._LOAD_CHECK,
+            globus=globus_settings
+        )
 
 
 @lru_cache
