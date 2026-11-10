@@ -1,9 +1,17 @@
 from functools import lru_cache
-from typing import Annotated, Any, Self, ClassVar
-from typing_extensions import sentinel
+from typing import Annotated, Any, ClassVar, Self
 
-from pydantic import AfterValidator, BeforeValidator, Field, HttpUrl, TypeAdapter, field_validator
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    BeforeValidator,
+    Field,
+    HttpUrl,
+    TypeAdapter,
+    field_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from typing_extensions import sentinel
 
 
 def validate_url(s: str) -> str:
@@ -115,18 +123,22 @@ class AuthSettings(NestedSettings):
 class GlobusSettings(NestedSettings):
     client_id: str
     client_secret: str
-    gadi_collection_id: str
+    backend_collection_id: str = Field(
+        validation_alias=AliasChoices("backend_collection_id", "gadi_collection_id")
+    )
     s3_collection_id: str
-    gadi_collection_root: PathStr
+    collection_root: PathStr = Field(
+        validation_alias=AliasChoices("collection_root", "gadi_collection_root")
+    )
     input_dir: PathStr
     output_dir: PathStr
 
     @field_validator(
         "client_id",
         "client_secret",
-        "gadi_collection_id",
+        "backend_collection_id",
         "s3_collection_id",
-        "gadi_collection_root",
+        "collection_root",
         "input_dir",
         "output_dir",
     )
@@ -137,7 +149,9 @@ class GlobusSettings(NestedSettings):
             raise ValueError("value must not be empty")
         return normalized
 
-    model_config = SettingsConfigDict(env_prefix="GLOBUS_")
+    model_config = SettingsConfigDict(
+        env_prefix="GLOBUS_", env_prefix_target="all", dotenv_filtering="only_existing"
+    )
 
 
 class GithubSettings(NestedSettings):
@@ -201,8 +215,9 @@ class ComputeBackendSettings(BaseSettings):
     NOTE: should always be accessed via load() method - which sets
     the prefixes correctly for environment variables
     """
+
     _LOAD_CHECK: ClassVar[object] = sentinel("_LOAD_CHECK")
-    
+
     enable_agent_healthcheck: bool = False
     healthcheck_timeout_seconds: int = 20
     globus: GlobusSettings | None = None
@@ -213,7 +228,9 @@ class ComputeBackendSettings(BaseSettings):
         super().__init__(**data)
 
     @classmethod
-    def load(cls, env_prefix: str, *, globus_enabled: bool = False, env_file: str | None = ".env") -> Self:
+    def load(
+        cls, env_prefix: str, *, globus_enabled: bool = False, env_file: str | None = ".env"
+    ) -> Self:
         """
         Load settings based on env_prefix. This load() method should
         be used whenever we're loading these settings, to ensure env_prefix is set
@@ -223,10 +240,7 @@ class ComputeBackendSettings(BaseSettings):
             globus_settings = GlobusSettings(_env_prefix=prefix, _env_file=env_file)
         else:
             globus_settings = None
-        return cls(
-            _load_check=cls._LOAD_CHECK,
-            globus=globus_settings
-        )
+        return cls(_load_check=cls._LOAD_CHECK, globus=globus_settings)
 
 
 @lru_cache
