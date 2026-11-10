@@ -63,6 +63,7 @@ class WorkflowFactory(SQLAlchemyFactory[Workflow]):
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
     __set_relationships__ = False
+    backend_id = None
 
 
 class RunInputFactory(SQLAlchemyFactory[RunInput]):
