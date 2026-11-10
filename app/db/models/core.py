@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -69,6 +70,18 @@ class Workflow(Base):
         # At most one row per (name, tool) for workflows with tool-specific
         # configs (e.g. de-novo-design: bindcraft vs rfdiffusion).
         UniqueConstraint("name", "tool"),
+        CheckConstraint(
+            "(config_path IS NULL OR config_path LIKE 'https://%' OR config_path LIKE '/%')"
+            " AND (prerun_script_path IS NULL"
+            " OR prerun_script_path LIKE 'https://%'"
+            " OR prerun_script_path LIKE '/%')",
+            name="ck_workflows_config_path_format",
+        ),
+        CheckConstraint(
+            "(config_path IS NULL OR config_path NOT LIKE '%token=%')"
+            " AND (prerun_script_path IS NULL OR prerun_script_path NOT LIKE '%token=%')",
+            name="ck_workflows_config_path_no_token",
+        ),
         # At most one generic (tool-independent) row per name. sqlite_where is
         # needed alongside postgresql_where so the tests' SQLite schema (built
         # via Base.metadata.create_all) enforces the same partial uniqueness

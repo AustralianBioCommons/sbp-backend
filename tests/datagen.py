@@ -5,6 +5,7 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
 from app.db.models.core import (
     AppUser,
     DataTransfer,
@@ -15,7 +16,6 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
-from app.db.models.backends import ComputeBackend, BackendWorkflowSettings, WorkflowRepoStatus
 from app.services.job_utils import UserJobListRow
 
 fake = Faker()
@@ -57,6 +57,8 @@ class AppUserFactory(SQLAlchemyFactory[AppUser]):
 
 class WorkflowFactory(SQLAlchemyFactory[Workflow]):
     __set_relationships__ = False
+    config_path = "/test/workflow.config"
+    prerun_script_path = None
 
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
