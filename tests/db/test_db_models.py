@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, SessionLocal, _get_database_url, engine
 from app.db.models import (
@@ -19,6 +20,7 @@ from app.db.models import (
     Workflow,
     WorkflowRun,
 )
+from tests.datagen import WorkflowFactory
 
 
 def test_get_database_url_with_env(monkeypatch, mocker, test_get_settings):
@@ -101,6 +103,48 @@ def test_workflow_model():
     assert "default_revision" in column_names
 
     assert hasattr(Workflow, "runs")
+
+
+@pytest.mark.parametrize("field_name", ["config_path", "prerun_script_path"])
+@pytest.mark.parametrize(
+    "path,constraint",
+    [
+        ("relative/config", "ck_workflows_ck_workflows_config_path_format"),
+        ("http://example.com/config", "ck_workflows_ck_workflows_config_path_format"),
+        (
+            "https://example.com/config?token=secret",
+            "ck_workflows_ck_workflows_config_path_no_token",
+        ),
+        ("/config?token=secret", "ck_workflows_ck_workflows_config_path_no_token"),
+    ],
+)
+def test_workflow_rejects_invalid_config_paths(
+    test_db, persistent_models, field_name, path, constraint
+):
+    workflow = WorkflowFactory.build(**{field_name: path})
+    test_db.add(workflow)
+
+    with pytest.raises(IntegrityError, match=constraint):
+        test_db.flush()
+    test_db.rollback()
+
+
+@pytest.mark.parametrize(
+    "config_path,prerun_script_path",
+    [
+        ("/configs/workflow.config", None),
+        ("https://example.com/workflow.config", "/scripts/prerun.sh"),
+        ("/configs/workflow.config", "https://example.com/prerun.sh"),
+    ],
+)
+def test_workflow_accepts_valid_config_paths(
+    test_db, persistent_models, config_path, prerun_script_path
+):
+    workflow = WorkflowFactory.create_sync(
+        config_path=config_path, prerun_script_path=prerun_script_path
+    )
+
+    assert test_db.get(Workflow, workflow.id) is workflow
 
 
 def test_workflow_run_model():
