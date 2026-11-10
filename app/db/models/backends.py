@@ -47,6 +47,7 @@ class ComputeBackend(Base):
     env_prefix: Mapped[str] = mapped_column(String(length=32), nullable=False)
     # Base work directory (file path) on the backend
     base_work_dir: Mapped[str] = mapped_column(String(length=256), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
     # Mode for transferring workflows - Globus or native
     repository_transfer: Mapped[RepositoryTransferMode] = mapped_column(
         SAEnum(
