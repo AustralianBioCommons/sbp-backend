@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Self
 from uuid import UUID as PyUUID
 from uuid import uuid7
 
@@ -12,9 +13,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
 )
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ...schemas.backend import (
     ComputeBackendName,
@@ -85,6 +87,10 @@ class ComputeBackend(Base):
         nullable=True,
         onupdate=func.now(),
     )
+
+    @classmethod
+    def get_by_name(cls, session: Session, name: ComputeBackendName) -> Self | None:
+        return session.scalar(select(cls).where(cls.name == name))
 
 
 class BackendWorkflowSettings(Base):
