@@ -62,6 +62,7 @@ from app.db.models.core import AppUser, Workflow
 from app.main import app as fastapi_app
 from app.main import create_app
 from app.routes.dependencies import get_current_user_id, get_db, require_workflow_execution_role
+from app.schemas.backend import ComputeBackendName
 from app.schemas.workflows.shared import (
     LaunchDetails,
     LaunchLogs,
@@ -129,6 +130,19 @@ class LaunchDetailsFactory(ModelFactory[LaunchDetails]):
 # ============================================================================
 # Database Test Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def default_backend(persistent_models):
+    from tests.datagen import ComputeBackendFactory
+
+    return ComputeBackendFactory.create_sync(
+        id=uuid4(),
+        name=ComputeBackendName.GADI,
+        enabled=True,
+        env_prefix="GADI_",
+        service_usage_enabled=True,
+    )
 
 
 @pytest.fixture
