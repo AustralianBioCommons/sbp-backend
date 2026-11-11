@@ -68,3 +68,11 @@ def downgrade() -> None:
     op.drop_table('backend_workflow_settings')
     op.drop_table('compute_backend')
     # ### end Alembic commands ###
+
+    for enum_name in (
+        "repository_status",
+        "data_transfer_mode",
+        "repo_transfer_mode",
+        "compute_backend_name",
+    ):
+        sa.Enum(name=enum_name).drop(op.get_bind(), checkfirst=False)
