@@ -109,6 +109,44 @@ def test_compute_backend_settings_load_succeeds(
     assert settings.healthcheck_timeout_seconds == 20
 
 
+@pytest.mark.parametrize("source", ["environment", "dotenv", "default_dotenv"])
+def test_compute_backend_settings_loads_prefixed_health_settings(
+    source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    values = {
+        "ENABLE_AGENT_HEALTHCHECK": "false",
+        "HEALTHCHECK_TIMEOUT_SECONDS": "1",
+        "GADI_ENABLE_AGENT_HEALTHCHECK": "true",
+        "GADI_HEALTHCHECK_TIMEOUT_SECONDS": "91",
+        "SETONIX_ENABLE_AGENT_HEALTHCHECK": "false",
+        "SETONIX_HEALTHCHECK_TIMEOUT_SECONDS": "37",
+        "UNRELATED_SETTING": "ignored",
+    }
+    for name in values:
+        monkeypatch.delenv(name, raising=False)
+
+    if source == "environment":
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        env_file = None
+    else:
+        dotenv_path = tmp_path / (".env" if source == "default_dotenv" else ".env.backend")
+        dotenv_path.write_text(
+            "\n".join(f"{name}={value}" for name, value in values.items()), encoding="utf-8"
+        )
+        env_file = str(dotenv_path)
+
+    kwargs = {} if source == "default_dotenv" else {"env_file": env_file}
+    gadi = ComputeBackendSettings.load("GADI_", **kwargs)
+    setonix = ComputeBackendSettings.load("SETONIX_", **kwargs)
+
+    assert gadi.enable_agent_healthcheck is True
+    assert gadi.healthcheck_timeout_seconds == 91
+    assert setonix.enable_agent_healthcheck is False
+    assert setonix.healthcheck_timeout_seconds == 37
+
+
 @pytest.mark.parametrize("backend_prefix", ["", "GADI_", "SETONIX_"])
 @pytest.mark.parametrize("source", ["environment", "dotenv"])
 @pytest.mark.parametrize("legacy_names", [False, True])

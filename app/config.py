@@ -210,7 +210,8 @@ class Settings(BaseSettings):
 
 class ComputeBackendSettings(BaseSettings):
     """
-    Settings for an individual compute backend.
+    Settings for an individual compute backend. Different compute
+    backends will have their own prefix for environment variables.
 
     NOTE: should always be accessed via load() method - which sets
     the prefixes correctly for environment variables
@@ -221,6 +222,8 @@ class ComputeBackendSettings(BaseSettings):
     enable_agent_healthcheck: bool = False
     healthcheck_timeout_seconds: int = 20
     globus: GlobusSettings | None = None
+
+    model_config = SettingsConfigDict(dotenv_filtering="only_existing")
 
     def __init__(self, *, _load_check=None, **data: Any):
         if _load_check is not type(self)._LOAD_CHECK:
@@ -240,7 +243,12 @@ class ComputeBackendSettings(BaseSettings):
             globus_settings = GlobusSettings(_env_prefix=prefix, _env_file=env_file)
         else:
             globus_settings = None
-        return cls(_load_check=cls._LOAD_CHECK, globus=globus_settings)
+        return cls(
+            _load_check=cls._LOAD_CHECK,
+            _env_prefix=env_prefix,
+            _env_file=env_file,
+            globus=globus_settings,
+        )
 
 
 @lru_cache
