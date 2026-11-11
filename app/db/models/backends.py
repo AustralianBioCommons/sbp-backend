@@ -30,14 +30,14 @@ from . import core
 
 
 class ComputeBackend(Base):
-    __tablename__ = 'compute_backend'
+    __tablename__ = "compute_backend"
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     name: Mapped[ComputeBackendName] = mapped_column(
         SAEnum(
             ComputeBackendName,
             name="compute_backend_name",
             values_callable=lambda members: [member.value for member in members],
-            validate_strings=True
+            validate_strings=True,
         ),
         unique=True,
         nullable=False,
@@ -57,7 +57,7 @@ class ComputeBackend(Base):
             RepositoryTransferMode,
             name="repo_transfer_mode",
             values_callable=lambda members: [member.value for member in members],
-            validate_strings=True
+            validate_strings=True,
         ),
         default=RepositoryTransferMode.NATIVE,
         nullable=False,
@@ -68,7 +68,7 @@ class ComputeBackend(Base):
             DataTransferMode,
             name="data_transfer_mode",
             values_callable=lambda members: [member.value for member in members],
-            validate_strings=True
+            validate_strings=True,
         )
     )
     # Limit on concurrent workflows - None if no limit
@@ -95,8 +95,8 @@ class ComputeBackend(Base):
 
     def get_settings(self, env_file: str | None = ".env") -> ComputeBackendSettings:
         use_globus = (
-            self.repository_transfer == RepositoryTransferMode.GLOBUS or
-            self.data_transfer == DataTransferMode.GLOBUS
+            self.repository_transfer == RepositoryTransferMode.GLOBUS
+            or self.data_transfer == DataTransferMode.GLOBUS
         )
         return ComputeBackendSettings.load(
             env_prefix=self.env_prefix,
@@ -105,20 +105,22 @@ class ComputeBackend(Base):
         )
 
 
-
 class BackendWorkflowSettings(Base):
     """
     Backend-specific settings for workflows, e.g.
     disabling a particular workflow for the backend,
     setting specific config
     """
-    __tablename__ = 'backend_workflow_settings'
-    __table_args__ = (
-        UniqueConstraint("compute_backend_id", "workflow_id"),
-    )
+
+    __tablename__ = "backend_workflow_settings"
+    __table_args__ = (UniqueConstraint("compute_backend_id", "workflow_id"),)
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
-    compute_backend_id: Mapped[PyUUID] = mapped_column(ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False)
-    workflow_id: Mapped[PyUUID] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    compute_backend_id: Mapped[PyUUID] = mapped_column(
+        ForeignKey("compute_backend.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[PyUUID] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_path: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
     # Base directory of the reference database
@@ -129,10 +131,8 @@ class BackendWorkflowSettings(Base):
 
 
 class WorkflowRepoStatus(Base):
-    __tablename__ = 'workflow_repo_status'
-    __table_args__ = (
-        UniqueConstraint("compute_backend_id", "workflow_id"),
-    )
+    __tablename__ = "workflow_repo_status"
+    __table_args__ = (UniqueConstraint("compute_backend_id", "workflow_id"),)
 
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     compute_backend_id: Mapped[PyUUID] = mapped_column(
@@ -149,7 +149,7 @@ class WorkflowRepoStatus(Base):
             RepositoryStatus,
             name="repository_status",
             values_callable=lambda members: [member.value for member in members],
-            validate_strings=True
+            validate_strings=True,
         )
     )
     transfer_id: Mapped[str | None] = mapped_column(String(length=48), nullable=True)
@@ -166,7 +166,5 @@ class WorkflowRepoStatus(Base):
         onupdate=func.now(),
     )
 
-
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
-

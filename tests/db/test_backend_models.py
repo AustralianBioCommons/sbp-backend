@@ -47,7 +47,7 @@ def test_backend_workflow_settings_model(test_db, persistent_models):
         compute_backend=backend,
         workflow=workflow,
         enabled=True,
-        config_path="configs/bindflow_gadi.conf"
+        config_path="configs/bindflow_gadi.conf",
     )
     test_db.add(workflow_settings)
     test_db.commit()
@@ -101,9 +101,7 @@ def test_workflow_repo_status_unique(test_db, persistent_models):
     backend = ComputeBackendFactory.create_sync()
     workflow = WorkflowFactory.create_sync()
     # Existing entry
-    WorkflowRepoStatusFactory.create_sync(
-        compute_backend=backend, workflow=workflow
-    )
+    WorkflowRepoStatusFactory.create_sync(compute_backend=backend, workflow=workflow)
     test_db.flush()
     with pytest.raises(IntegrityError):
         duplicate_status = WorkflowRepoStatusFactory.build(
