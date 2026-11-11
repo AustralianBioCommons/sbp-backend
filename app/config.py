@@ -11,7 +11,7 @@ from pydantic import (
     field_validator,
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-from typing_extensions import sentinel
+from typing_extensions import Sentinel
 
 
 def validate_url(s: str) -> str:
@@ -217,7 +217,7 @@ class ComputeBackendSettings(BaseSettings):
     the prefixes correctly for environment variables
     """
 
-    _LOAD_CHECK: ClassVar[object] = sentinel("_LOAD_CHECK")
+    _LOAD_CHECK: ClassVar[object] = Sentinel("_LOAD_CHECK")
 
     enable_agent_healthcheck: bool = False
     healthcheck_timeout_seconds: int = 20
