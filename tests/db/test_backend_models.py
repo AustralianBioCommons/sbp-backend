@@ -2,9 +2,18 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
-from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode, RepositoryStatus
-from tests.datagen import ComputeBackendFactory, WorkflowFactory, BackendWorkflowSettingsFactory, \
-    WorkflowRepoStatusFactory
+from app.schemas.backend import (
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryStatus,
+    RepositoryTransferMode,
+)
+from tests.datagen import (
+    BackendWorkflowSettingsFactory,
+    ComputeBackendFactory,
+    WorkflowFactory,
+    WorkflowRepoStatusFactory,
+)
 
 
 def test_compute_backend_model(test_db):
@@ -91,7 +100,8 @@ def test_workflow_repo_status_model(test_db, persistent_models):
 def test_workflow_repo_status_unique(test_db, persistent_models):
     backend = ComputeBackendFactory.create_sync()
     workflow = WorkflowFactory.create_sync()
-    repo_status =  WorkflowRepoStatusFactory.create_sync(
+    # Existing entry
+    WorkflowRepoStatusFactory.create_sync(
         compute_backend=backend, workflow=workflow
     )
     test_db.flush()
