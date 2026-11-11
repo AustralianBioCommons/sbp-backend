@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
+from ...config import ComputeBackendSettings
 from ...schemas.backend import (
     ComputeBackendName,
     DataTransferMode,
@@ -91,6 +92,18 @@ class ComputeBackend(Base):
     @classmethod
     def get_by_name(cls, session: Session, name: ComputeBackendName) -> Self | None:
         return session.scalar(select(cls).where(cls.name == name))
+
+    def get_settings(self, env_file: str | None = ".env") -> ComputeBackendSettings:
+        use_globus = (
+            self.repository_transfer == RepositoryTransferMode.GLOBUS or
+            self.data_transfer == DataTransferMode.GLOBUS
+        )
+        return ComputeBackendSettings.load(
+            env_prefix=self.env_prefix,
+            globus_enabled=use_globus,
+            env_file=env_file,
+        )
+
 
 
 class BackendWorkflowSettings(Base):
