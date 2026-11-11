@@ -91,7 +91,7 @@ def _gadi_relative_path(
     the expected real path).
     """
     globus_settings = globus_settings or get_settings().globus
-    collection_root = globus_settings.gadi_collection_root
+    collection_root = globus_settings.collection_root
     if not destination_location.startswith(collection_root + "/"):
         raise GlobusTransferError(
             f"Destination path {destination_location} is not under the Gadi "
@@ -133,7 +133,7 @@ def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
     destination_path = _s3_relative_path(destination_uri)
 
     transfer_data = globus_sdk.TransferData(
-        source_endpoint=globus_settings.gadi_collection_id,
+        source_endpoint=globus_settings.backend_collection_id,
         destination_endpoint=globus_settings.s3_collection_id,
         label="sbp-gadi-pbs-jobs",
     )
@@ -169,12 +169,12 @@ def submit_pending_transfer(
         case "input":
             source_collection = globus_settings.s3_collection_id
             source_path = _s3_relative_path(data_transfer.source_location)
-            destination_collection = globus_settings.gadi_collection_id
+            destination_collection = globus_settings.backend_collection_id
             destination_path = _gadi_relative_path(
                 data_transfer.destination_location, globus_settings=globus_settings
             )
         case "output":
-            source_collection = globus_settings.gadi_collection_id
+            source_collection = globus_settings.backend_collection_id
             source_path = _gadi_relative_path(
                 data_transfer.source_location, globus_settings=globus_settings
             )
@@ -393,7 +393,7 @@ def submit_pending_cleanup(
 
     try:
         delete_data = globus_sdk.DeleteData(
-            endpoint=globus_settings.gadi_collection_id,
+            endpoint=globus_settings.backend_collection_id,
             submission_id=submission_id,
             label=f"sbp-cleanup-{data_transfer.workflow_run_id}",
             recursive=data_transfer.recursive,

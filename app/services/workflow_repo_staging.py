@@ -120,7 +120,7 @@ def build_repo_gadi_path(
     checkout with only one of their refs.
     """
     return (
-        f"{globus_settings.gadi_collection_root}/workflow_repos/"
+        f"{globus_settings.collection_root}/workflow_repos/"
         f"{repo}/{revision}/{commit_sha}/{owner}/{repo}"
     )
 
@@ -307,7 +307,7 @@ def stage_pending_repo(
 
         transfer_data = globus_sdk.TransferData(
             settings.globus.s3_collection_id,
-            settings.globus.gadi_collection_id,
+            settings.globus.backend_collection_id,
             submission_id=submission_id,
             label=f"sbp-repo-{owner}-{repo}-{commit_sha[:12]}",
         )

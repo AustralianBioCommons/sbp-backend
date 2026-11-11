@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from app.config import GlobusSettings, SeqeraSettings
+from app.config import ComputeBackendSettings, GlobusSettings, SeqeraSettings
+
+
+@pytest.fixture
+def globus_values() -> dict[str, str]:
+    return {
+        "client_id": "backend-client-id",
+        "client_secret": "backend-client-secret",
+        "backend_collection_id": "backend-compute-collection",
+        "s3_collection_id": "backend-s3-collection",
+        "collection_root": "/backend",
+        "input_dir": "/backend/input",
+        "output_dir": "/backend/output",
+    }
 
 
 def test_seqera_work_dir_strips_trailing_slashes() -> None:
@@ -45,3 +60,130 @@ def test_globus_settings_rejects_blank_value() -> None:
             output_dir="/test/output",
             _env_file=None,
         )
+
+
+@pytest.mark.parametrize("legacy_names", [False, True])
+def test_globus_settings_accepts_collection_field_names(
+    legacy_names: bool, globus_values: dict[str, str]
+) -> None:
+    values = globus_values.copy()
+    if legacy_names:
+        values["gadi_collection_id"] = values.pop("backend_collection_id")
+        values["gadi_collection_root"] = values.pop("collection_root")
+
+    settings = GlobusSettings(**values, _env_file=None)
+
+    assert settings.backend_collection_id == globus_values["backend_collection_id"]
+    assert settings.collection_root == globus_values["collection_root"]
+    assert settings.model_dump() == globus_values
+
+
+def test_globus_settings_prefers_new_environment_names(
+    monkeypatch: pytest.MonkeyPatch, globus_values: dict[str, str]
+) -> None:
+    for name, value in globus_values.items():
+        monkeypatch.setenv(f"GLOBUS_{name.upper()}", value)
+    monkeypatch.setenv("GLOBUS_GADI_COLLECTION_ID", "legacy-collection")
+    monkeypatch.setenv("GLOBUS_GADI_COLLECTION_ROOT", "/legacy")
+
+    settings = GlobusSettings(_env_file=None)
+
+    assert settings.model_dump() == globus_values
+
+
+def test_compute_backend_settings_direct_construction_raises() -> None:
+    with pytest.raises(TypeError, match=r"created via load\(\)"):
+        ComputeBackendSettings()
+
+
+def test_compute_backend_settings_load_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    settings = ComputeBackendSettings.load("GADI_", env_file=None)
+
+    assert isinstance(settings, ComputeBackendSettings)
+    assert settings.globus is None
+    assert settings.enable_agent_healthcheck is False
+    assert settings.healthcheck_timeout_seconds == 20
+
+
+@pytest.mark.parametrize("source", ["environment", "dotenv", "default_dotenv"])
+def test_compute_backend_settings_loads_prefixed_health_settings(
+    source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    values = {
+        "ENABLE_AGENT_HEALTHCHECK": "false",
+        "HEALTHCHECK_TIMEOUT_SECONDS": "1",
+        "GADI_ENABLE_AGENT_HEALTHCHECK": "true",
+        "GADI_HEALTHCHECK_TIMEOUT_SECONDS": "91",
+        "SETONIX_ENABLE_AGENT_HEALTHCHECK": "false",
+        "SETONIX_HEALTHCHECK_TIMEOUT_SECONDS": "37",
+        "UNRELATED_SETTING": "ignored",
+    }
+    for name in values:
+        monkeypatch.delenv(name, raising=False)
+
+    if source == "environment":
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        env_file = None
+    else:
+        dotenv_path = tmp_path / (".env" if source == "default_dotenv" else ".env.backend")
+        dotenv_path.write_text(
+            "\n".join(f"{name}={value}" for name, value in values.items()), encoding="utf-8"
+        )
+        env_file = str(dotenv_path)
+
+    kwargs = {} if source == "default_dotenv" else {"env_file": env_file}
+    gadi = ComputeBackendSettings.load("GADI_", **kwargs)
+    setonix = ComputeBackendSettings.load("SETONIX_", **kwargs)
+
+    assert gadi.enable_agent_healthcheck is True
+    assert gadi.healthcheck_timeout_seconds == 91
+    assert setonix.enable_agent_healthcheck is False
+    assert setonix.healthcheck_timeout_seconds == 37
+
+
+@pytest.mark.parametrize("backend_prefix", ["", "GADI_", "SETONIX_"])
+@pytest.mark.parametrize("source", ["environment", "dotenv"])
+@pytest.mark.parametrize("legacy_names", [False, True])
+def test_compute_backend_settings_loads_prefixed_globus_settings(
+    backend_prefix: str,
+    source: str,
+    legacy_names: bool,
+    globus_values: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    legacy_fields = {
+        "backend_collection_id": "gadi_collection_id",
+        "collection_root": "gadi_collection_root",
+    }
+    prefixed_values = {}
+    for name, value in globus_values.items():
+        legacy_name = legacy_fields.get(name, name)
+        monkeypatch.delenv(f"{backend_prefix}GLOBUS_{name.upper()}", raising=False)
+        monkeypatch.delenv(f"{backend_prefix}GLOBUS_{legacy_name.upper()}", raising=False)
+        env_name = legacy_name if legacy_names else name
+        prefixed_values[f"{backend_prefix}GLOBUS_{env_name.upper()}"] = value
+
+    env_file = None
+    if source == "environment":
+        for name, value in prefixed_values.items():
+            monkeypatch.setenv(name, value)
+    else:
+        dotenv_path = tmp_path / ".env.backend"
+        dotenv_path.write_text(
+            "\n".join(f"{name}={value}" for name, value in prefixed_values.items()),
+            encoding="utf-8",
+        )
+        env_file = str(dotenv_path)
+
+    settings = ComputeBackendSettings.load(backend_prefix, globus_enabled=True, env_file=env_file)
+
+    assert isinstance(settings.globus, GlobusSettings)
+    assert settings.globus.model_dump() == globus_values

@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -29,6 +30,7 @@ from ...schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, PipelineStatus
 from .. import Base
 
 if TYPE_CHECKING:
+    from .backends import ComputeBackend
     from .job_queue import QueuedJob
 
 _InetType = Text().with_variant(INET(), "postgresql")
@@ -69,6 +71,18 @@ class Workflow(Base):
         # At most one row per (name, tool) for workflows with tool-specific
         # configs (e.g. de-novo-design: bindcraft vs rfdiffusion).
         UniqueConstraint("name", "tool"),
+        CheckConstraint(
+            "(config_path IS NULL OR config_path LIKE 'https://%' OR config_path LIKE '/%')"
+            " AND (prerun_script_path IS NULL"
+            " OR prerun_script_path LIKE 'https://%'"
+            " OR prerun_script_path LIKE '/%')",
+            name="ck_workflows_config_path_format",
+        ),
+        CheckConstraint(
+            "(config_path IS NULL OR config_path NOT LIKE '%token=%')"
+            " AND (prerun_script_path IS NULL OR prerun_script_path NOT LIKE '%token=%')",
+            name="ck_workflows_config_path_no_token",
+        ),
         # At most one generic (tool-independent) row per name. sqlite_where is
         # needed alongside postgresql_where so the tests' SQLite schema (built
         # via Base.metadata.create_all) enforces the same partial uniqueness
@@ -117,6 +131,9 @@ class WorkflowRun(Base):
     __table_args__ = (UniqueConstraint("seqera_run_id"),)
 
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    backend_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("compute_backend.id"), nullable=True
+    )
     workflow_id: Mapped[PyUUID | None] = mapped_column(ForeignKey("workflows.id"))
     owner_user_id: Mapped[PyUUID] = mapped_column(ForeignKey("app_users.id"), nullable=False)
     seqera_run_id: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
@@ -143,6 +160,7 @@ class WorkflowRun(Base):
 
     owner: Mapped[AppUser] = relationship(back_populates="workflow_runs")
     workflow: Mapped[Workflow | None] = relationship(back_populates="runs")
+    backend: Mapped[ComputeBackend | None] = relationship()
     metrics: Mapped[RunMetric | None] = relationship(back_populates="run", uselist=False)
     inputs: Mapped[list[RunInput]] = relationship(back_populates="run")
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")

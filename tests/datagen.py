@@ -5,6 +5,7 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
 from app.db.models.core import (
     AppUser,
     DataTransfer,
@@ -56,10 +57,13 @@ class AppUserFactory(SQLAlchemyFactory[AppUser]):
 
 class WorkflowFactory(SQLAlchemyFactory[Workflow]):
     __set_relationships__ = False
+    config_path = "/test/workflow.config"
+    prerun_script_path = None
 
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
     __set_relationships__ = False
+    backend_id = None
 
 
 class RunInputFactory(SQLAlchemyFactory[RunInput]):
@@ -118,3 +122,15 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
             final_design_count=kwargs.pop("final_design_count", None),
             queued_status=kwargs.pop("queued_status", None),
         )
+
+
+class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
+    __set_relationships__ = False
+
+
+class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings]):
+    __set_relationships__ = False
+
+
+class WorkflowRepoStatusFactory(SQLAlchemyFactory[WorkflowRepoStatus]):
+    __set_relationships__ = False

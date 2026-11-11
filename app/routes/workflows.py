@@ -17,7 +17,7 @@ from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
-from ..db.models import QueuedJob
+from ..db.models import ComputeBackend, QueuedJob
 from ..db.models.core import (
     AppUser,
     DataTransfer,
@@ -27,6 +27,7 @@ from ..db.models.core import (
     Workflow,
     WorkflowRun,
 )
+from ..schemas.backend import ComputeBackendName
 from ..schemas.workflows.interaction_screening import (
     BulkPredictionDatasetUploadRequest,
     InteractionScreeningDatasetUploadRequest,
@@ -596,6 +597,13 @@ async def launch_workflow(
                 detail="Insufficient credits to launch this workflow.",
             )
 
+    backend = ComputeBackend.get_by_name(db_session, ComputeBackendName.GADI)
+    if backend is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Gadi compute backend is not configured.",
+        )
+
     run_id = uuid4()
     workflow_name = workflow.name.lower()
     submission_timestamp = datetime.now(UTC)
@@ -606,6 +614,7 @@ async def launch_workflow(
     # bulk-prediction/interaction-screening, which have no final_design_count.
     workflow_run = WorkflowRun(
         id=run_id,
+        backend=backend,
         workflow=workflow,
         owner_user_id=current_user_id,
         seqera_run_id=None,

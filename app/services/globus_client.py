@@ -26,5 +26,5 @@ def get_transfer_client(globus_settings: GlobusSettings | None = None) -> globus
     # this S3 collection doesn't have (or doesn't need) a data_access scope of its
     # own. If GLOBUS_S3_COLLECTION_ID is ever repointed at a collection that does need one,
     # add it back here (and confirm the client has been granted access on it first).
-    transfer_client.add_app_data_access_scope(globus_settings.gadi_collection_id)
+    transfer_client.add_app_data_access_scope(globus_settings.backend_collection_id)
     return transfer_client

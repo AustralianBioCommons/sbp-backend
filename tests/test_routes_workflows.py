@@ -12,9 +12,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import QueuedJob
+from app.db.models import ComputeBackend, QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
+from app.schemas.backend import ComputeBackendName
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
 
@@ -69,7 +70,7 @@ async def _queue_job_for_route_prepare(form, **kwargs):
 
 
 @pytest.fixture
-def role_check_client(test_engine):
+def role_check_client(test_engine, default_backend):
     """Test client with auth bypassed but require_workflow_execution_role active."""
     from app.main import create_app
 
@@ -82,6 +83,7 @@ def role_check_client(test_engine):
         bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
     )
     setup_session = SessionLocal()
+    setup_session.merge(default_backend)
     if not setup_session.get(AppUser, user_id):
         setup_session.add(
             AppUser(
@@ -119,7 +121,9 @@ def role_check_client(test_engine):
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_engine):
+def test_launch_success_without_dataset(
+    mock_prepare, client: TestClient, test_engine, default_backend
+):
     """Test successful workflow launch without dataset."""
     payload = {
         "launch": {
@@ -155,6 +159,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
         created_run = db.execute(
             select(
                 WorkflowRun.id,
+                WorkflowRun.backend_id,
                 WorkflowRun.seqera_run_id,
                 WorkflowRun.run_name,
                 WorkflowRun.binder_name,
@@ -164,6 +169,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
             ).where(WorkflowRun.id == UUID(data["runId"]))
         ).first()
         assert created_run is not None
+        assert created_run.backend_id == ComputeBackend.get_by_name(db, ComputeBackendName.GADI).id
         assert created_run.seqera_run_id is None
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
@@ -194,7 +200,7 @@ def test_launch_success_without_dataset(mock_prepare, client: TestClient, test_e
 
 @patch("app.routes.workflows.prepare_proteindj_workflow")
 def test_launch_queue_preparation_configuration_error(
-    mock_prepare, client: TestClient, test_engine
+    mock_prepare, client: TestClient, test_engine, default_backend
 ):
     """Local queue payload configuration errors should return 500."""
     mock_prepare.side_effect = WorkflowLaunchError("Missing output identifier for workflow launch")
@@ -221,7 +227,9 @@ def test_launch_queue_preparation_configuration_error(
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow")
-def test_launch_queue_preparation_error(mock_prepare, client: TestClient, test_engine):
+def test_launch_queue_preparation_error(
+    mock_prepare, client: TestClient, test_engine, default_backend
+):
     """Unexpected queue preparation errors are returned as local queue failures."""
     mock_prepare.side_effect = RuntimeError("could not build queue payload")
 
@@ -292,7 +300,7 @@ def _add_rfdiffusion_workflow(test_engine):
     side_effect=_queue_job_for_route_prepare,
 )
 def test_launch_de_novo_design_rfdiffusion_routes_to_proteindj(
-    mock_prepare_proteindj, client: TestClient, test_engine
+    mock_prepare_proteindj, client: TestClient, test_engine, default_backend
 ):
     """tool='rfdiffusion' on de-novo-design must dispatch to the proteindj executor."""
     _add_rfdiffusion_workflow(test_engine)
@@ -634,7 +642,7 @@ def _add_proteinfold_workflow(test_engine):
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
 )
 def test_launch_proteinfold_success(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine, default_backend
 ):
     """Test successful proteinfold workflow launch."""
     _add_proteinfold_workflow(test_engine)
@@ -679,7 +687,7 @@ def test_launch_proteinfold_success(
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_configuration_error(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine, default_backend
 ):
     """Local queue payload configuration errors should return 500."""
     _add_proteinfold_workflow(test_engine)
@@ -718,7 +726,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_error(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine, default_backend
 ):
     """Unexpected queue preparation errors should return 500."""
     _add_proteinfold_workflow(test_engine)
@@ -777,7 +785,9 @@ def _protein_entity(sequence="ACDEFGHIK", copy_number=1):
     }
 
 
-def test_launch_single_prediction_rejects_missing_entities(client: TestClient, test_engine):
+def test_launch_single_prediction_rejects_missing_entities(
+    client: TestClient, test_engine, default_backend
+):
     _add_proteinfold_workflow(test_engine)
     payload = {
         "launch": {"workflow": "single-prediction", "tool": "colabfold", "runName": "sp-no-ent"},
@@ -789,7 +799,9 @@ def test_launch_single_prediction_rejects_missing_entities(client: TestClient, t
     assert "entities" in response.json()["detail"]
 
 
-def test_launch_single_prediction_rejects_too_many_entities(client: TestClient, test_engine):
+def test_launch_single_prediction_rejects_too_many_entities(
+    client: TestClient, test_engine, default_backend
+):
     _add_proteinfold_workflow(test_engine)
     payload = _single_prediction_payload([_protein_entity(copy_number=53)])
     response = client.post("/api/workflows/launch", json=payload)
@@ -797,7 +809,9 @@ def test_launch_single_prediction_rejects_too_many_entities(client: TestClient, 
     assert "Too many entities" in response.json()["detail"]
 
 
-def test_launch_single_prediction_requires_protein(client: TestClient, test_engine):
+def test_launch_single_prediction_requires_protein(
+    client: TestClient, test_engine, default_backend
+):
     _add_proteinfold_workflow(test_engine)
     entities = [
         {"id": "seq1", "moleculeType": "dna", "copyNumber": 1, "sequence": "ACGT"},
@@ -808,7 +822,9 @@ def test_launch_single_prediction_requires_protein(client: TestClient, test_engi
     assert "must be a protein" in response.json()["detail"]
 
 
-def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClient, test_engine):
+def test_launch_single_prediction_rejects_oversized_alphafold2(
+    client: TestClient, test_engine, default_backend
+):
     _add_proteinfold_workflow(test_engine)
     payload = _single_prediction_payload([_protein_entity(sequence="A" * 1000)], tool="alphafold2")
     response = client.post("/api/workflows/launch", json=payload)
@@ -822,7 +838,7 @@ def test_launch_single_prediction_rejects_oversized_alphafold2(client: TestClien
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
 )
 def test_launch_single_prediction_boltz_potentials_reduces_limit(
-    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine
+    mock_prepare, mock_read_csv, mock_upload_csv, client: TestClient, test_engine, default_backend
 ):
     _add_proteinfold_workflow(test_engine)
     _mock_samplesheet_staging(
@@ -853,6 +869,20 @@ _LAUNCH_PAYLOAD = {
     "s3InputKey": "inputs/samplesheets/test.csv",
     "formData": {"workflow": "de-novo-design", "tool": "bindcraft"},
 }
+
+
+def test_launch_requires_configured_gadi_backend(client, test_engine, default_backend):
+    with Session(test_engine) as session:
+        backend = ComputeBackend.get_by_name(session, ComputeBackendName.GADI)
+        session.delete(backend)
+        session.commit()
+
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Gadi compute backend is not configured."
+    with Session(test_engine) as session:
+        assert session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
@@ -911,7 +941,7 @@ def test_create_app_fails_when_workflow_env_vars_unset(monkeypatch, mocker, test
 
 
 @pytest.fixture
-def wisps_client(test_engine):
+def wisps_client(test_engine, default_backend):
     """Test client with both BindCraft and interaction-screening workflows in the DB."""
     from sqlalchemy.orm import sessionmaker
 
@@ -924,6 +954,7 @@ def wisps_client(test_engine):
         bind=test_engine, autocommit=False, autoflush=False, expire_on_commit=False
     )
     setup_session = SessionLocal()
+    setup_session.merge(default_backend)
 
     if not setup_session.get(AppUser, user_id):
         setup_session.add(
@@ -1318,6 +1349,7 @@ def test_launch_deducts_credits_when_enabled(
     test_engine,
     monkeypatch,
     mock_settings,
+    default_backend,
 ):
     """With credits enabled, a successful de-novo launch deducts multiplier × designs."""
     mock_settings.enable_credits = True
@@ -1382,7 +1414,7 @@ def test_launch_rejected_when_insufficient_credits(
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_does_not_deduct_when_credits_disabled(
-    mock_prepare, client, test_engine, monkeypatch
+    mock_prepare, client, test_engine, monkeypatch, default_backend
 ):
     """With credits disabled (default), launches never touch the balance."""
     monkeypatch.delenv("ENABLE_CREDITS", raising=False)
