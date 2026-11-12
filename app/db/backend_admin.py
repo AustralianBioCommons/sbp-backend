@@ -12,6 +12,7 @@ from .models.core import Workflow
 #   not great, reject str. Ignore for now
 # mypy: ignore-errors
 
+
 class ComputeBackendAdmin(ModelView):
     fields = [
         "name",
