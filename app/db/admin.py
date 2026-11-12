@@ -1284,7 +1284,13 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
     admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(DataTransferAdmin(DataTransfer))
     admin.add_view(S3ObjectAdmin(S3Object))
-    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(job_queue.QueuedJob)]))
+    admin.add_view(
+        DropDown(
+            "Job queue",
+            icon="fa fa-hourglass-start",
+            views=[QueuedJobAdmin(job_queue.QueuedJob)]
+        )
+    )
     admin.add_view(
         CustomView(
             label="System Status",
