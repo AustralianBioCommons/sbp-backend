@@ -1275,28 +1275,36 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
             timezone_cookie_name=None,
         ),
     )
-    admin.add_view(AppUserAdmin(AppUser))
-    admin.add_view(WorkflowAdmin(Workflow))
-    admin.add_view(WorkflowRunAdmin(WorkflowRun))
-    admin.add_view(WorkflowRunExportView())
-    admin.add_view(RunMetricAdmin(RunMetric))
-    admin.add_view(RunInputAdmin(RunInput))
-    admin.add_view(RunOutputAdmin(RunOutput))
-    admin.add_view(DataTransferAdmin(DataTransfer))
-    admin.add_view(S3ObjectAdmin(S3Object))
-    admin.add_view(
-        DropDown(
-            "Job queue",
-            icon="fa fa-hourglass-start",
-            views=[QueuedJobAdmin(job_queue.QueuedJob)]
-        )
-    )
     admin.add_view(
         CustomView(
             label="System Status",
             path="/system-status",
             template_path="admin/system_status.html",
             name="system-status",
+        )
+    )
+    admin.add_view(AppUserAdmin(AppUser))
+    admin.add_view(WorkflowAdmin(Workflow))
+    admin.add_view(WorkflowRunAdmin(WorkflowRun))
+    admin.add_view(WorkflowRunExportView())
+    admin.add_view(DataTransferAdmin(DataTransfer))
+    admin.add_view(S3ObjectAdmin(S3Object))
+    admin.add_view(
+        DropDown(
+            "Run Input/Output",
+            icon="fa fa-file-arrow-down",
+            views=[
+                RunMetricAdmin(RunMetric),
+                RunInputAdmin(RunInput),
+                RunOutputAdmin(RunOutput)
+            ],
+        )
+    )
+    admin.add_view(
+        DropDown(
+            "Job queue",
+            icon="fa fa-hourglass-start",
+            views=[QueuedJobAdmin(job_queue.QueuedJob)]
         )
     )
     admin.add_view(
