@@ -1278,6 +1278,7 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
     admin.add_view(
         CustomView(
             label="System Status",
+            icon="fa fa-heart-circle-check",
             path="/system-status",
             template_path="admin/system_status.html",
             name="system-status",
