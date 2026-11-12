@@ -8,6 +8,9 @@ from starlette_admin.contrib.sqla import ModelView
 from .models.backends import ComputeBackend
 from .models.core import Workflow
 
+# ModelView type annotations for fields etc. are
+#   not great, reject str. Ignore for now
+# mypy: ignore-errors
 
 class ComputeBackendAdmin(ModelView):
     fields = [
