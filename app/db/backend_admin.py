@@ -73,14 +73,9 @@ class WorkflowRepoStatusAdmin(ModelView):
         "transfer_id",
         "created_at",
         "updated_at",
-        "id"
+        "id",
     ]
-    sortable_fields = [
-        "compute_backend",
-        "workflow",
-        "created_at",
-        "updated_at"
-    ]
+    sortable_fields = ["compute_backend", "workflow", "created_at", "updated_at"]
     fields_default_sort = [("created_at", True)]
     sortable_field_mapping = {
         "compute_backend": ComputeBackend.name,

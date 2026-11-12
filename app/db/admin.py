@@ -48,7 +48,7 @@ from .backend_admin import (
     ComputeBackendAdmin,
     WorkflowRepoStatusAdmin,
 )
-from .models import BackendWorkflowSettings, ComputeBackend, job_queue, WorkflowRepoStatus
+from .models import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus, job_queue
 from .models.core import (
     AppUser,
     DataTransfer,
@@ -1294,18 +1294,12 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
         DropDown(
             "Run Input/Output",
             icon="fa fa-file-arrow-down",
-            views=[
-                RunMetricAdmin(RunMetric),
-                RunInputAdmin(RunInput),
-                RunOutputAdmin(RunOutput)
-            ],
+            views=[RunMetricAdmin(RunMetric), RunInputAdmin(RunInput), RunOutputAdmin(RunOutput)],
         )
     )
     admin.add_view(
         DropDown(
-            "Job queue",
-            icon="fa fa-hourglass-start",
-            views=[QueuedJobAdmin(job_queue.QueuedJob)]
+            "Job queue", icon="fa fa-hourglass-start", views=[QueuedJobAdmin(job_queue.QueuedJob)]
         )
     )
     admin.add_view(
@@ -1322,14 +1316,14 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
                     BackendWorkflowSettings,
                     identity="backend-workflow-settings",
                     label="Backend Workflow Settings",
-                    icon="fa fa-gears"
+                    icon="fa fa-gears",
                 ),
                 WorkflowRepoStatusAdmin(
                     WorkflowRepoStatus,
                     identity="workflow-repo-status",
                     icon="fa fa-up-down",
                     label="Workflow Repo Status",
-                )
+                ),
             ],
         )
     )
