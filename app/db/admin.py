@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 from datetime import UTC, datetime
+from html import escape
 from time import time
 from typing import Any
 from urllib.parse import urlencode
@@ -42,7 +43,12 @@ from ..schemas.workflows.shared import PipelineStatus
 from ..services.globus_transfer import reset_failed_cleanups, reset_failed_output_transfers
 from ..services.job_sync import force_resync_run_outputs
 from . import engine
-from .models import job_queue
+from .backend_admin import (
+    BackendWorkflowSettingsAdmin,
+    ComputeBackendAdmin,
+    WorkflowRepoStatusAdmin,
+)
+from .models import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus, job_queue
 from .models.core import (
     AppUser,
     DataTransfer,
@@ -166,6 +172,7 @@ class WorkflowAdmin(ModelView):
         "repo_staging_error_message",
     ]
     exclude_fields_from_list = ["repo_staging_transfer_id", "repo_staging_error_message"]
+    searchable_fields = ["name", "tool", "description"]
 
     _NULLABLE_FIELDS = (
         "description",
@@ -194,6 +201,10 @@ class WorkflowAdmin(ModelView):
 
     async def repr(self, obj: Any, request: Request) -> str:
         return f"{obj.name}"
+
+    async def select2_result(self, obj: Any, request: Request) -> str:
+        label = f"{obj.name}: {obj.tool}" if obj.tool else obj.name
+        return f"<span>{escape(label)}</span>"
 
 
 class NciServiceUnitsField(FloatField):
@@ -1264,22 +1275,56 @@ def _mount_starlette_admin(app: FastAPI, settings: Settings) -> None:
             timezone_cookie_name=None,
         ),
     )
+    admin.add_view(
+        CustomView(
+            label="System Status",
+            icon="fa fa-heart-circle-check",
+            path="/system-status",
+            template_path="admin/system_status.html",
+            name="system-status",
+        )
+    )
     admin.add_view(AppUserAdmin(AppUser))
     admin.add_view(WorkflowAdmin(Workflow))
     admin.add_view(WorkflowRunAdmin(WorkflowRun))
     admin.add_view(WorkflowRunExportView())
-    admin.add_view(RunMetricAdmin(RunMetric))
-    admin.add_view(RunInputAdmin(RunInput))
-    admin.add_view(RunOutputAdmin(RunOutput))
     admin.add_view(DataTransferAdmin(DataTransfer))
     admin.add_view(S3ObjectAdmin(S3Object))
-    admin.add_view(DropDown("Job queue", [QueuedJobAdmin(job_queue.QueuedJob)]))
     admin.add_view(
-        CustomView(
-            label="System Status",
-            path="/system-status",
-            template_path="admin/system_status.html",
-            name="system-status",
+        DropDown(
+            "Run Input/Output",
+            icon="fa fa-file-arrow-down",
+            views=[RunMetricAdmin(RunMetric), RunInputAdmin(RunInput), RunOutputAdmin(RunOutput)],
+        )
+    )
+    admin.add_view(
+        DropDown(
+            "Job queue", icon="fa fa-hourglass-start", views=[QueuedJobAdmin(job_queue.QueuedJob)]
+        )
+    )
+    admin.add_view(
+        DropDown(
+            "Manage backends",
+            icon="fa fa-server",
+            views=[
+                ComputeBackendAdmin(
+                    ComputeBackend,
+                    identity="compute-backend",
+                    icon="fa fa-microchip",
+                ),
+                BackendWorkflowSettingsAdmin(
+                    BackendWorkflowSettings,
+                    identity="backend-workflow-settings",
+                    label="Backend Workflow Settings",
+                    icon="fa fa-gears",
+                ),
+                WorkflowRepoStatusAdmin(
+                    WorkflowRepoStatus,
+                    identity="workflow-repo-status",
+                    icon="fa fa-up-down",
+                    label="Workflow Repo Status",
+                ),
+            ],
         )
     )
     admin.mount_to(app)
