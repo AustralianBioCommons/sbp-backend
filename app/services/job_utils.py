@@ -35,7 +35,10 @@ def coerce_workflow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 def extract_pipeline_status(payload: Mapping[str, Any]) -> str:
     workflow = coerce_workflow_payload(payload)
-    return str(workflow.get("status") or "UNKNOWN")
+    status = str(workflow.get("status") or "UNKNOWN")
+    if status == PipelineStatus.UNKNOWN.value:
+        logger.warning("Seqera workflow status is UNKNOWN; response payload: %s", payload)
+    return status
 
 
 def parse_submit_datetime(payload: Mapping[str, Any]) -> datetime | None:
