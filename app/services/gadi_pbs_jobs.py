@@ -29,7 +29,7 @@ import binascii
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,9 @@ from ..config import Settings, get_settings
 from .s3 import read_s3_file
 
 logger = logging.getLogger(__name__)
+
+# Match the dashboard's PBS_JOBS_STALE_MS threshold.
+_PBS_SNAPSHOT_WARNING_AGE = timedelta(minutes=15)
 
 # PBS's single-letter job_state codes (qstat -f), for a readable label.
 _JOB_STATE_LABELS: dict[str, str] = {
@@ -277,6 +280,15 @@ def _parse_snapshot(raw_json: str) -> GadiPbsJobsSnapshot:
     queues_raw = qstat_queues.get("Queue") if isinstance(qstat_queues, dict) else None
     mine_counts = _count_mine_by_queue_and_state(jobs)
     queue_totals = _parse_queue_totals(queues_raw, mine_counts)
+
+    snapshot_age = datetime.now(UTC) - generated_at
+    if snapshot_age > _PBS_SNAPSHOT_WARNING_AGE:
+        logger.warning(
+            "Gadi PBS jobs snapshot is stale: generatedAt=%s, age=%.1f minutes "
+            "(threshold=15 minutes); check the Gadi script and Globus sync.",
+            generated_at.isoformat(),
+            snapshot_age.total_seconds() / 60,
+        )
 
     return GadiPbsJobsSnapshot(generated_at=generated_at, jobs=jobs, queue_totals=queue_totals)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
@@ -92,6 +93,38 @@ def test_coerce_and_extract_helpers():
     payload = {"workflow": {"status": "RUNNING"}}
     assert job_utils.coerce_workflow_payload(payload) == payload["workflow"]
     assert job_utils.extract_pipeline_status(payload) == "RUNNING"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"workflow": {"id": "wf-unknown", "status": "UNKNOWN"}},
+        {"status": "UNKNOWN", "id": "wf-unknown"},
+        {"workflow": {"id": "wf-missing"}},
+        {"workflow": {"status": ""}},
+        {"workflow": {"status": None}},
+        {},
+    ],
+)
+def test_extract_pipeline_status_warns_with_unknown_response(payload, caplog):
+    with caplog.at_level(logging.WARNING, logger=job_utils.__name__):
+        assert job_utils.extract_pipeline_status(payload) == "UNKNOWN"
+
+    assert caplog.record_tuples == [
+        (
+            job_utils.__name__,
+            logging.WARNING,
+            f"Seqera workflow status is UNKNOWN; response payload: {payload}",
+        )
+    ]
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"])
+def test_extract_pipeline_status_known_status_does_not_warn(status, caplog):
+    with caplog.at_level(logging.WARNING, logger=job_utils.__name__):
+        assert job_utils.extract_pipeline_status({"workflow": {"status": status}}) == status
+
+    assert caplog.records == []
 
 
 def test_parse_submit_datetime_invalid_returns_none():
