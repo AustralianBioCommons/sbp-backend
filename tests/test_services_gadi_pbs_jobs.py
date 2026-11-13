@@ -412,7 +412,9 @@ async def test_get_pbs_jobs_warns_only_when_snapshot_older_than_15_minutes(
     payload = json.dumps({"generatedAt": generated_at.isoformat(), "qstatJobs": {}})
     with (
         patch("app.services.gadi_pbs_jobs.datetime", wraps=datetime) as clock,
-        patch("app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload),
+        patch(
+            "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+        ),
     ):
         clock.now.return_value = now
         snapshot = await get_pbs_jobs()
