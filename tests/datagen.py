@@ -5,7 +5,12 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
-from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
+from app.db.models.backends import (
+    BackendSelectionSettings,
+    BackendWorkflowSettings,
+    ComputeBackend,
+    WorkflowRepoStatus,
+)
 from app.db.models.core import (
     AppUser,
     DataTransfer,
@@ -126,6 +131,13 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
 
 class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
     __set_relationships__ = False
+
+
+class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings]):
+    __set_relationships__ = False
+    key = BackendSelectionSettings.DEFAULT_KEY
+    last_selected_id = None
+    last_selected_at = None
 
 
 class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings]):

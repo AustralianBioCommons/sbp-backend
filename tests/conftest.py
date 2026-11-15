@@ -193,6 +193,7 @@ def persistent_models(test_db):
         datagen.QueuedJobFactory,
         datagen.DataTransferFactory,
         datagen.ComputeBackendFactory,
+        datagen.BackendSelectionSettingsFactory,
         datagen.BackendWorkflowSettingsFactory,
         datagen.WorkflowRepoStatusFactory,
     ]

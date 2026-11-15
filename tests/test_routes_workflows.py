@@ -13,14 +13,23 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import ComputeBackend, QueuedJob
+from app.db.models.backends import BackendSelectionSettings
 from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.schemas.backend import ComputeBackendName
+from app.schemas.backend import BackendSelectionMethod, ComputeBackendName
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
+from tests.datagen import BackendSelectionSettingsFactory, ComputeBackendFactory
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
+
+
+@pytest.fixture(autouse=True)
+def backend_selection_settings(persistent_models):
+    return BackendSelectionSettingsFactory.create_sync(
+        selection_method=BackendSelectionMethod.RANDOM,
+    )
 
 
 def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s3_uri: str):
@@ -121,10 +130,30 @@ def role_check_client(test_engine, default_backend):
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+@pytest.mark.parametrize("backend_name", list(ComputeBackendName))
+@pytest.mark.parametrize("selection_method", list(BackendSelectionMethod))
 def test_launch_success_without_dataset(
-    mock_prepare, client: TestClient, test_engine, default_backend
+    mock_prepare,
+    client: TestClient,
+    test_engine,
+    test_db,
+    default_backend,
+    backend_selection_settings,
+    backend_name,
+    selection_method,
 ):
     """Test successful workflow launch without dataset."""
+    backend_selection_settings.selection_method = selection_method
+    selected_backend = default_backend
+    if backend_name != ComputeBackendName.GADI:
+        if selection_method == BackendSelectionMethod.RANDOM:
+            default_backend.enabled = False
+        else:
+            backend_selection_settings.last_selected_id = default_backend.id
+        selected_backend = ComputeBackendFactory.create_sync(name=backend_name, enabled=True)
+    test_db.commit()
+    selected_backend_id = selected_backend.id
+
     payload = {
         "launch": {
             "workflow": "de-novo-design",
@@ -169,7 +198,11 @@ def test_launch_success_without_dataset(
             ).where(WorkflowRun.id == UUID(data["runId"]))
         ).first()
         assert created_run is not None
-        assert created_run.backend_id == ComputeBackend.get_by_name(db, ComputeBackendName.GADI).id
+        assert created_run.backend_id == selected_backend_id
+        if selection_method == BackendSelectionMethod.CYCLE:
+            selection_settings = BackendSelectionSettings.current_settings(db)
+            assert selection_settings.last_selected_id == selected_backend_id
+            assert selection_settings.last_selected_at is not None
         assert created_run.seqera_run_id is None
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
@@ -871,8 +904,12 @@ _LAUNCH_PAYLOAD = {
 }
 
 
-def test_launch_requires_configured_gadi_backend(client, test_engine, default_backend):
+@pytest.mark.parametrize("selection_method", list(BackendSelectionMethod))
+def test_launch_requires_enabled_backend(
+    client, test_engine, default_backend, mock_repo_staging, selection_method
+):
     with Session(test_engine) as session:
+        BackendSelectionSettings.current_settings(session).selection_method = selection_method
         backend = ComputeBackend.get_by_name(session, ComputeBackendName.GADI)
         session.delete(backend)
         session.commit()
@@ -880,7 +917,22 @@ def test_launch_requires_configured_gadi_backend(client, test_engine, default_ba
     response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Gadi compute backend is not configured."
+    assert response.json()["detail"] == "No compute backend could be selected."
+    mock_repo_staging.assert_not_called()
+    with Session(test_engine) as session:
+        assert session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+
+def test_launch_requires_backend_selection_settings(client, test_engine, mock_repo_staging):
+    with Session(test_engine) as session:
+        session.delete(BackendSelectionSettings.current_settings(session))
+        session.commit()
+
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Backend selection settings are not configured."
+    mock_repo_staging.assert_not_called()
     with Session(test_engine) as session:
         assert session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
 
@@ -1383,7 +1435,7 @@ def test_launch_deducts_credits_when_enabled(
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_rejected_when_insufficient_credits(
-    mock_prepare, client, test_engine, monkeypatch, mock_settings
+    mock_prepare, client, test_engine, monkeypatch, mock_settings, default_backend
 ):
     """With credits enabled, an unaffordable launch is rejected (402) and not queued."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
