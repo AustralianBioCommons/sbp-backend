@@ -16,8 +16,10 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from services.results_utils import get_tool_name
 from ..config import GlobusSettings, Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob
+from ..db.models import QueuedJob
+from ..db.models.backends import BackendSelectionSettings
 from ..db.models.core import (
     AppUser,
     DataTransfer,
@@ -27,7 +29,6 @@ from ..db.models.core import (
     Workflow,
     WorkflowRun,
 )
-from ..schemas.backend import ComputeBackendName
 from ..schemas.workflows.interaction_screening import (
     BulkPredictionDatasetUploadRequest,
     InteractionScreeningDatasetUploadRequest,
@@ -51,6 +52,7 @@ from ..schemas.workflows.single_prediction import (
     SinglePredictionEntity,
     validate_single_prediction_entities,
 )
+from ..services import compute_backends
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -541,6 +543,9 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
+    selection_settings = BackendSelectionSettings.current_settings(db_session)
+    backend = compute_backends.get_next_backend_for_launch(db_session, selection_settings)
+
     try:
         ensure_repo_staging_requested(db_session, workflow, settings=settings)
     except RepoStagingError as exc:
@@ -596,13 +601,6 @@ async def launch_workflow(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="Insufficient credits to launch this workflow.",
             )
-
-    backend = ComputeBackend.get_by_name(db_session, ComputeBackendName.GADI)
-    if backend is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Gadi compute backend is not configured.",
-        )
 
     run_id = uuid4()
     workflow_name = workflow.name.lower()

@@ -21,3 +21,13 @@ class RepositoryStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class BackendSelectionMethod(StrEnum):
+    """
+    How to select backends for jobs. Currently happens
+    at submission time, since we need to prepare the input
+    and launch payload in advance.
+    """
+    RANDOM = "random"
+    CYCLE = "cycle"
