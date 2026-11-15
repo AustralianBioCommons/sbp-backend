@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Self
+from typing import ClassVar, Self
 from uuid import UUID as PyUUID
 from uuid import uuid7
 
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from ...config import ComputeBackendSettings
 from ...schemas.backend import (
+    BackendSelectionMethod,
     ComputeBackendName,
     DataTransferMode,
     RepositoryStatus,
@@ -168,3 +169,45 @@ class WorkflowRepoStatus(Base):
 
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
+
+
+class BackendSelectionSettings(Base):
+    """
+    Stores options and data for backend selection.
+    We should only need one row here, so key
+    """
+    __tablename__ = "backend_selection_settings"
+    DEFAULT_KEY: ClassVar[str] = "selection_settings"
+
+    key: Mapped[str] = mapped_column(String(length=50), primary_key=True, default="selection_settings", nullable=False)
+    selection_method: Mapped[BackendSelectionMethod] = mapped_column(
+        SAEnum(
+            BackendSelectionMethod,
+            name="backend_selection_method",
+            values_callable=lambda members: [member.value for member in members],
+            validate_strings=True,
+        ),
+        default=BackendSelectionMethod.RANDOM,
+    )
+    last_selected_id: Mapped[PyUUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, default=None)
+    last_selected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True,
+        onupdate=func.now(),
+    )
+
+    @classmethod
+    def current_settings(cls, session: Session) -> Self | None:
+        return session.get(cls, cls.DEFAULT_KEY)
+
+    def record_selection(self, backend: ComputeBackend) -> None:
+        """
+        Update last_select_at fields when a selection is made
+        """
+        self.last_selected_id = backend.id
+        self.last_selected_at = datetime.now(tz=UTC)
+
