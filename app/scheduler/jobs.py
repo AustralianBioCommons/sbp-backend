@@ -12,7 +12,8 @@ from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models.core import AppUser, DataTransfer, Workflow
+from ..db.models import WorkflowRepoStatus
+from ..db.models.core import AppUser, DataTransfer
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
@@ -515,8 +516,8 @@ def sync_workflow_repo_staging(dry_run: bool = False):
     if dry_run:
         pending_count = db_session.scalar(
             select(func.count())
-            .select_from(Workflow)
-            .where(Workflow.repo_staging_status.in_(["pending", "in_progress"]))
+            .select_from(WorkflowRepoStatus)
+            .where(WorkflowRepoStatus.status.in_(["pending", "in_progress"]))
         )
         logger.info(f"Dry run - found {pending_count} workflow repo staging(s) requiring sync.")
         return

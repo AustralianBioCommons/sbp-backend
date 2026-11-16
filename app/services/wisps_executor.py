@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus, WorkflowRun
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .compute_backends import validate_backend_launch_config
@@ -93,12 +93,13 @@ async def prepare_wisps_workflow(
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    repo_status = WorkflowRepoStatus.get_for_workflow(db_session, backend.id, workflow.id)
     # Each samplesheet row already points at a staged multi-FASTA (rewritten at
     # launch) that the pipeline splits itself, so there's no remote prerun
     # script: just load the modules the pipeline needs.
     prerun_script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path=workflow.repo_gadi_path,
+        repo_gadi_path=repo_status.location if repo_status is not None else None,
         repo_url=workflow.repo_url,
         module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
         offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,

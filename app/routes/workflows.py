@@ -555,7 +555,7 @@ async def launch_workflow(
         ) from exc
 
     try:
-        ensure_repo_staging_requested(db_session, workflow, settings=settings)
+        ensure_repo_staging_requested(db_session, workflow, backend=backend, settings=settings)
     except RepoStagingError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

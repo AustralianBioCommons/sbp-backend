@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus, WorkflowRun
 from ..db.models.core import DataTransfer, RunInput, S3Object
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
@@ -148,9 +148,10 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    repo_status = WorkflowRepoStatus.get_for_workflow(db_session, backend.id, workflow.id)
     launch_payload["preRunScript"] = get_executor_script(
         prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=workflow.repo_gadi_path,
+        repo_gadi_path=repo_status.location if repo_status is not None else None,
         repo_url=workflow.repo_url,
         module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
         offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,

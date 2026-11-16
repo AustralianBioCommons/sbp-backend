@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus, WorkflowRun
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .compute_backends import validate_backend_launch_config
@@ -120,9 +120,10 @@ async def prepare_proteinfold_workflow(
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
+    repo_status = WorkflowRepoStatus.get_for_workflow(db_session, backend.id, workflow.id)
     prerun_script = get_executor_script(
         prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=workflow.repo_gadi_path,
+        repo_gadi_path=repo_status.location if repo_status is not None else None,
         repo_url=workflow.repo_url,
         module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
         offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,

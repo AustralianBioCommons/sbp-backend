@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
+from ..db.models import WorkflowRepoStatus
 from ..db.models.core import DataTransfer, DataTransferStatus
 from ..db.models.job_queue import QueuedJob
 from ..schemas.workflows.shared import PipelineStatus
@@ -574,14 +575,20 @@ def _try_promote_staging_job(db: Session, queued_job: QueuedJob) -> None:
     if not all(transfer.status == "completed" for transfer in input_transfers):
         return
 
-    workflow = queued_job.workflow
-    if workflow.repo_staging_status == "failed":
+    backend_id = queued_job.workflow_run.backend_id
+    workflow_id = queued_job.workflow_run.workflow_id
+    repo_status = (
+        WorkflowRepoStatus.get_for_workflow(db, backend_id, workflow_id)
+        if backend_id is not None and workflow_id is not None
+        else None
+    )
+    if repo_status is not None and repo_status.status == "failed":
         queued_job.status = "failed"
-        queued_job.error = f"Workflow repo staging failed: {workflow.repo_staging_error_message}"
+        queued_job.error = f"Workflow repo staging failed: {repo_status.error_message}"
         db.add(queued_job)
         db.commit()
         return
-    if workflow.repo_staging_status is not None and workflow.repo_staging_status != "completed":
+    if repo_status is not None and repo_status.status != "completed":
         return
 
     queued_job.status = "pending"
