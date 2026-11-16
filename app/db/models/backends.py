@@ -179,6 +179,66 @@ class WorkflowRepoStatus(Base):
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
 
+    @classmethod
+    def get_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        return session.scalar(
+            select(cls).where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+        )
+
+    @classmethod
+    def request_staging(
+        cls,
+        session: Session,
+        backend: ComputeBackend,
+        workflow: core.Workflow,
+        *,
+        location: str,
+        commit_sha: str,
+    ) -> Self:
+        repo = cls.get_for_workflow(session, backend.id, workflow.id)
+        if repo is None:
+            repo = cls(compute_backend=backend, workflow=workflow)
+            session.add(repo)
+        elif repo.location == location and repo.status in (
+            RepositoryStatus.PENDING,
+            RepositoryStatus.IN_PROGRESS,
+            RepositoryStatus.COMPLETED,
+        ):
+            return repo
+        elif repo.status in (RepositoryStatus.PENDING, RepositoryStatus.IN_PROGRESS):
+            raise ValueError("Repository staging is already active for a different checkout")
+        repo.location = location
+        repo.staged_commit_sha = commit_sha
+        repo.status = RepositoryStatus.PENDING
+        repo.transfer_id = None
+        repo.error_message = None
+        repo.updated_at = datetime.now(UTC)
+        return repo
+
+    def record_submission(self, submission_id: str) -> None:
+        self.transfer_id = submission_id
+        self.updated_at = datetime.now(UTC)
+
+    def mark_in_progress(self, task_id: str) -> None:
+        self.record_submission(task_id)
+        self.status = RepositoryStatus.IN_PROGRESS
+        self.error_message = None
+
+    def record_error(self, message: str) -> None:
+        self.error_message = message
+        self.updated_at = datetime.now(UTC)
+
+    def mark_failed(self, message: str) -> None:
+        self.status = RepositoryStatus.FAILED
+        self.record_error(message)
+
+    def mark_completed(self) -> None:
+        self.status = RepositoryStatus.COMPLETED
+        self.error_message = None
+        self.updated_at = datetime.now(UTC)
+
 
 class BackendSelectionSettings(Base):
     """

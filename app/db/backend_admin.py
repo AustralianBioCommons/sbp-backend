@@ -75,6 +75,7 @@ class WorkflowRepoStatusAdmin(ModelView):
         "location",
         "status",
         "transfer_id",
+        "error_message",
         "created_at",
         "updated_at",
         "id",
