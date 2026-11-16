@@ -182,14 +182,14 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
     raw_entities = form_data.extra_fields.get("entities")
     if not isinstance(raw_entities, list):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="'entities' is required in formData for single-prediction.",
         )
     try:
         entities = [SinglePredictionEntity.model_validate(item) for item in raw_entities]
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid entity data in formData for single-prediction.",
         ) from exc
 
@@ -206,7 +206,7 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -245,20 +245,20 @@ async def _stage_referenced_samplesheet_file(
         ) from exc
     if not samplesheet_rows:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Samplesheet at s3InputKey is empty.",
         )
     samplesheet_row = samplesheet_rows[0]
     source_uri = (samplesheet_row.get(field_name) or "").strip()
     if not source_uri:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"'{field_name}' is required in the samplesheet for {workflow_name}.",
         )
     source_key = s3_uri_to_key(source_uri)
     if not source_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid S3 URI for {field_name}.",
         )
     if db_session.get(S3Object, source_key) is None:
@@ -338,7 +338,7 @@ async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> Wi
         lengths.extend(await _read_referenced_fasta_lengths(row, f"row {row.get('id')}"))
     if not lengths:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Bulk-prediction samplesheet must reference at least one FASTA record.",
         )
     return WispsInputInfo(fasta_entry_lengths=lengths)
@@ -349,7 +349,7 @@ async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> lis
     fasta_key = s3_uri_to_key(row.get("sequence"))
     if not fasta_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid S3 URI in samplesheet 'sequence' for {label}.",
         )
     try:
@@ -368,7 +368,7 @@ async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> lis
         return get_fasta_entry_lengths(fasta_text)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid FASTA for {label}: {exc}",
         ) from exc
 
@@ -403,7 +403,7 @@ async def _stage_interaction_screening_fastas(
         ) from exc
     if sorted(row.get("group") or "" for row in samplesheet_rows) != ["g1", "g2"]:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Interaction-screening samplesheet must have exactly one g1 and one g2 row.",
         )
     for row in samplesheet_rows:
@@ -411,7 +411,7 @@ async def _stage_interaction_screening_fastas(
         source_key = s3_uri_to_key(source_uri)
         if not source_uri.startswith("s3://") or not source_key:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid S3 URI in samplesheet 'sequence' for group {row['group']}.",
             )
         if db_session.get(S3Object, source_key) is None:
@@ -489,7 +489,7 @@ async def launch_workflow(
     s3_input_key = payload.s3InputKey.strip()
     if not s3_input_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="s3InputKey is required and must not be empty.",
         )
 
@@ -502,7 +502,7 @@ async def launch_workflow(
     selected_tool = payload.launch.tool or payload.formData.tool
     if not selected_tool:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No tool selected. Provide 'tool' in formData before submitting.",
         )
 
@@ -599,7 +599,7 @@ async def launch_workflow(
             run_credit_cost = None
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     if run_credit_cost is not None:
@@ -654,7 +654,7 @@ async def launch_workflow(
                 "formData",
             )
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"'{missing}' is required in formData for {workflow_name}.",
             ) from exc
 

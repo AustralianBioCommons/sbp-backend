@@ -52,6 +52,7 @@ def biocommons_username() -> str:
 
 
 class AppUserFactory(SQLAlchemyFactory[AppUser]):
+    __check_model__ = False
     __set_relationships__ = False
 
     @staticmethod
@@ -68,6 +69,7 @@ class AppUserFactory(SQLAlchemyFactory[AppUser]):
 
 
 class WorkflowFactory(SQLAlchemyFactory[Workflow]):
+    __check_model__ = False
     __set_relationships__ = False
     config_path = "/test/workflow.config"
     prerun_script_path = None
@@ -80,27 +82,33 @@ class WorkflowFactory(SQLAlchemyFactory[Workflow]):
 
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
+    __check_model__ = False
     __set_relationships__ = False
     backend_id = None
 
 
 class RunInputFactory(SQLAlchemyFactory[RunInput]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class RunOutputFactory(SQLAlchemyFactory[RunOutput]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class S3ObjectFactory(SQLAlchemyFactory[S3Object]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
+    __check_model__ = False
     __set_relationships__ = False
     recursive = False
     attempts = 0
@@ -108,6 +116,8 @@ class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
 
 
 class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
+    __check_model__ = False
+
     @classmethod
     def build(cls, **kwargs):
         run = kwargs.pop("run", None)
@@ -143,6 +153,7 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
 
 
 class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
+    __check_model__ = False
     __set_relationships__ = False
     seqera_workspace_id = "test_workspace_id"
     seqera_compute_env_id = "test_compute_env_id"
@@ -154,6 +165,7 @@ class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
 
 
 class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings]):
+    __check_model__ = False
     __set_relationships__ = False
     key = BackendSelectionSettings.DEFAULT_KEY
     last_selected_id = None
@@ -161,10 +173,12 @@ class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings
 
 
 class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class WorkflowRepoStatusFactory(SQLAlchemyFactory[WorkflowRepoStatus]):
+    __check_model__ = False
     __set_relationships__ = False
     transfer_id = None
     error_message = None
