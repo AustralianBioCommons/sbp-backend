@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -398,3 +398,34 @@ async def test_get_pbs_jobs_raises_when_jobs_value_is_malformed():
     ):
         with pytest.raises(GadiPbsJobsError, match="Could not parse"):
             await get_pbs_jobs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "age_seconds, warns", [(-60, False), (899, False), (900, False), (901, True)]
+)
+async def test_get_pbs_jobs_warns_only_when_snapshot_older_than_15_minutes(
+    caplog, age_seconds, warns
+):
+    now = datetime(2026, 6, 1, 3, 0, tzinfo=UTC)
+    generated_at = now - timedelta(seconds=age_seconds)
+    payload = json.dumps({"generatedAt": generated_at.isoformat(), "qstatJobs": {}})
+    with (
+        patch("app.services.gadi_pbs_jobs.datetime", wraps=datetime) as clock,
+        patch(
+            "app.services.gadi_pbs_jobs.read_s3_file", new_callable=AsyncMock, return_value=payload
+        ),
+    ):
+        clock.now.return_value = now
+        snapshot = await get_pbs_jobs()
+
+    assert snapshot.generated_at == generated_at
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "app.services.gadi_pbs_jobs" and record.levelname == "WARNING"
+    ]
+    assert len(warnings) == int(warns)
+    if warns:
+        assert "snapshot is stale" in warnings[0].message
+        assert generated_at.isoformat() in warnings[0].message
