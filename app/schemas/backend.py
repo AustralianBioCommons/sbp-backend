@@ -1,4 +1,10 @@
 from enum import StrEnum
+from typing import Annotated
+from uuid import UUID
+
+from pydantic import StringConstraints, BaseModel
+
+from config import GlobusSettings
 
 
 class ComputeBackendName(StrEnum):
@@ -31,3 +37,28 @@ class BackendSelectionMethod(StrEnum):
     """
     RANDOM = "random"
     CYCLE = "cycle"
+
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class BackendLaunchConfig(BaseModel):
+    backend_id: UUID
+    workflow_id: UUID
+    backend_name: ComputeBackendName
+    workspace_id: NonEmptyStr
+    compute_env_id: NonEmptyStr
+    base_work_dir: NonEmptyStr
+    config_path: NonEmptyStr
+    ref_database_dir: NonEmptyStr | None = None
+    project_id: NonEmptyStr | None = None
+    data_transfer: DataTransferMode
+    repository_transfer: RepositoryTransferMode
+    globus: GlobusSettings | None = None
+
+    def require_globus(self) -> GlobusSettings:
+        if self.data_transfer != DataTransferMode.GLOBUS:
+            raise ValueError("Native input/output preparation is not implemented")
+        if self.globus is None:
+            raise ValueError("Globus settings are required by the current input/output preparation")
+        return self.globus
