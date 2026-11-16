@@ -130,6 +130,14 @@ class BackendWorkflowSettings(Base):
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
 
+    @classmethod
+    def get_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        return session.scalar(
+            select(cls).where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+        )
+
 
 class WorkflowRepoStatus(Base):
     __tablename__ = "workflow_repo_status"
