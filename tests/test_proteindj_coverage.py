@@ -25,7 +25,13 @@ from app.services.proteindj_executor import (
 )
 from app.services.seqera import WorkflowLaunchResult
 from app.services.seqera_errors import WorkflowLaunchError
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -83,9 +89,8 @@ def _queued_proteindj_job(
 
 @contextmanager
 def _mock_proteindj_db_context():
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -329,7 +334,9 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             revision="main",
             output_id="run-output-id",
             form_data=form_data,
@@ -424,7 +431,9 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=form_data,
             user_details=_USER_DETAILS,
@@ -459,7 +468,9 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -507,7 +518,9 @@ async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -536,7 +549,9 @@ async def test_prepare_proteindj_workflow_missing_run_name(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -556,7 +571,9 @@ async def test_prepare_proteindj_workflow_missing_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id=None,
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -576,7 +593,9 @@ async def test_prepare_proteindj_workflow_empty_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="   ",
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -596,7 +615,9 @@ async def test_prepare_proteindj_workflow_missing_starting_pdb(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 target_hotspot_residues="A20,A21",
@@ -621,7 +642,9 @@ async def test_prepare_proteindj_workflow_missing_hotspot_residues(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -646,7 +669,9 @@ async def test_prepare_proteindj_workflow_missing_num_designs(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -671,7 +696,9 @@ async def test_prepare_proteindj_workflow_missing_design_length(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",

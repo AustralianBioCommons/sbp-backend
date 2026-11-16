@@ -30,10 +30,16 @@ from app.services.wisps_executor import (
     prepare_wisps_workflow,
 )
 from app.services.workflow_config_fetcher import (
-    _validate_config_path,
     fetch_workflow_config,
+    validate_config_path,
 )
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -102,9 +108,8 @@ def _mock_wisps_db_context():
     Mock the DB/workflow inputs required for launching a Wisps workflow.
     Very simple mocks for when DB is not the focus of the test.
     """
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch("app.services.wisps_executor.QueuedJob", return_value=queued_job) as queued_job_cls:
@@ -349,7 +354,9 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             revision="dev",
             output_id="output-queued",
@@ -426,7 +433,9 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -479,7 +488,9 @@ async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -518,7 +529,9 @@ async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -550,7 +563,9 @@ async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -579,7 +594,9 @@ async def test_launch_wisps_workflow_missing_output_id(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id=None,
             user_details=_USER_DETAILS,
@@ -605,7 +622,9 @@ async def test_launch_wisps_workflow_empty_output_id(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="   ",
             user_details=_USER_DETAILS,
@@ -631,7 +650,9 @@ async def test_launch_wisps_workflow_missing_run_name(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-001",
             user_details=_USER_DETAILS,
@@ -663,32 +684,32 @@ async def test_launch_wisps_workflow_with_tool(wisps_settings, persistent_models
 # =============================================================================
 
 
-def test_validate_config_path_empty_string():
+def testvalidate_config_path_empty_string():
     with pytest.raises(ValueError, match="empty"):
-        _validate_config_path("")
+        validate_config_path("")
 
 
-def test_validate_config_path_whitespace_only():
+def testvalidate_config_path_whitespace_only():
     with pytest.raises(ValueError, match="empty"):
-        _validate_config_path("   ")
+        validate_config_path("   ")
 
 
-def test_validate_config_path_local_path_ok():
-    _validate_config_path("/some/path.config")
+def testvalidate_config_path_local_path_ok():
+    validate_config_path("/some/path.config")
 
 
-def test_validate_config_path_http_no_host():
+def testvalidate_config_path_http_no_host():
     with pytest.raises(ValueError):
-        _validate_config_path("https://")
+        validate_config_path("https://")
 
 
-def test_validate_config_path_with_token_param():
+def testvalidate_config_path_with_token_param():
     with pytest.raises(ValueError, match="token"):
-        _validate_config_path("https://host.com/file.config?token=abc")
+        validate_config_path("https://host.com/file.config?token=abc")
 
 
-def test_validate_config_path_valid_url():
-    _validate_config_path("https://raw.githubusercontent.com/org/repo/main/file.config")
+def testvalidate_config_path_valid_url():
+    validate_config_path("https://raw.githubusercontent.com/org/repo/main/file.config")
 
 
 def test_fetch_workflow_config_local_file(tmp_path):

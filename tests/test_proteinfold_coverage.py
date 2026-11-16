@@ -31,7 +31,13 @@ from app.services.seqera import (
     post_seqera_launch,
 )
 from app.services.seqera_errors import WorkflowLaunchError
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -82,9 +88,8 @@ def _queued_proteinfold_job(
 
 @contextmanager
 def _mock_proteinfold_db_context():
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -335,7 +340,9 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             revision="main",
             output_id="run-output-id",
             mode="colabfold",
@@ -408,7 +415,9 @@ async def test_prepare_proteinfold_workflow_forwards_prerun_script_path(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -440,7 +449,9 @@ async def test_prepare_proteinfold_workflow_exports_pf_db_base_dir_from_ref_data
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -469,7 +480,9 @@ async def test_prepare_proteinfold_workflow_without_ref_database_omits_pf_db_bas
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -491,7 +504,9 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id=None,
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
@@ -511,7 +526,9 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="   ",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
