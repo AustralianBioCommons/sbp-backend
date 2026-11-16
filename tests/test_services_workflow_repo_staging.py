@@ -12,6 +12,7 @@ import requests
 from github import GithubException
 
 from app.config import GlobusSettings
+from app.db.models import WorkflowRepoStatus
 from app.services.globus_errors import GlobusTransferError
 from app.services.workflow_repo_staging import (
     RepoStagingError,
@@ -23,7 +24,7 @@ from app.services.workflow_repo_staging import (
     stage_pending_repo,
     sync_workflow_repo_staging,
 )
-from tests.datagen import QueuedJobFactory, WorkflowFactory
+from tests.datagen import QueuedJobFactory, WorkflowFactory, WorkflowRepoStatusFactory
 
 
 def _mock_github_client(*, sha: str | None = None, raises: Exception | None = None) -> MagicMock:
@@ -70,11 +71,39 @@ def _make_local_git_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, st
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
         subprocess.run(["git", "add", relative_path], cwd=repo_dir, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo_dir, check=True)
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        cwd=repo_dir,
+        check=True,
+    )
     commit_sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
     ).stdout.strip()
     return str(repo_dir), commit_sha
+
+
+@pytest.fixture
+def repo_status_factory(default_backend, monkeypatch, mock_settings):
+    for field, value in mock_settings.globus.model_dump().items():
+        monkeypatch.setenv(f"GADI_GLOBUS_{field.upper()}", str(value))
+
+    def create_repo_status(
+        repo_url="https://github.com/test/repo", default_revision="dev", **kwargs
+    ):
+        workflow = WorkflowFactory.create_sync(repo_url=repo_url, default_revision=default_revision)
+        values = {
+            "location": "/test/workflow_repos/test-repo/dev/abc123",
+            "status": "pending",
+            "staged_commit_sha": "abc123",
+            "transfer_id": None,
+            "error_message": None,
+        }
+        values.update(kwargs)
+        return WorkflowRepoStatusFactory.create_sync(
+            workflow=workflow, compute_backend=default_backend, **values
+        )
+
+    return create_repo_status
 
 
 @pytest.fixture
@@ -191,121 +220,133 @@ def test_resolve_latest_commit_sha_missing_sha_raises(mock_settings):
 
 
 def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
-    test_db, persistent_models, mock_settings
+    test_db, persistent_models, mock_settings, repo_status_factory
 ):
-    workflow = WorkflowFactory.create_sync(
-        repo_url="https://github.com/test/repo",
-        default_revision="dev",
-        repo_staged_commit_sha=None,
-        repo_staging_status=None,
-    )
+    repo = repo_status_factory()
+    workflow = repo.workflow
+    backend = repo.compute_backend
+    test_db.delete(repo)
+    test_db.commit()
 
     with patch(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="newsha"),
     ):
-        locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+        locations = ensure_repo_staging_requested(
+            test_db, workflow, backend=backend, settings=mock_settings
+        )
 
-    assert locations.gadi_path == workflow.repo_gadi_path
+    repo = WorkflowRepoStatus.get_for_workflow(test_db, backend.id, workflow.id)
+    assert locations.gadi_path == repo.location
     assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/newsha/test/repo"
-    assert workflow.repo_staged_commit_sha == "newsha"
-    assert workflow.repo_staging_status == "pending"
+    assert repo.staged_commit_sha == "newsha"
+    assert repo.status == "pending"
 
 
 def test_ensure_repo_staging_requested_resets_on_commit_change(
-    test_db, persistent_models, mock_settings
+    test_db, persistent_models, mock_settings, repo_status_factory
 ):
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="oldsha",
-        repo_staging_status="completed",
-        repo_gadi_path="/test/workflow_repos/test-repo/dev/oldsha.git",
-        repo_staging_transfer_id="old-task-id",
-        repo_staging_error_message=None,
+        staged_commit_sha="oldsha",
+        status="completed",
+        location="/test/workflow_repos/test-repo/dev/oldsha.git",
+        transfer_id="old-task-id",
+        error_message=None,
     )
 
     with patch(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="newsha"),
     ):
-        ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+        ensure_repo_staging_requested(
+            test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
+        )
 
-    assert workflow.repo_staged_commit_sha == "newsha"
-    assert workflow.repo_staging_status == "pending"
-    assert workflow.repo_staging_transfer_id is None
+    assert workflow.staged_commit_sha == "newsha"
+    assert workflow.status == "pending"
+    assert workflow.transfer_id is None
 
 
-def test_ensure_repo_staging_requested_reuses_cache_hit(test_db, persistent_models, mock_settings):
+def test_ensure_repo_staging_requested_reuses_cache_hit(
+    test_db, persistent_models, mock_settings, repo_status_factory
+):
     """Same commit, already completed - must not reset back to pending (that
     would re-trigger staging for no reason)."""
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="samesha",
-        repo_staging_status="completed",
-        repo_gadi_path="/test/workflow_repos/repo/dev/samesha/test/repo",
+        staged_commit_sha="samesha",
+        status="completed",
+        location="/test/workflow_repos/repo/dev/samesha/test/repo",
     )
 
     with patch(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+        locations = ensure_repo_staging_requested(
+            test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
+        )
 
     assert locations.gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
     assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
-    assert workflow.repo_staging_status == "completed"
+    assert workflow.status == "completed"
 
 
 def test_ensure_repo_staging_requested_restages_on_revision_change_same_commit(
-    test_db, persistent_models, mock_settings
+    test_db, persistent_models, mock_settings, repo_status_factory
 ):
     """Regression test: a freshly-cut branch ("staging") can resolve to the
     exact same commit as the previously staged revision ("main"). Comparing
     commit_sha alone would wrongly call this "up to date" and reuse a
     checkout whose only ref is named "main", so a Nextflow launch asking for
     revision "staging" would fail with `invalid object name 'staging'`."""
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="staging",
-        repo_staged_commit_sha="samesha",
-        repo_staging_status="completed",
-        repo_gadi_path="/test/workflow_repos/repo/main/samesha/test/repo",
+        staged_commit_sha="samesha",
+        status="completed",
+        location="/test/workflow_repos/repo/main/samesha/test/repo",
     )
 
     with patch(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        locations = ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+        locations = ensure_repo_staging_requested(
+            test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
+        )
 
     assert locations.gadi_path == "/test/workflow_repos/repo/staging/samesha/test/repo"
-    assert workflow.repo_gadi_path == "/test/workflow_repos/repo/staging/samesha/test/repo"
-    assert workflow.repo_staging_status == "pending"
+    assert workflow.location == "/test/workflow_repos/repo/staging/samesha/test/repo"
+    assert workflow.status == "pending"
 
 
 def test_ensure_repo_staging_requested_retries_after_failure(
-    test_db, persistent_models, mock_settings
+    test_db, persistent_models, mock_settings, repo_status_factory
 ):
     """Same commit but previously failed - must re-request staging, not treat
     the failure as a permanent cache entry."""
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="samesha",
-        repo_staging_status="failed",
-        repo_staging_error_message="boom",
+        staged_commit_sha="samesha",
+        status="failed",
+        error_message="boom",
     )
 
     with patch(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        ensure_repo_staging_requested(test_db, workflow, settings=mock_settings)
+        ensure_repo_staging_requested(
+            test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
+        )
 
-    assert workflow.repo_staging_status == "pending"
-    assert workflow.repo_staging_error_message is None
+    assert workflow.status == "pending"
+    assert workflow.error_message is None
 
 
 # ============================================================================
@@ -314,7 +355,7 @@ def test_ensure_repo_staging_requested_retries_after_failure(
 
 
 def test_stage_pending_repo_uses_collection_relative_destination_path(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     """Regression test: add_item must receive the Gadi path relative to the
     collection root, not the raw absolute Gadi filesystem path - sending the
@@ -324,13 +365,13 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
 
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="abc123",
-        repo_staging_status="pending",
-        repo_gadi_path="/test/workflow_repos/test-repo/dev/abc123",
-        repo_staging_transfer_id=None,
+        staged_commit_sha="abc123",
+        status="pending",
+        location="/test/workflow_repos/test-repo/dev/abc123",
+        transfer_id=None,
     )
 
     with patch("app.services.workflow_repo_staging._clone_and_upload_repo") as mock_clone:
@@ -347,27 +388,29 @@ def test_stage_pending_repo_uses_collection_relative_destination_path(
     assert submitted["DATA"][0]["recursive"] is True
     assert len(submitted["DATA"]) == 1
 
-    assert workflow.repo_staging_status == "in_progress"
-    assert workflow.repo_staging_transfer_id == "task-1"
+    assert workflow.status == "in_progress"
+    assert workflow.transfer_id == "task-1"
 
 
-def test_stage_pending_repo_no_commit_sha_raises(test_db, persistent_models, mock_settings):
-    workflow = WorkflowFactory.create_sync(
+def test_stage_pending_repo_no_commit_sha_raises(
+    test_db, persistent_models, mock_settings, repo_status_factory
+):
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
-        repo_staged_commit_sha=None,
+        staged_commit_sha=None,
     )
     with pytest.raises(RepoStagingError, match="no commit sha"):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
 
 def test_stage_pending_repo_download_failure_marks_failed(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="abc123",
-        repo_staging_status="pending",
+        staged_commit_sha="abc123",
+        status="pending",
     )
 
     with patch(
@@ -376,44 +419,44 @@ def test_stage_pending_repo_download_failure_marks_failed(
     ):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "failed"
-    assert "clone failed" in workflow.repo_staging_error_message
+    assert workflow.status == "failed"
+    assert "clone failed" in workflow.error_message
     mock_transfer_client.submit_transfer.assert_not_called()
 
 
 def test_stage_pending_repo_submission_api_error_marks_failed(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
     mock_transfer_client.submit_transfer.side_effect = _globus_api_error(
         400, {"code": "UNKNOWN_SCOPE_ERROR", "message": "bad scope"}
     )
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="abc123",
-        repo_staging_status="pending",
-        repo_gadi_path="/test/workflow_repos/test-repo/dev/abc123",
+        staged_commit_sha="abc123",
+        status="pending",
+        location="/test/workflow_repos/test-repo/dev/abc123",
     )
 
     with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
         stage_pending_repo(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "failed"
-    assert "UNKNOWN_SCOPE_ERROR" in workflow.repo_staging_error_message
+    assert workflow.status == "failed"
+    assert "UNKNOWN_SCOPE_ERROR" in workflow.error_message
 
 
 def test_stage_pending_repo_reuses_existing_submission_id(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
-    workflow = WorkflowFactory.create_sync(
+    workflow = repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="abc123",
-        repo_staging_status="pending",
-        repo_gadi_path="/test/workflow_repos/test-repo/dev/abc123",
-        repo_staging_transfer_id="already-committed-sub-id",
+        staged_commit_sha="abc123",
+        status="pending",
+        location="/test/workflow_repos/test-repo/dev/abc123",
+        transfer_id="already-committed-sub-id",
     )
 
     with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
@@ -510,71 +553,63 @@ def test_clone_and_upload_repo_clone_failure_raises(tmp_path, mock_settings):
 # ============================================================================
 
 
-def test_poll_repo_staging_no_transfer_id_raises(test_db, persistent_models):
-    workflow = WorkflowFactory.create_sync(repo_staging_transfer_id=None)
+def test_poll_repo_staging_no_transfer_id_raises(test_db, persistent_models, repo_status_factory):
+    workflow = repo_status_factory(transfer_id=None)
     with pytest.raises(GlobusTransferError, match="no transfer_id"):
         poll_repo_staging(test_db, workflow)
 
 
 def test_poll_repo_staging_succeeded_marks_completed_and_promotes_queued_jobs(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
-    workflow = WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
-    QueuedJobFactory.create_sync(workflow=workflow, status="staging")
+    workflow = repo_status_factory(transfer_id="task-1", status="in_progress")
+    QueuedJobFactory.create_sync(workflow=workflow.workflow, status="staging")
 
     poll_repo_staging(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "completed"
+    assert workflow.status == "completed"
 
 
 def test_poll_repo_staging_failed_records_fatal_error(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.return_value = {
         "status": "FAILED",
         "fatal_error": {"description": "permission denied"},
     }
-    workflow = WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
+    workflow = repo_status_factory(transfer_id="task-1", status="in_progress")
 
     poll_repo_staging(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "failed"
-    assert workflow.repo_staging_error_message == "permission denied"
+    assert workflow.status == "failed"
+    assert workflow.error_message == "permission denied"
 
 
 def test_poll_repo_staging_active_leaves_status_unchanged(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.return_value = {"status": "ACTIVE"}
-    workflow = WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
+    workflow = repo_status_factory(transfer_id="task-1", status="in_progress")
 
     poll_repo_staging(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "in_progress"
+    assert workflow.status == "in_progress"
 
 
 def test_poll_repo_staging_api_error_records_message_without_changing_status(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.side_effect = _globus_api_error(
         401, {"code": "AuthenticationFailed", "message": "token expired"}
     )
-    workflow = WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
+    workflow = repo_status_factory(transfer_id="task-1", status="in_progress")
 
     with pytest.raises(GlobusTransferError, match="Failed to poll"):
         poll_repo_staging(test_db, workflow, settings=mock_settings)
 
-    assert workflow.repo_staging_status == "in_progress"
-    assert "Poll failed" in workflow.repo_staging_error_message
+    assert workflow.status == "in_progress"
+    assert "Poll failed" in workflow.error_message
 
 
 # ============================================================================
@@ -583,17 +618,17 @@ def test_poll_repo_staging_api_error_records_message_without_changing_status(
 
 
 def test_sync_workflow_repo_staging_submits_pending(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_submission_id.return_value = {"value": "sub-1"}
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
-    WorkflowFactory.create_sync(
+    repo_status_factory(
         repo_url="https://github.com/test/repo",
         default_revision="dev",
-        repo_staged_commit_sha="abc123",
-        repo_staging_status="pending",
-        repo_gadi_path="/test/workflow_repos/test-repo/abc123",
-        repo_staging_transfer_id=None,
+        staged_commit_sha="abc123",
+        status="pending",
+        location="/test/workflow_repos/test-repo/abc123",
+        transfer_id=None,
     )
 
     with patch("app.services.workflow_repo_staging._clone_and_upload_repo"):
@@ -604,12 +639,10 @@ def test_sync_workflow_repo_staging_submits_pending(
 
 
 def test_sync_workflow_repo_staging_polls_in_progress(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
-    WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
+    repo_status_factory(transfer_id="task-1", status="in_progress")
 
     result = sync_workflow_repo_staging(test_db, settings=mock_settings)
 
@@ -618,10 +651,10 @@ def test_sync_workflow_repo_staging_polls_in_progress(
 
 
 def test_sync_workflow_repo_staging_ignores_workflows_not_staging(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
-    WorkflowFactory.create_sync(repo_staging_status="completed")
-    WorkflowFactory.create_sync(repo_staging_status=None)
+    repo_status_factory(status="completed")
+    WorkflowFactory.create_sync()
 
     result = sync_workflow_repo_staging(test_db, settings=mock_settings)
 
@@ -630,14 +663,96 @@ def test_sync_workflow_repo_staging_ignores_workflows_not_staging(
 
 
 def test_sync_workflow_repo_staging_continues_after_unexpected_error(
-    test_db, persistent_models, mock_transfer_client, mock_settings
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
 ):
     mock_transfer_client.get_task.side_effect = RuntimeError("boom")
-    WorkflowFactory.create_sync(
-        repo_staging_transfer_id="task-1", repo_staging_status="in_progress"
-    )
+    repo_status_factory(transfer_id="task-1", status="in_progress")
 
     result = sync_workflow_repo_staging(test_db, settings=mock_settings)
 
     assert result.checked == 1
     assert result.errored == 1
+
+
+def test_request_does_not_overwrite_active_transfer_for_different_commit(
+    test_db,
+    repo_status_factory,
+    mock_settings,
+):
+    repo = repo_status_factory(status="in_progress", transfer_id="active-task")
+    original_location = repo.location
+    original_sha = repo.staged_commit_sha
+    with patch(
+        "app.services.workflow_repo_staging._get_github_client",
+        return_value=_mock_github_client(sha="different-sha"),
+    ):
+        with pytest.raises(RepoStagingError, match="already active"):
+            ensure_repo_staging_requested(
+                test_db,
+                repo.workflow,
+                backend=repo.compute_backend,
+                settings=mock_settings,
+            )
+    test_db.refresh(repo)
+    assert repo.location == original_location
+    assert repo.staged_commit_sha == original_sha
+    assert repo.transfer_id == "active-task"
+    assert repo.status == "in_progress"
+
+
+def test_poll_promotes_only_runs_on_the_matching_backend(
+    test_db,
+    repo_status_factory,
+    mock_transfer_client,
+    mock_settings,
+):
+    from app.schemas.backend import ComputeBackendName
+    from app.services.globus_transfer import _try_promote_staging_job
+    from tests.datagen import AppUserFactory, ComputeBackendFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="in_progress", transfer_id="active-task")
+    other_backend = ComputeBackendFactory.create_sync(name=ComputeBackendName.SETONIX)
+    other_repo = WorkflowRepoStatusFactory.create_sync(
+        workflow=repo.workflow,
+        compute_backend=other_backend,
+        status="failed",
+        location="/other/backend/checkout",
+        error_message="other backend failure",
+    )
+    user = AppUserFactory.create_sync()
+    jobs = []
+    for backend in (repo.compute_backend, other_backend):
+        run = WorkflowRunFactory.create_sync(workflow=repo.workflow, backend=backend, owner=user)
+        jobs.append(
+            QueuedJobFactory.create_sync(workflow=repo.workflow, workflow_run=run, status="staging")
+        )
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    poll_repo_staging(test_db, repo, settings=mock_settings)
+    test_db.refresh(jobs[0])
+    test_db.refresh(jobs[1])
+    assert jobs[0].status == "pending"
+    assert jobs[1].status == "staging"
+    assert other_repo.status == "failed"
+    _try_promote_staging_job(test_db, jobs[1])
+    assert jobs[1].status == "failed"
+    assert "other backend failure" in jobs[1].error
+
+
+def test_request_creates_independent_state_for_each_backend(test_db, repo_status_factory):
+    from app.schemas.backend import ComputeBackendName
+    from tests.datagen import ComputeBackendFactory
+
+    repo = repo_status_factory(status="completed", staged_commit_sha="old-commit")
+    other_backend = ComputeBackendFactory.create_sync(name=ComputeBackendName.SETONIX)
+    other_repo = WorkflowRepoStatus.request_staging(
+        test_db,
+        other_backend,
+        repo.workflow,
+        location="/other/backend/checkout",
+        commit_sha="new-commit",
+    )
+    test_db.commit()
+    assert other_repo.compute_backend_id == other_backend.id
+    assert other_repo.status == "pending"
+    assert repo.status == "completed"
+    assert repo.staged_commit_sha == "old-commit"

@@ -21,6 +21,7 @@ from tests.datagen import (
     BackendWorkflowSettingsFactory,
     ComputeBackendFactory,
     WorkflowFactory,
+    WorkflowRepoStatusFactory,
     WorkflowRunFactory,
 )
 
@@ -155,7 +156,12 @@ async def test_preparation_uses_backend_config(
     backend.repository_transfer = repo_mode
     workflow.name = workflow_name
     workflow.prerun_script_path = None
-    workflow.repo_gadi_path = "/checkout/owner/repo"
+    WorkflowRepoStatusFactory.create_sync(
+        workflow=workflow,
+        compute_backend=backend,
+        location="/checkout/owner/repo",
+        status="completed",
+    )
     custom_config = tmp_path / "backend.config"
     custom_config.write_text("// backend-specific configuration\n")
     BackendWorkflowSettingsFactory.create_sync(

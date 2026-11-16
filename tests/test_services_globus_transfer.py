@@ -39,13 +39,8 @@ from tests.datagen import (
 
 
 def _workflow_run_without_repo_staging():
-    """A WorkflowRun whose Workflow has no repo-staging requirement (None) -
-    QueuedJobFactory/WorkflowRunFactory don't create a real related Workflow
-    row by default (__set_relationships__ = False), and _try_promote_staging_job
-    now dereferences queued_job.workflow, so tests exercising only the
-    input-transfer gate need an explicit, real Workflow with
-    repo_staging_status=None (not a random value) so it acts as a no-op gate."""
-    workflow = WorkflowFactory.create_sync(repo_staging_status=None)
+    """Build an input-transfer-only run with no backend repository-status row."""
+    workflow = WorkflowFactory.create_sync()
     return WorkflowRunFactory.create_sync(workflow=workflow)
 
 
