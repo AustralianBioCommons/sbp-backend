@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from services.results_utils import get_tool_name
 from ..config import GlobusSettings, Settings, get_settings
 from ..db.models import QueuedJob
 from ..db.models.backends import BackendSelectionSettings
@@ -53,6 +52,7 @@ from ..schemas.workflows.single_prediction import (
     validate_single_prediction_entities,
 )
 from ..services import compute_backends
+from services.compute_backends import resolve_backend_launch_config
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -545,6 +545,14 @@ async def launch_workflow(
 
     selection_settings = BackendSelectionSettings.current_settings(db_session)
     backend = compute_backends.get_next_backend_for_launch(db_session, selection_settings)
+    try:
+        launch_config = resolve_backend_launch_config(db_session, backend, workflow)
+        globus_settings = launch_config.require_globus()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Invalid launch configuration for backend '{backend.name}'.",
+        ) from exc
 
     try:
         ensure_repo_staging_requested(db_session, workflow, settings=settings)
@@ -620,7 +628,7 @@ async def launch_workflow(
         sample_id=sample_id,
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
-        work_dir=f"{settings.seqera.work_dir}/{run_id}",
+        work_dir=f"{launch_config.base_work_dir.rstrip('/')}/{run_id}",
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
         tool=selected_tool,
@@ -630,14 +638,6 @@ async def launch_workflow(
     db_session.add(workflow_run)
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
-
-    # All workflows require config_path. Validate before the try block
-    # so that HTTPException is not swallowed by the generic except Exception handler.
-    if not workflow.config_path:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
-        )
 
     wisps_form_data: WispsFormData | InteractionScreeningFormData | None = None
     if workflow_name in ("interaction-screening", "bulk-prediction"):
@@ -673,7 +673,7 @@ async def launch_workflow(
             field_name="fasta",
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            globus_settings=globus_settings,
         )
     elif workflow_name == "interaction-screening":
         s3_input_key = await _stage_interaction_screening_fastas(
@@ -681,7 +681,7 @@ async def launch_workflow(
             s3_input_key=s3_input_key,
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            globus_settings=globus_settings,
         )
     elif workflow_name == "bulk-prediction":
         s3_input_key = await _stage_referenced_samplesheet_file(
@@ -690,7 +690,7 @@ async def launch_workflow(
             field_name="sequence",
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            globus_settings=globus_settings,
         )
 
     staged_input_location: str | None = None
@@ -711,7 +711,7 @@ async def launch_workflow(
             run_id,
             workflow_name,
             os.path.basename(s3_input_key),
-            globus_settings=settings.globus,
+            globus_settings=globus_settings,
         )
         input_transfer = DataTransfer(
             workflow_run_id=run_id,
@@ -742,7 +742,8 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                config_path=workflow.config_path,
+                backend=backend,
+                launch_config=launch_config,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 mode=tool_algo,
@@ -761,7 +762,8 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                config_path=workflow.config_path,
+                backend=backend,
+                launch_config=launch_config,
                 revision=workflow.default_revision,
                 output_id=str(run_id),
                 form_data=payload.formData,
@@ -778,7 +780,8 @@ async def launch_workflow(
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
                 revision=workflow.default_revision,
-                config_path=workflow.config_path,
+                backend=backend,
+                launch_config=launch_config,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_details=user_details,

@@ -53,6 +53,7 @@ def get_executor_script(
     repo_gadi_path: str | None,
     repo_url: str,
     module_loads: list[str] | None = None,
+    offline: bool = True,
 ) -> str:
     """Build a pre-run script from Nextflow env vars, module loads, and a script body.
 
@@ -61,8 +62,8 @@ def get_executor_script(
     .../<commit_sha>/<owner>/<repo>) so Nextflow's own <owner>/<repo>
     resolution finds the pre-staged checkout instead of fetching it.
     """
-    lines = ["export NXF_OFFLINE=true"]
-    if repo_gadi_path:
+    lines = ["export NXF_OFFLINE=true"] if offline else []
+    if offline and repo_gadi_path:
         bare_repo_path = PurePosixPath(repo_gadi_path)
         nxf_assets_path = f"{bare_repo_path.parent.parent}/"
         lines.append(f"export NXF_ASSETS={nxf_assets_path}")
