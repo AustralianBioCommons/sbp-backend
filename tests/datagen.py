@@ -5,6 +5,7 @@ from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from app.config import Settings
 from app.db.models.backends import (
     BackendSelectionSettings,
     BackendWorkflowSettings,
@@ -21,6 +22,8 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
+from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
+from schemas.backend import BackendLaunchConfig
 from app.services.job_utils import UserJobListRow
 
 fake = Faker()
@@ -131,6 +134,13 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
 
 class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
     __set_relationships__ = False
+    seqera_workspace_id = "test_workspace_id"
+    seqera_compute_env_id = "test_compute_env_id"
+    base_work_dir = "/test/work/dir"
+    env_prefix = "GADI_"
+    project_id = "yz52"
+    repository_transfer = RepositoryTransferMode.GLOBUS
+    data_transfer = DataTransferMode.GLOBUS
 
 
 class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings]):
@@ -146,3 +156,36 @@ class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings])
 
 class WorkflowRepoStatusFactory(SQLAlchemyFactory[WorkflowRepoStatus]):
     __set_relationships__ = False
+
+
+def build_backend_launch_kwargs(
+    workflow_run: WorkflowRun, settings: Settings, config_path: str
+) -> dict:
+    """Build explicit backend inputs for executor tests, independently of environment loading."""
+    backend = ComputeBackendFactory.build(
+        name=ComputeBackendName.GADI,
+        enabled=True,
+        seqera_workspace_id=settings.seqera.work_space,
+        seqera_compute_env_id=settings.seqera.compute_id,
+        base_work_dir=settings.seqera.work_dir,
+    )
+    workflow_run.backend = backend
+    workflow_run.backend_id = backend.id
+    workflow_run.workflow_id = workflow_run.workflow.id
+    return {
+        "backend": backend,
+        "launch_config": BackendLaunchConfig(
+            backend_id=backend.id,
+            workflow_id=workflow_run.workflow_id,
+            backend_name=backend.name,
+            workspace_id=backend.seqera_workspace_id,
+            compute_env_id=backend.seqera_compute_env_id,
+            base_work_dir=backend.base_work_dir,
+            config_path=config_path,
+            ref_database_dir=workflow_run.workflow.ref_database,
+            project_id=backend.project_id,
+            repository_transfer=backend.repository_transfer,
+            data_transfer=backend.data_transfer,
+            globus=settings.globus,
+        ),
+    }
