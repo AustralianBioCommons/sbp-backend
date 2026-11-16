@@ -184,10 +184,13 @@ class BackendSelectionSettings(Base):
     Stores options and data for backend selection.
     We should only need one row here, so key
     """
+
     __tablename__ = "backend_selection_settings"
     DEFAULT_KEY: ClassVar[str] = "selection_settings"
 
-    key: Mapped[str] = mapped_column(String(length=50), primary_key=True, default="selection_settings", nullable=False)
+    key: Mapped[str] = mapped_column(
+        String(length=50), primary_key=True, default="selection_settings", nullable=False
+    )
     selection_method: Mapped[BackendSelectionMethod] = mapped_column(
         SAEnum(
             BackendSelectionMethod,
@@ -197,7 +200,9 @@ class BackendSelectionSettings(Base):
         ),
         default=BackendSelectionMethod.RANDOM,
     )
-    last_selected_id: Mapped[PyUUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, default=None)
+    last_selected_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, default=None
+    )
     last_selected_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
@@ -218,4 +223,3 @@ class BackendSelectionSettings(Base):
         """
         self.last_selected_id = backend.id
         self.last_selected_at = datetime.now(tz=UTC)
-
