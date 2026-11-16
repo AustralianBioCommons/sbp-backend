@@ -153,10 +153,13 @@ def test_launch_success_without_dataset(
     backend_selection_settings.selection_method = selection_method
     selected_backend = default_backend
     if backend_name != ComputeBackendName.GADI:
-        if selection_method == BackendSelectionMethod.RANDOM:
-            default_backend.enabled = False
-        else:
-            backend_selection_settings.last_selected_id = default_backend.id
+        workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+        BackendWorkflowSettingsFactory.create_sync(
+            compute_backend=default_backend,
+            workflow=workflow,
+            enabled=False,
+        )
+        backend_selection_settings.last_selected_id = default_backend.id
         selected_backend = ComputeBackendFactory.create_sync(name=backend_name, enabled=True)
     test_db.commit()
     selected_backend_id = selected_backend.id

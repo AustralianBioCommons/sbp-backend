@@ -52,7 +52,7 @@ from ..schemas.workflows.single_prediction import (
     validate_single_prediction_entities,
 )
 from ..services import compute_backends
-from services.compute_backends import resolve_backend_launch_config
+from ..services.compute_backends import resolve_backend_launch_config
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
@@ -544,7 +544,7 @@ async def launch_workflow(
         )
 
     selection_settings = BackendSelectionSettings.current_settings(db_session)
-    backend = compute_backends.get_next_backend_for_launch(db_session, selection_settings)
+    backend = compute_backends.get_next_backend_for_launch(db_session, selection_settings, workflow)
     try:
         launch_config = resolve_backend_launch_config(db_session, backend, workflow)
         globus_settings = launch_config.require_globus()

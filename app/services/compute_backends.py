@@ -1,24 +1,22 @@
 import random
 from collections.abc import Sequence
-from itertools import cycle
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette import status
 
-from app.db.models import ComputeBackend
-from app.db.models.backends import BackendSelectionSettings
-from app.schemas.backend import BackendSelectionMethod
-from db.models import ComputeBackend, Workflow, BackendWorkflowSettings, WorkflowRun
-from schemas.backend import BackendLaunchConfig
-from services.seqera_errors import WorkflowLaunchError
-from services.workflow_config_fetcher import validate_config_path
+from ..db.models import BackendWorkflowSettings, ComputeBackend, Workflow, WorkflowRun
+from ..db.models.backends import BackendSelectionSettings
+from ..schemas.backend import BackendLaunchConfig
+from .seqera_errors import WorkflowLaunchError
+from .workflow_config_fetcher import validate_config_path
 
 
 def get_next_backend_for_launch(
     session: Session,
     selection_settings: BackendSelectionSettings | None,
+    workflow: Workflow,
 ) -> ComputeBackend:
     """
     Select the next compute backend to launch a job on, based on
@@ -30,7 +28,7 @@ def get_next_backend_for_launch(
             detail="Backend selection settings are not configured.",
         )
     try:
-        return select_next_backend(session, selection_settings)
+        return select_next_backend(session, selection_settings, workflow)
     except (ValueError, IndexError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -38,27 +36,47 @@ def get_next_backend_for_launch(
         ) from exc
 
 
-def select_next_backend(session: Session, selection_settings: BackendSelectionSettings) -> ComputeBackend:
+def select_next_backend(
+    session: Session, selection_settings: BackendSelectionSettings, workflow: Workflow
+) -> ComputeBackend:
     if selection_settings.selection_method == "random":
-        return get_backend_random(session)
+        return get_backend_random(session, workflow)
     elif selection_settings.selection_method == "cycle":
-        return get_backend_cycle(session, selection_settings)
+        return get_backend_cycle(session, selection_settings, workflow)
     else:
         raise ValueError(f"Unknown selection method: {selection_settings.selection_method}")
 
-def get_enabled_backends(session: Session) -> Sequence[ComputeBackend]:
-    """
-    Get currently enabled backends, ordering by name (so we have a stable ordering
-    if cycling etc.)
-    """
-    return session.scalars(select(ComputeBackend).where(ComputeBackend.enabled).order_by(ComputeBackend.name)).all()
 
-def get_backend_random(session: Session) -> ComputeBackend:
-    enabled_backends = get_enabled_backends(session)
+def get_enabled_backends(session: Session, workflow: Workflow) -> Sequence[ComputeBackend]:
+    """
+    Get enabled backends that have not disabled this workflow.
+    Missing workflow overrides remain eligible; order by name for stable cycling.
+    """
+    disabled_for_workflow = (
+        select(BackendWorkflowSettings.id)
+        .where(
+            BackendWorkflowSettings.compute_backend_id == ComputeBackend.id,
+            BackendWorkflowSettings.workflow_id == workflow.id,
+            BackendWorkflowSettings.enabled.is_(False),
+        )
+        .exists()
+    )
+    return session.scalars(
+        select(ComputeBackend)
+        .where(ComputeBackend.enabled, ~disabled_for_workflow)
+        .order_by(ComputeBackend.name)
+    ).all()
+
+
+def get_backend_random(session: Session, workflow: Workflow) -> ComputeBackend:
+    enabled_backends = get_enabled_backends(session, workflow)
     return random.choice(enabled_backends)
 
-def get_backend_cycle(session: Session, selection_settings: BackendSelectionSettings) -> ComputeBackend:
-    backends = get_enabled_backends(session)
+
+def get_backend_cycle(
+    session: Session, selection_settings: BackendSelectionSettings, workflow: Workflow
+) -> ComputeBackend:
+    backends = get_enabled_backends(session, workflow)
     if not backends:
         raise ValueError("No enabled compute backends")
 

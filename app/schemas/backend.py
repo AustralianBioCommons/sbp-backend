@@ -2,9 +2,9 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import StringConstraints, BaseModel
+from pydantic import BaseModel, StringConstraints
 
-from config import GlobusSettings
+from ..config import GlobusSettings
 
 
 class ComputeBackendName(StrEnum):
@@ -35,6 +35,7 @@ class BackendSelectionMethod(StrEnum):
     at submission time, since we need to prepare the input
     and launch payload in advance.
     """
+
     RANDOM = "random"
     CYCLE = "cycle"
 
