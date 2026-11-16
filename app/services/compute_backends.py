@@ -10,6 +10,10 @@ from starlette import status
 from app.db.models import ComputeBackend
 from app.db.models.backends import BackendSelectionSettings
 from app.schemas.backend import BackendSelectionMethod
+from db.models import ComputeBackend, Workflow, BackendWorkflowSettings, WorkflowRun
+from schemas.backend import BackendLaunchConfig
+from services.seqera_errors import WorkflowLaunchError
+from services.workflow_config_fetcher import validate_config_path
 
 
 def get_next_backend_for_launch(
@@ -72,3 +76,62 @@ def get_backend_cycle(session: Session, selection_settings: BackendSelectionSett
     return backend
 
 
+def resolve_backend_launch_config(
+    session: Session, backend: ComputeBackend, workflow: Workflow
+) -> BackendLaunchConfig:
+    """
+    Resolve backend-specific settings before launch.
+
+    Settings may come from:
+    - BackendWorkflowSettings (preferred, if present)
+    - Workflow (fallback if backend-specific setting missing/not defined)
+    """
+    if not backend.enabled:
+        raise ValueError(f"Compute backend '{backend.name}' is disabled")
+    override = BackendWorkflowSettings.get_for_workflow(session, backend.id, workflow.id)
+    if override is not None and not override.enabled:
+        raise ValueError(f"Workflow '{workflow.name}' is disabled on backend '{backend.name}'")
+    config_path = (
+        override.config_path
+        if override is not None and override.config_path is not None
+        else workflow.config_path
+    )
+    ref_database = (
+        override.ref_database_dir
+        if override is not None and override.ref_database_dir is not None
+        else workflow.ref_database
+    )
+    config = BackendLaunchConfig(
+        backend_id=backend.id,
+        workflow_id=workflow.id,
+        backend_name=backend.name,
+        workspace_id=backend.seqera_workspace_id,
+        compute_env_id=backend.seqera_compute_env_id,
+        base_work_dir=backend.base_work_dir,
+        config_path=config_path if config_path is not None else "",
+        ref_database_dir=ref_database,
+        project_id=backend.project_id,
+        repository_transfer=backend.repository_transfer,
+        data_transfer=backend.data_transfer,
+        globus=backend.get_settings().globus,
+    )
+    validate_config_path(config.config_path)
+    return config
+
+
+def validate_backend_launch_config(
+    workflow_run: WorkflowRun, backend: ComputeBackend, config: BackendLaunchConfig
+) -> None:
+    # Relationship foreign keys may not be populated until the new run is flushed.
+    run_backend_id = workflow_run.backend_id
+    if run_backend_id is None and workflow_run.backend is not None:
+        run_backend_id = workflow_run.backend.id
+    workflow_id = workflow_run.workflow_id
+    if workflow_id is None and workflow_run.workflow is not None:
+        workflow_id = workflow_run.workflow.id
+    if (
+        run_backend_id != backend.id
+        or config.backend_id != backend.id
+        or config.workflow_id != workflow_id
+    ):
+        raise WorkflowLaunchError("Backend configuration does not match the workflow run")
