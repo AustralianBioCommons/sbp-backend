@@ -50,10 +50,17 @@ def get_proteindj_config_text(
     config_file_path: str,
     *,
     user_details: WorkflowUserDetails,
+    pbs_enabled: bool = True,
+    gadi_project: str | None = None,
 ) -> str:
     """Read proteindj base config and append a process override block with runtime values."""
     base = fetch_workflow_config(config_file_path)
 
-    cluster_opts = f"-A {user_details.get_encoded_account_details()}"
+    if not pbs_enabled:
+        return base
+
+    cluster_opts = (
+        f"-P {gadi_project} " if gadi_project else ""
+    ) + f"-A {user_details.get_encoded_account_details()}"
     override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
     return base + override

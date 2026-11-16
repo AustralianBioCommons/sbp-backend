@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 
-def _validate_config_path(path_or_url: str) -> None:
+def validate_config_path(path_or_url: str) -> None:
     if not path_or_url or not path_or_url.strip():
         raise ValueError("config_path must not be empty")
 
@@ -28,7 +28,7 @@ def _validate_config_path(path_or_url: str) -> None:
 
 def fetch_workflow_config(path_or_url: str) -> str:
     """Return the text content of a workflow config from a local path or URL."""
-    _validate_config_path(path_or_url)
+    validate_config_path(path_or_url)
 
     if path_or_url.startswith(("http://", "https://")):
         response = httpx.get(path_or_url, timeout=30, follow_redirects=True)

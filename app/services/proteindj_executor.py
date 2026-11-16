@@ -10,10 +10,13 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
 from ..db.models.core import DataTransfer, RunInput, S3Object
+from ..schemas.backend import ComputeBackendName, RepositoryTransferMode
+from schemas.backend import BackendLaunchConfig
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .compute_backends import validate_backend_launch_config
 from .globus_transfer import build_gadi_input_path, build_gadi_output_path
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteindj_config import (
@@ -57,7 +60,8 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
-    config_path: str,
+    backend: ComputeBackend,
+    launch_config: BackendLaunchConfig,
     revision: str | None = None,
     output_id: str | None = None,
     form_data: WorkflowFormData,
@@ -65,8 +69,10 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteindj launch payload."""
-    workspace_id = settings.seqera.work_space
-    compute_env_id = settings.seqera.compute_id
+    validate_backend_launch_config(workflow_run, backend, launch_config)
+    globus_settings = launch_config.require_globus()
+    workspace_id = launch_config.workspace_id
+    compute_env_id = launch_config.compute_env_id
 
     run_name = (form.runName or "").strip()
     if not run_name:
@@ -78,7 +84,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     out_dir = build_gadi_output_path(
         output_key,
         "de-novo-design",
-        globus_settings=settings.globus,
+        globus_settings=globus_settings,
     )
 
     proteindj_fields = _parse_proteindj_form_data(form_data)
@@ -92,7 +98,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         workflow_run.id,
         "de-novo-design",
         os.path.basename(pdb_key),
-        globus_settings=settings.globus,
+        globus_settings=globus_settings,
     )
     pdb_transfer = DataTransfer(
         workflow_run_id=workflow_run.id,
@@ -133,8 +139,10 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "paramsText": params_text,
         "configProfiles": get_proteindj_config_profiles(),
         "configText": get_proteindj_config_text(
-            config_path,
+            launch_config.config_path,
             user_details=user_details,
+            pbs_enabled=backend.name == ComputeBackendName.GADI,
+            gadi_project=launch_config.project_id,
         ),
         "resume": False,
     }
@@ -145,7 +153,8 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         prerun_script_path=workflow.prerun_script_path,
         repo_gadi_path=workflow.repo_gadi_path,
         repo_url=workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
+        module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
+        offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,
     )
 
     queued_job = QueuedJob(

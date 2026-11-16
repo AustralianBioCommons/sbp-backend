@@ -9,8 +9,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..schemas.backend import ComputeBackendName, RepositoryTransferMode
+from schemas.backend import BackendLaunchConfig
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
+from .compute_backends import validate_backend_launch_config
 from .globus_transfer import build_gadi_output_path
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteinfold_config import (
@@ -62,7 +65,8 @@ async def prepare_proteinfold_workflow(
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
-    config_path: str,
+    backend: ComputeBackend,
+    launch_config: BackendLaunchConfig,
     revision: str | None = None,
     output_id: str | None = None,
     mode: str = "alphafold2",
@@ -72,15 +76,17 @@ async def prepare_proteinfold_workflow(
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteinfold launch payload."""
-    workspace_id = settings.seqera.work_space
-    compute_env_id = settings.seqera.compute_id
+    validate_backend_launch_config(workflow_run, backend, launch_config)
+    globus_settings = launch_config.require_globus()
+    workspace_id = launch_config.workspace_id
+    compute_env_id = launch_config.compute_env_id
 
     if not output_id or not output_id.strip():
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
     out_dir = build_gadi_output_path(
         output_id.strip(),
         "single-prediction",
-        globus_settings=settings.globus,
+        globus_settings=globus_settings,
     )
 
     if not form.runName or not form.runName.strip():
@@ -105,9 +111,10 @@ async def prepare_proteinfold_workflow(
         "paramsText": params_text,
         "configProfiles": get_proteinfold_config_profiles(),
         "configText": get_proteinfold_config_text(
-            config_path,
+            launch_config.config_path,
             user_details=user_details,
-            gadi_project=settings.seqera.gadi_project,
+            gadi_project=launch_config.project_id,
+            pbs_enabled=backend.name == ComputeBackendName.GADI,
         ),
         "resume": False,
     }
@@ -118,10 +125,11 @@ async def prepare_proteinfold_workflow(
         prerun_script_path=workflow.prerun_script_path,
         repo_gadi_path=workflow.repo_gadi_path,
         repo_url=workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
+        module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
+        offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,
     )
-    if workflow.ref_database:
-        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
+    if launch_config.ref_database_dir:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(launch_config.ref_database_dir)}\n"
     launch_payload["preRunScript"] = prerun_script
 
     queued_job = QueuedJob(
