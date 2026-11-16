@@ -1,10 +1,23 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID as PyUUID
 from uuid import uuid7
 
-from sqlalchemy import JSON, UUID, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    UUID,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+    select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
+from ...schemas.backend import RepositoryTransferMode
 from .. import Base
 
 if TYPE_CHECKING:
@@ -19,6 +32,11 @@ class QueuedJob(Base):
     workflow_run_id: Mapped[UUID] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False)
     workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id"), nullable=False)
     launch_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    repository_transfer: Mapped[RepositoryTransferMode] = mapped_column(
+        String(20), nullable=False, default=RepositoryTransferMode.NATIVE
+    )
+    repository_location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repository_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[JobStatus] = mapped_column(String(length=20), nullable=False, default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     queued_at: Mapped[datetime] = mapped_column(
