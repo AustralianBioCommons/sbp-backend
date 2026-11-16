@@ -19,14 +19,21 @@ from app.routes.dependencies import get_current_user_id, get_db
 from app.schemas.backend import BackendSelectionMethod, ComputeBackendName
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
-from tests.datagen import BackendSelectionSettingsFactory, ComputeBackendFactory
+from tests.datagen import (
+    BackendSelectionSettingsFactory,
+    BackendWorkflowSettingsFactory,
+    ComputeBackendFactory,
+)
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
 
 
 @pytest.fixture(autouse=True)
-def backend_selection_settings(persistent_models):
+def backend_selection_settings(persistent_models, monkeypatch, mock_settings):
+    for prefix in ("GADI_", "SETONIX_"):
+        for field, value in mock_settings.globus.model_dump().items():
+            monkeypatch.setenv(f"{prefix}GLOBUS_{field.upper()}", str(value))
     return BackendSelectionSettingsFactory.create_sync(
         selection_method=BackendSelectionMethod.RANDOM,
     )
@@ -1160,8 +1167,11 @@ def test_launch_records_per_run_work_dir(
     """Each run gets its own workdir, "<base workdir>/<run id>", recorded on
     workflow_runs and sent to Seqera."""
     _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
-    get_settings_override = wisps_client.app.dependency_overrides.get(get_settings, get_settings)
-    expected_work_dir = get_settings_override().seqera.work_dir
+    with Session(test_engine) as session:
+        backend = session.scalar(select(ComputeBackend))
+        backend.base_work_dir = "/backend-specific/work"
+        session.commit()
+    expected_work_dir = "/backend-specific/work"
 
     run_ids = []
     for run_name in ("workdir-run-1", "workdir-run-2"):
@@ -1819,3 +1829,97 @@ def test_launch_interaction_screening_rejected_when_insufficient_credits(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 0  # unchanged
+
+
+@pytest.mark.parametrize(
+    "invalid", ["workflow_disabled", "empty_override", "empty_workspace", "missing_globus"]
+)
+def test_invalid_backend_config_fails_before_staging(
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+    mock_repo_staging,
+    monkeypatch,
+    invalid,
+):
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    if invalid in ("workflow_disabled", "empty_override"):
+        BackendWorkflowSettingsFactory.create_sync(
+            compute_backend=default_backend,
+            workflow=workflow,
+            enabled=invalid != "workflow_disabled",
+            config_path="" if invalid == "empty_override" else None,
+            ref_database_dir=None,
+        )
+    elif invalid == "empty_workspace":
+        default_backend.seqera_workspace_id = ""
+        test_db.commit()
+    else:
+        monkeypatch.setenv("GADI_GLOBUS_CLIENT_SECRET", "")
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+    assert response.status_code == 503
+    mock_repo_staging.assert_not_called()
+    assert test_db.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_uses_workflow_override(
+    mock_prepare,
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+):
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    BackendWorkflowSettingsFactory.create_sync(
+        compute_backend=default_backend,
+        workflow=workflow,
+        enabled=True,
+        config_path="/backend/custom.config",
+        ref_database_dir="/backend/database",
+    )
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+    assert response.status_code == 201
+    config = mock_prepare.call_args.kwargs["launch_config"]
+    assert config.config_path == "/backend/custom.config"
+    assert config.ref_database_dir == "/backend/database"
+
+
+def test_launch_prepares_proteindj_with_resolved_backend_config(
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+    tmp_path,
+):
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    config_path = tmp_path / "backend.config"
+    config_path.write_text("// backend launch configuration\n")
+    BackendWorkflowSettingsFactory.create_sync(
+        compute_backend=default_backend,
+        workflow=workflow,
+        enabled=True,
+        config_path=str(config_path),
+        ref_database_dir=None,
+    )
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "real-prepare"},
+        "s3InputKey": "inputs/pdb/input.pdb",
+        "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "starting_pdb": "s3://bucket/input.pdb",
+            "number_of_final_designs": 1,
+            "min_length": 100,
+            "max_length": 150,
+            "target_hotspot_residues": "A20",
+        },
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 201, response.text
+    job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == UUID(response.json()["runId"]))
+    )
+    assert "// backend launch configuration" in job.launch_payload["configText"]
+    assert job.launch_payload["workspaceId"] == default_backend.seqera_workspace_id
