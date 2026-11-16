@@ -12,8 +12,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
 from ..db.models.core import DataTransfer, RunInput, S3Object
-from ..schemas.backend import ComputeBackendName, RepositoryTransferMode
-from schemas.backend import BackendLaunchConfig
+from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .compute_backends import validate_backend_launch_config

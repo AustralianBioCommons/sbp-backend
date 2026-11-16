@@ -22,8 +22,12 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
-from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
-from schemas.backend import BackendLaunchConfig
+from app.schemas.backend import (
+    BackendLaunchConfig,
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryTransferMode,
+)
 from app.services.job_utils import UserJobListRow
 
 fake = Faker()

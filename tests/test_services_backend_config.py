@@ -8,7 +8,10 @@ from pydantic import ValidationError
 
 from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from services.compute_backends import resolve_backend_launch_config, validate_backend_launch_config
+from app.services.compute_backends import (
+    resolve_backend_launch_config,
+    validate_backend_launch_config,
+)
 from app.services.proteindj_executor import prepare_proteindj_workflow
 from app.services.proteinfold_executor import prepare_proteinfold_workflow
 from app.services.seqera_errors import WorkflowLaunchError
