@@ -71,6 +71,12 @@ class WorkflowFactory(SQLAlchemyFactory[Workflow]):
     __set_relationships__ = False
     config_path = "/test/workflow.config"
     prerun_script_path = None
+    repo_staged_commit_sha = None
+    repo_staging_status = None
+    repo_gadi_path = None
+    repo_staging_transfer_id = None
+    repo_staging_error_message = None
+    repo_staging_updated_at = None
 
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
@@ -160,6 +166,8 @@ class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings])
 
 class WorkflowRepoStatusFactory(SQLAlchemyFactory[WorkflowRepoStatus]):
     __set_relationships__ = False
+    transfer_id = None
+    error_message = None
 
 
 def build_backend_launch_kwargs(
