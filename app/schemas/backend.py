@@ -58,8 +58,6 @@ class BackendLaunchConfig(BaseModel):
     globus: GlobusSettings | None = None
 
     def require_globus(self) -> GlobusSettings:
-        if self.data_transfer != DataTransferMode.GLOBUS:
-            raise ValueError("Native input/output preparation is not implemented")
         if self.globus is None:
             raise ValueError("Globus settings are required by the current input/output preparation")
         return self.globus
