@@ -29,6 +29,7 @@ from app.schemas.backend import (
     RepositoryTransferMode,
 )
 from app.services.job_utils import UserJobListRow
+from app.services.workflow_repo_staging import RepositoryPreparation
 
 fake = Faker()
 
@@ -105,6 +106,9 @@ class S3ObjectFactory(SQLAlchemyFactory[S3Object]):
 class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
     __check_model__ = False
     __set_relationships__ = False
+    repository_transfer = RepositoryTransferMode.NATIVE
+    repository_location = None
+    repository_ready = True
 
 
 class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
@@ -200,6 +204,9 @@ def build_backend_launch_kwargs(
     workflow_run.workflow_id = workflow_run.workflow.id
     return {
         "backend": backend,
+        "repository": RepositoryPreparation(
+            backend.repository_transfer, "/test/checkouts/dev/sha/owner/repo", True
+        ),
         "launch_config": BackendLaunchConfig(
             backend_id=backend.id,
             workflow_id=workflow_run.workflow_id,

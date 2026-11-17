@@ -16,10 +16,10 @@ from app.db.models import WorkflowRepoStatus
 from app.services.globus_errors import GlobusTransferError
 from app.services.workflow_repo_staging import (
     RepoStagingError,
-    build_repo_gadi_path,
-    ensure_repo_staging_requested,
+    build_repo_checkout_path,
     parse_github_repo,
     poll_repo_staging,
+    prepare_repository,
     resolve_latest_commit_sha,
     stage_pending_repo,
     sync_workflow_repo_staging,
@@ -155,20 +155,20 @@ def test_parse_github_repo_rejects_missing_repo():
         parse_github_repo("https://github.com/nf-core")
 
 
-def test_build_repo_gadi_path(globus_settings):
-    path = build_repo_gadi_path(
+def test_build_repo_checkout_path(globus_settings):
+    path = build_repo_checkout_path(
         "nf-core", "proteinfold", "dev", "abc123", globus_settings=globus_settings
     )
     assert path == "/test/workflow_repos/proteinfold/dev/abc123/nf-core/proteinfold"
 
 
-def test_build_repo_gadi_path_distinguishes_revisions_at_same_commit(globus_settings):
+def test_build_repo_checkout_path_distinguishes_revisions_at_same_commit(globus_settings):
     """Two revisions resolving to the same commit must not collide on one
     checkout path - each name needs its own staged copy with its own ref."""
-    main_path = build_repo_gadi_path(
+    main_path = build_repo_checkout_path(
         "nf-core", "proteinfold", "main", "abc123", globus_settings=globus_settings
     )
-    staging_path = build_repo_gadi_path(
+    staging_path = build_repo_checkout_path(
         "nf-core", "proteinfold", "staging", "abc123", globus_settings=globus_settings
     )
     assert main_path != staging_path
@@ -215,11 +215,11 @@ def test_resolve_latest_commit_sha_missing_sha_raises(mock_settings):
 
 
 # ============================================================================
-# ensure_repo_staging_requested
+# prepare_repository
 # ============================================================================
 
 
-def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
+def test_prepare_repository_marks_pending_on_cache_miss(
     test_db, persistent_models, mock_settings, repo_status_factory
 ):
     repo = repo_status_factory()
@@ -232,18 +232,16 @@ def test_ensure_repo_staging_requested_marks_pending_on_cache_miss(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="newsha"),
     ):
-        locations = ensure_repo_staging_requested(
-            test_db, workflow, backend=backend, settings=mock_settings
-        )
+        locations = prepare_repository(test_db, workflow, backend=backend, settings=mock_settings)
 
     repo = WorkflowRepoStatus.get_for_workflow(test_db, backend.id, workflow.id)
-    assert locations.gadi_path == repo.location
-    assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/newsha/test/repo"
+    assert locations.location == repo.location
+    assert locations.location == "/test/workflow_repos/repo/dev/newsha/test/repo"
     assert repo.staged_commit_sha == "newsha"
     assert repo.status == "pending"
 
 
-def test_ensure_repo_staging_requested_resets_on_commit_change(
+def test_prepare_repository_resets_on_commit_change(
     test_db, persistent_models, mock_settings, repo_status_factory
 ):
     workflow = repo_status_factory(
@@ -260,7 +258,7 @@ def test_ensure_repo_staging_requested_resets_on_commit_change(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="newsha"),
     ):
-        ensure_repo_staging_requested(
+        prepare_repository(
             test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
         )
 
@@ -269,7 +267,7 @@ def test_ensure_repo_staging_requested_resets_on_commit_change(
     assert workflow.transfer_id is None
 
 
-def test_ensure_repo_staging_requested_reuses_cache_hit(
+def test_prepare_repository_reuses_cache_hit(
     test_db, persistent_models, mock_settings, repo_status_factory
 ):
     """Same commit, already completed - must not reset back to pending (that
@@ -286,16 +284,16 @@ def test_ensure_repo_staging_requested_reuses_cache_hit(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        locations = ensure_repo_staging_requested(
+        locations = prepare_repository(
             test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
         )
 
-    assert locations.gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
-    assert locations.assets_gadi_path == "/test/workflow_repos/repo/dev/samesha/test/repo"
+    assert locations.location == "/test/workflow_repos/repo/dev/samesha/test/repo"
+    assert locations.location == "/test/workflow_repos/repo/dev/samesha/test/repo"
     assert workflow.status == "completed"
 
 
-def test_ensure_repo_staging_requested_restages_on_revision_change_same_commit(
+def test_prepare_repository_restages_on_revision_change_same_commit(
     test_db, persistent_models, mock_settings, repo_status_factory
 ):
     """Regression test: a freshly-cut branch ("staging") can resolve to the
@@ -315,16 +313,16 @@ def test_ensure_repo_staging_requested_restages_on_revision_change_same_commit(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        locations = ensure_repo_staging_requested(
+        locations = prepare_repository(
             test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
         )
 
-    assert locations.gadi_path == "/test/workflow_repos/repo/staging/samesha/test/repo"
+    assert locations.location == "/test/workflow_repos/repo/staging/samesha/test/repo"
     assert workflow.location == "/test/workflow_repos/repo/staging/samesha/test/repo"
     assert workflow.status == "pending"
 
 
-def test_ensure_repo_staging_requested_retries_after_failure(
+def test_prepare_repository_retries_after_failure(
     test_db, persistent_models, mock_settings, repo_status_factory
 ):
     """Same commit but previously failed - must re-request staging, not treat
@@ -341,7 +339,7 @@ def test_ensure_repo_staging_requested_retries_after_failure(
         "app.services.workflow_repo_staging._get_github_client",
         return_value=_mock_github_client(sha="samesha"),
     ):
-        ensure_repo_staging_requested(
+        prepare_repository(
             test_db, workflow.workflow, backend=workflow.compute_backend, settings=mock_settings
         )
 
@@ -687,7 +685,7 @@ def test_request_does_not_overwrite_active_transfer_for_different_commit(
         return_value=_mock_github_client(sha="different-sha"),
     ):
         with pytest.raises(RepoStagingError, match="already active"):
-            ensure_repo_staging_requested(
+            prepare_repository(
                 test_db,
                 repo.workflow,
                 backend=repo.compute_backend,
@@ -724,7 +722,16 @@ def test_poll_promotes_only_runs_on_the_matching_backend(
     for backend in (repo.compute_backend, other_backend):
         run = WorkflowRunFactory.create_sync(workflow=repo.workflow, backend=backend, owner=user)
         jobs.append(
-            QueuedJobFactory.create_sync(workflow=repo.workflow, workflow_run=run, status="staging")
+            QueuedJobFactory.create_sync(
+                workflow=repo.workflow,
+                workflow_run=run,
+                status="staging",
+                repository_transfer="globus",
+                repository_location=(
+                    repo.location if backend == repo.compute_backend else other_repo.location
+                ),
+                repository_ready=False,
+            )
         )
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
     poll_repo_staging(test_db, repo, settings=mock_settings)
@@ -756,3 +763,214 @@ def test_request_creates_independent_state_for_each_backend(test_db, repo_status
     assert other_repo.status == "pending"
     assert repo.status == "completed"
     assert repo.staged_commit_sha == "old-commit"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_native_repository_bypasses_staging(test_db, repo_status_factory, mocker, existing):
+    from app.schemas.backend import RepositoryTransferMode
+
+    repo = repo_status_factory(status="failed", error_message="old failure")
+    workflow, backend = repo.workflow, repo.compute_backend
+    if not existing:
+        test_db.delete(repo)
+        test_db.commit()
+    backend.repository_transfer = RepositoryTransferMode.NATIVE
+    resolve = mocker.patch("app.services.workflow_repo_staging.resolve_latest_commit_sha")
+    globus = mocker.patch("app.services.workflow_repo_staging.get_repository_globus_settings")
+    upload = mocker.patch("app.services.workflow_repo_staging._clone_and_upload_repo")
+    result = prepare_repository(test_db, workflow, backend=backend)
+    assert result.mode == RepositoryTransferMode.NATIVE
+    assert result.location is None
+    assert result.ready
+    resolve.assert_not_called()
+    globus.assert_not_called()
+    upload.assert_not_called()
+    if existing:
+        assert repo.status == "failed"
+    else:
+        assert WorkflowRepoStatus.get_for_workflow(test_db, backend.id, workflow.id) is None
+
+
+def test_old_checkout_remains_ready_while_inputs_wait_and_cache_refreshes(
+    test_db,
+    repo_status_factory,
+    mock_transfer_client,
+    mock_settings,
+):
+    from app.services.globus_transfer import _try_promote_staging_job
+    from tests.datagen import AppUserFactory, DataTransferFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="in_progress", transfer_id="old-task")
+    old_location = repo.location
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow,
+        backend=repo.compute_backend,
+        owner=AppUserFactory.create_sync(),
+    )
+    job = QueuedJobFactory.create_sync(
+        workflow=repo.workflow,
+        workflow_run=run,
+        status="staging",
+        repository_transfer="globus",
+        repository_location=old_location,
+        repository_ready=False,
+    )
+    transfer = DataTransferFactory.create_sync(
+        workflow_run=run, direction="input", status="pending"
+    )
+    mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
+    poll_repo_staging(test_db, repo, settings=mock_settings)
+    assert job.repository_ready
+    assert job.status == "staging"
+    WorkflowRepoStatus.request_staging(
+        test_db,
+        repo.compute_backend,
+        repo.workflow,
+        location="/new/checkout",
+        commit_sha="new-commit",
+    )
+    repo.mark_failed("new checkout failed")
+    test_db.commit()
+    transfer.status = "completed"
+    test_db.commit()
+    _try_promote_staging_job(test_db, job)
+    assert job.status == "pending"
+    assert job.repository_location == old_location
+
+
+@pytest.mark.parametrize("status", ["completed", "failed"])
+def test_different_checkout_does_not_satisfy_or_fail_repository_gate(
+    test_db,
+    repo_status_factory,
+    status,
+):
+    from app.services.globus_transfer import _try_promote_staging_job
+    from tests.datagen import AppUserFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status=status)
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow, backend=repo.compute_backend, owner=AppUserFactory.create_sync()
+    )
+    job = QueuedJobFactory.create_sync(
+        workflow=repo.workflow,
+        workflow_run=run,
+        status="staging",
+        repository_transfer="globus",
+        repository_location="/different/checkout",
+        repository_ready=False,
+    )
+    _try_promote_staging_job(test_db, job)
+    assert job.status == "staging"
+    assert not job.repository_ready
+
+
+def test_native_job_ignores_stale_failed_globus_status(test_db, repo_status_factory):
+    from app.services.globus_transfer import _try_promote_staging_job
+    from tests.datagen import AppUserFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="failed", error_message="stale error")
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow, backend=repo.compute_backend, owner=AppUserFactory.create_sync()
+    )
+    job = QueuedJobFactory.create_sync(
+        workflow=repo.workflow,
+        workflow_run=run,
+        status="staging",
+        repository_transfer="native",
+        repository_ready=True,
+    )
+    _try_promote_staging_job(test_db, job)
+    assert job.status == "pending"
+
+
+def test_worker_rechecks_state_before_submitting_again(
+    test_db,
+    repo_status_factory,
+    mock_transfer_client,
+    mock_settings,
+):
+    repo = repo_status_factory()
+    mock_transfer_client.get_submission_id.return_value = {"value": "one-submission"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "one-task"}
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo") as clone:
+        stage_pending_repo(test_db, repo, settings=mock_settings)
+        stage_pending_repo(test_db, repo, settings=mock_settings)
+    clone.assert_called_once()
+    mock_transfer_client.submit_transfer.assert_called_once()
+    assert repo.transfer_id == "one-task"
+
+
+def test_pair_lock_is_stable_and_acquired_before_reading(mocker):
+    from uuid import uuid4
+
+    from sqlalchemy.orm import Session
+
+    session = mocker.Mock(spec=Session)
+    session.get_bind.return_value.dialect.name = "postgresql"
+    session.scalar.return_value = None
+    backend_id, workflow_id = uuid4(), uuid4()
+    WorkflowRepoStatus.lock_for_workflow(session, backend_id, workflow_id)
+    first_key = session.execute.call_args.args[0].compile().params
+    WorkflowRepoStatus.lock_for_workflow(session, backend_id, workflow_id)
+    assert session.execute.call_args.args[0].compile().params == first_key
+    assert "pg_advisory_xact_lock" in str(session.execute.call_args.args[0])
+    calls = [call[0] for call in session.mock_calls]
+    assert calls.index("execute") < calls.index("scalar")
+    WorkflowRepoStatus.lock_for_workflow(session, backend_id, uuid4())
+    assert session.execute.call_args.args[0].compile().params != first_key
+
+
+def test_worker_preserves_queued_repository_url_and_revision(
+    test_db,
+    repo_status_factory,
+    mock_transfer_client,
+    mock_settings,
+):
+    from tests.datagen import AppUserFactory, WorkflowRunFactory
+
+    repo = repo_status_factory()
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow, backend=repo.compute_backend, owner=AppUserFactory.create_sync()
+    )
+    QueuedJobFactory.create_sync(
+        workflow=repo.workflow,
+        workflow_run=run,
+        status="staging",
+        repository_transfer="globus",
+        repository_location=repo.location,
+        repository_ready=False,
+        launch_payload={"pipeline": repo.workflow.repo_url, "revision": "dev"},
+    )
+    repo.workflow.repo_url = "https://github.com/other/newrepo"
+    repo.workflow.default_revision = "new-branch"
+    test_db.commit()
+    mock_transfer_client.get_submission_id.return_value = {"value": "old-submission"}
+    mock_transfer_client.submit_transfer.return_value = {"task_id": "old-task"}
+    with patch("app.services.workflow_repo_staging._clone_and_upload_repo") as clone:
+        stage_pending_repo(test_db, repo, settings=mock_settings)
+    assert clone.call_args.args[3] == "https://github.com/test/repo"
+    assert clone.call_args.kwargs["revision"] == "dev"
+    submitted = mock_transfer_client.submit_transfer.call_args.args[0]
+    assert submitted["DATA"][0]["source_path"] == "/workflow-repos-assets/test-repo/dev/abc123"
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_enqueue_rechecks_checkout_after_preparation(test_db, repo_status_factory, changed):
+    from app.schemas.backend import RepositoryTransferMode
+    from tests.datagen import AppUserFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="completed")
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow, backend=repo.compute_backend, owner=AppUserFactory.create_sync()
+    )
+    job = QueuedJobFactory.build(workflow=repo.workflow, workflow_run=run)
+    if changed:
+        with pytest.raises(ValueError, match="changed during preparation"):
+            job.record_repository_preparation(
+                test_db, RepositoryTransferMode.GLOBUS, "/old/checkout", False
+            )
+    else:
+        job.record_repository_preparation(
+            test_db, RepositoryTransferMode.GLOBUS, repo.location, False
+        )
+        assert job.repository_ready

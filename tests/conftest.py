@@ -374,17 +374,18 @@ def override_settings(mock_settings):
 @pytest.fixture(autouse=True)
 def mock_repo_staging(mocker):
     """launch_workflow resolves+stages the workflow's GitHub repo on every call
-    (workflow_repo_staging.ensure_repo_staging_requested), which makes a real
+    (workflow_repo_staging.prepare_repository), which makes a real
     GitHub API request - stub it out by default so tests don't hit the network.
     Tests that specifically exercise repo staging behavior can override this
     with their own patch of the same target."""
-    from app.services.workflow_repo_staging import RepoStagingLocations
+    from app.services.workflow_repo_staging import RepositoryPreparation
 
     return mocker.patch(
-        "app.routes.workflows.ensure_repo_staging_requested",
-        return_value=RepoStagingLocations(
-            gadi_path="/staged/workflow-repo/path",
-            assets_gadi_path="/staged/workflow-repo/assets",
+        "app.routes.workflows.prepare_repository",
+        return_value=RepositoryPreparation(
+            mode="globus",
+            location="/staged/workflow-repo/path",
+            ready=True,
         ),
     )
 

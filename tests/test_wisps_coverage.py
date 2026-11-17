@@ -155,7 +155,7 @@ def test_get_executor_script_fetches_from_url():
     ) as mock_fetch:
         script = get_executor_script(
             prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
-            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
             repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )
@@ -173,7 +173,7 @@ def test_get_executor_script_no_path_returns_header_only():
     with patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch:
         script = get_executor_script(
             prerun_script_path=None,
-            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
             repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )

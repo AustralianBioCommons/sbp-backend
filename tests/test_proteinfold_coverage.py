@@ -589,7 +589,7 @@ def test_get_proteinfold_default_params_is_dict():
 def test_get_executor_script_loads_modules():
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+        repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=["singularity", "nextflow"],
     )
@@ -602,7 +602,7 @@ def test_get_executor_script_loads_modules():
 def test_get_executor_script_omits_nxf_assets_without_repo_gadi_path():
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path=None,
+        repo_checkout_path=None,
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=["singularity"],
     )
@@ -616,7 +616,7 @@ def test_get_executor_script_chmods_working_checkout_bin():
     non-executable on Gadi - this line restores it before the run."""
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+        repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=None,
     )

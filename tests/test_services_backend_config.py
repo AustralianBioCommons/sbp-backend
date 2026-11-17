@@ -16,6 +16,7 @@ from app.services.proteindj_executor import prepare_proteindj_workflow
 from app.services.proteinfold_executor import prepare_proteinfold_workflow
 from app.services.seqera_errors import WorkflowLaunchError
 from app.services.wisps_executor import prepare_wisps_workflow
+from app.services.workflow_repo_staging import RepositoryPreparation
 from tests.datagen import (
     AppUserFactory,
     BackendWorkflowSettingsFactory,
@@ -204,6 +205,11 @@ async def test_preparation_uses_backend_config(
         pipeline=workflow.repo_url,
         backend=backend,
         launch_config=config,
+        repository=RepositoryPreparation(
+            repo_mode,
+            "/checkout/owner/repo" if repo_mode == RepositoryTransferMode.GLOBUS else None,
+            True,
+        ),
         output_id=str(run.id),
         form_data=form_data,
         user_details=WorkflowUserDetails(user_email="test@example.com", ip_address="1.2.3.4"),

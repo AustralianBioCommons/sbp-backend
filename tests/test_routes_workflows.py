@@ -16,7 +16,7 @@ from app.db.models import ComputeBackend, QueuedJob
 from app.db.models.backends import BackendSelectionSettings
 from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.schemas.backend import BackendSelectionMethod, ComputeBackendName
+from app.schemas.backend import BackendSelectionMethod, ComputeBackendName, RepositoryTransferMode
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
 from tests.datagen import (
@@ -1889,13 +1889,25 @@ def test_launch_uses_workflow_override(
     assert config.ref_database_dir == "/backend/database"
 
 
+@pytest.mark.parametrize("repo_mode", list(RepositoryTransferMode))
 def test_launch_prepares_proteindj_with_resolved_backend_config(
     client,
     test_db,
     default_backend,
     persistent_models,
     tmp_path,
+    mocker,
+    repo_mode,
 ):
+    from app.db.models import WorkflowRepoStatus
+    from app.services.workflow_repo_staging import prepare_repository
+
+    default_backend.repository_transfer = repo_mode
+    test_db.commit()
+    mocker.patch("app.routes.workflows.prepare_repository", side_effect=prepare_repository)
+    resolve = mocker.patch(
+        "app.services.workflow_repo_staging.resolve_latest_commit_sha", return_value="launch-sha"
+    )
     workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
     config_path = tmp_path / "backend.config"
     config_path.write_text("// backend launch configuration\n")
@@ -1926,3 +1938,26 @@ def test_launch_prepares_proteindj_with_resolved_backend_config(
     )
     assert "// backend launch configuration" in job.launch_payload["configText"]
     assert job.launch_payload["workspaceId"] == default_backend.seqera_workspace_id
+
+    assert job.repository_transfer == repo_mode
+    assert job.launch_payload["pipeline"] == workflow.repo_url
+    assert job.launch_payload["revision"] == workflow.default_revision
+    if repo_mode == RepositoryTransferMode.NATIVE:
+        resolve.assert_not_called()
+        assert job.repository_location is None
+        assert job.repository_ready
+        assert test_db.scalar(select(func.count()).select_from(WorkflowRepoStatus)) == 0
+        assert "NXF_OFFLINE" not in job.launch_payload["preRunScript"]
+        assert "NXF_ASSETS" not in job.launch_payload["preRunScript"]
+        assert "chmod +x" not in job.launch_payload["preRunScript"]
+    else:
+        resolve.assert_called_once()
+        repo = WorkflowRepoStatus.get_for_workflow(test_db, default_backend.id, workflow.id)
+        assert job.repository_location == repo.location
+        assert not job.repository_ready
+        assert "NXF_ASSETS" in job.launch_payload["preRunScript"]
+        assert "chmod +x" in job.launch_payload["preRunScript"]
+    assert (
+        not {"repository_transfer", "repository_location", "repository_ready"}
+        & job.launch_payload.keys()
+    )
