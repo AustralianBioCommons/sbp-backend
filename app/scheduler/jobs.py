@@ -19,6 +19,7 @@ from ..routes.dependencies import get_db
 from ..schemas.workflows.shared import WorkflowName
 from ..services import gadi_pbs_jobs, globus_transfer, health, seqera, workflow_repo_staging
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
+from ..services.job_queue import promote_ready_job
 from ..services.job_sync import get_runs_requiring_sync, sync_workflow_runs
 from ..services.proteindj_executor import launch_proteindj_workflow
 from ..services.proteinfold_executor import launch_proteinfold_workflow
@@ -297,6 +298,41 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
         f"{capacity} submission slot(s) available)."
     )
     return capacity
+
+
+@with_scheduler_db_session
+def promote_staging_jobs(dry_run: bool = False, *, db_session: Session | None = None) -> None:
+    """Recheck staging dependencies and promote ready jobs before the submission tick."""
+    db_session = require_scheduler_db_session(db_session)
+    if dry_run:
+        count = db_session.scalar(
+            select(func.count()).select_from(QueuedJob).where(QueuedJob.status == "staging")
+        )
+        logger.info(f"Dry run - found {count} staging job(s) to check.")
+        return
+    job_ids = db_session.scalars(
+        select(QueuedJob.id)
+        .where(QueuedJob.status == "staging")
+        .order_by(QueuedJob.queued_at.asc(), QueuedJob.id.asc())
+    ).all()
+    promoted = 0
+    failed = 0
+    errored = 0
+    for job_id in job_ids:
+        try:
+            job = db_session.get(QueuedJob, job_id, populate_existing=True)
+            if job is None or job.status != "staging":
+                continue
+            promote_ready_job(db_session, job)
+            promoted += job.status == "pending"
+            failed += job.status == "failed"
+        except Exception:
+            db_session.rollback()
+            logger.exception(f"Failed to check staging readiness for job {job_id}")
+            errored += 1
+    logger.info(
+        f"Checked {len(job_ids)} staging job(s): promoted={promoted}, failed={failed}, errored={errored}."
+    )
 
 
 @with_scheduler_db_session
