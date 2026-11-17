@@ -21,6 +21,7 @@ from ..schemas.workflows.shared import (
     UIStatus,
     map_pipeline_status_to_ui,
 )
+from .data_movement import uses_native_data
 from .job_utils import ensure_completed_run_score, extract_pipeline_status, sync_service_usage
 from .results_utils import (
     get_output_spec,
@@ -275,6 +276,9 @@ def _ensure_completed_run_output_transfers(
     *,
     settings: Settings | None = None,
 ) -> OutputTransferState:
+    if uses_native_data(run):
+        return OutputTransferState(ready=True)
+
     try:
         spec = get_output_spec(run)
     except ValueError as exc:
@@ -333,10 +337,13 @@ async def finalize_completed_workflow_run(
     outputs_synced = await _sync_completed_run_results(
         db,
         run,
-        suppress_s3_errors=suppress_s3_errors,
+        suppress_s3_errors=False if uses_native_data(run) else suppress_s3_errors,
         settings=settings,
         force=force,
     )
+    if uses_native_data(run) and run_has_missing_required_categories(db, run):
+        return outputs_synced
+
     run.sync_completed_at = datetime.now(tz=UTC)
     db.add(run)
     db.commit()
@@ -377,7 +384,7 @@ async def force_resync_run_outputs(
     submit a new transfer from, so a spec change can never be picked up for
     this run again.
     """
-    if check_any_output_transfer_cleaned_up(db, run):
+    if not uses_native_data(run) and check_any_output_transfer_cleaned_up(db, run):
         return ForceResyncOutcome(ready=False, outputs_synced=0, blocked=True)
 
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
@@ -391,6 +398,11 @@ async def force_resync_run_outputs(
         suppress_s3_errors=suppress_s3_errors,
         settings=settings,
     )
+
+    if uses_native_data(run):
+        return ForceResyncOutcome(
+            ready=not run_has_missing_required_categories(db, run), outputs_synced=outputs_synced
+        )
 
     if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
         # Deliberately does NOT clear run.sync_completed_at: every results
