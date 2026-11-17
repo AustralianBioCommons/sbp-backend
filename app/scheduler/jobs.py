@@ -8,15 +8,16 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import CursorResult, func, select, update
+from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import WorkflowRepoStatus
-from ..db.models.core import AppUser, DataTransfer
+from ..db.models import ComputeBackend, WorkflowRepoStatus
+from ..db.models.core import AppUser, DataTransfer, WorkflowRun
 from ..db.models.job_queue import QueuedJob
 from ..routes.dependencies import get_db
-from ..schemas.workflows.shared import WorkflowName
+from ..schemas.backend import ComputeBackendName
+from ..schemas.workflows.shared import TERMINAL_SEQERA_STATUSES, WorkflowName
 from ..services import gadi_pbs_jobs, globus_transfer, health, seqera, workflow_repo_staging
 from ..services.credits import MONTHLY_CREDIT_REFRESH_ACTOR, SBP_USER_CREDIT_ALLOWANCE
 from ..services.job_queue import promote_ready_job
@@ -83,6 +84,14 @@ class LaunchFunction(Protocol):
         settings: Settings,
         dry_run: bool = False,
     ) -> Awaitable[WorkflowLaunchResult | None]: ...
+
+
+class WorkflowCapacityCheck(Protocol):
+    """Return available workflow slots, or None for an uncapped backend."""
+
+    def __call__(
+        self, db_session: Session, backend: ComputeBackend, settings: Settings | None = None
+    ) -> int | None: ...
 
 
 def get_retry_delay(job: QueuedJob) -> timedelta:
@@ -241,11 +250,13 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
         return
 
 
-def get_available_workflow_capacity(db_session: Session, settings: Settings | None = None) -> int:
+def get_gadi_workflow_capacity(
+    db_session: Session, backend: ComputeBackend, settings: Settings | None = None
+) -> int | None:
     """
     How many more workflows can be submitted to Gadi right now, per sbp_service's
     queued + running jobs in the workflow/workflow-exec queues (see
-    MAX_CONCURRENT_WORKFLOWS). Both queues count, since Gadi's own job limit
+    backend.max_workflows). Both queues count, since Gadi's own job limit
     isn't documented to only consider the exec queue.
 
     Also counts jobs submitted after the snapshot (it lags reality), so
@@ -255,8 +266,10 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
     count instead of a rolling time window - a window would still fail open
     the longer the snapshot stays stuck, since long-running jobs age out of it.
     """
+    max_jobs = backend.max_workflows
+    if max_jobs is None:
+        return None
     settings = settings or get_settings()
-    max_jobs = settings.seqera.max_concurrent_workflows
     snapshot = asyncio.run(gadi_pbs_jobs.get_pbs_jobs(settings=settings))
     snapshot_age = datetime.now(UTC) - snapshot.generated_at
 
@@ -266,7 +279,11 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
             f"{snapshot.generated_at.isoformat()}) - falling back to Seqera's own "
             "active-workflow count instead of the unusable PBS job count."
         )
-        active_count = asyncio.run(seqera.count_active_workflows(settings=settings))
+        active_count = asyncio.run(
+            seqera.count_active_workflows(
+                workspace_id=backend.seqera_workspace_id, settings=settings
+            )
+        )
         capacity = max(0, max_jobs - active_count)
         logger.info(
             f"{active_count}/{max_jobs} jobs active per Seqera (PBS snapshot unusable); "
@@ -282,7 +299,9 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
         db_session.scalar(
             select(func.count())
             .select_from(QueuedJob)
+            .join(WorkflowRun, QueuedJob.workflow_run_id == WorkflowRun.id)
             .where(
+                WorkflowRun.backend_id == backend.id,
                 QueuedJob.status == "submitted",
                 QueuedJob.submitted_at > snapshot.generated_at,
             )
@@ -298,6 +317,43 @@ def get_available_workflow_capacity(db_session: Session, settings: Settings | No
         f"{capacity} submission slot(s) available)."
     )
     return capacity
+
+
+def get_submitted_workflow_capacity(
+    db_session: Session, backend: ComputeBackend, settings: Settings | None = None
+) -> int | None:
+    """Placeholder capacity based on submitted runs without a terminal Seqera status."""
+    if backend.max_workflows is None:
+        return None
+    active_count = (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowRun)
+            .where(
+                WorkflowRun.backend_id == backend.id,
+                WorkflowRun.queued_jobs.any(QueuedJob.status == "submitted"),
+                or_(
+                    WorkflowRun.seqera_final_status.is_(None),
+                    func.upper(WorkflowRun.seqera_final_status).not_in(TERMINAL_SEQERA_STATUSES),
+                ),
+            )
+        )
+        or 0
+    )
+    return max(0, backend.max_workflows - active_count)
+
+
+WORKFLOW_CAPACITY_CHECKS: dict[ComputeBackendName, WorkflowCapacityCheck] = {
+    ComputeBackendName.GADI: get_gadi_workflow_capacity,
+    ComputeBackendName.SETONIX: get_submitted_workflow_capacity,
+}
+
+
+def get_available_workflow_capacity(
+    db_session: Session, backend: ComputeBackend, settings: Settings | None = None
+) -> int | None:
+    """Return backend capacity, or None when no workflow cap is configured."""
+    return WORKFLOW_CAPACITY_CHECKS[backend.name](db_session, backend, settings)
 
 
 @with_scheduler_db_session
@@ -345,15 +401,6 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
         logger.warning("Skipping pending job submission while system status is unhealthy.")
         return
 
-    try:
-        available_capacity = get_available_workflow_capacity(db_session, settings=settings)
-    except gadi_pbs_jobs.GadiPbsJobsError as e:
-        logger.warning(f"Could not determine Gadi workflow capacity from PBS jobs snapshot: {e}")
-        return
-    if available_capacity <= 0:
-        logger.info("Gadi workflow-exec queue is at its job limit; skipping submission this tick.")
-        return
-
     now = datetime.now(tz=UTC)
     pending_query = (
         select(QueuedJob)
@@ -366,11 +413,31 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
 
     pending_jobs = db_session.scalars(pending_query).all()
     logger.info(f"Found {len(pending_jobs)} pending jobs.")
-    jobs_to_submit = pending_jobs[:available_capacity]
+    capacities: dict[UUID, int | None] = {}
+    jobs_to_submit = []
+    for job in pending_jobs:
+        backend = job.workflow_run.backend
+        if backend is None:
+            logger.warning(f"Skipping queued job {job.id}: no compute backend is assigned.")
+            continue
+        if backend.id not in capacities:
+            try:
+                capacities[backend.id] = get_available_workflow_capacity(
+                    db_session, backend=backend, settings=settings
+                )
+            except gadi_pbs_jobs.GadiPbsJobsError as exc:
+                logger.warning(f"Could not determine workflow capacity for {backend.name}: {exc}")
+                capacities[backend.id] = 0
+        capacity = capacities[backend.id]
+        if capacity is not None:
+            if capacity <= 0:
+                continue
+            capacities[backend.id] = capacity - 1
+        jobs_to_submit.append(job)
     if len(jobs_to_submit) < len(pending_jobs):
         logger.info(
             f"Only submitting {len(jobs_to_submit)} of {len(pending_jobs)} pending jobs "
-            "due to available Gadi capacity."
+            "due to backend capacity or missing backend assignments."
         )
     for index, job in enumerate(jobs_to_submit):
         launch_id = f"launch_job_{job.id}"
