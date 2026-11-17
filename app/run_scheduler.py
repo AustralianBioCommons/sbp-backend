@@ -14,6 +14,7 @@ load_dotenv()
 
 from app.scheduler import SCHEDULER  # noqa: E402
 from app.scheduler.jobs import (  # noqa: E402
+    promote_staging_jobs,
     refresh_gadi_pbs_jobs,
     refresh_seqera_health_status,
     refresh_user_credits,
@@ -24,6 +25,7 @@ from app.scheduler.jobs import (  # noqa: E402
 )
 
 SUBMIT_INTERVAL = IntervalTrigger(minutes=5)
+STAGING_CHECK_LEAD_TIME = timedelta(seconds=30)
 SYNC_INTERVAL = IntervalTrigger(minutes=10)
 DATA_TRANSFER_SYNC_INTERVAL = IntervalTrigger(minutes=2)
 REPO_STAGING_SYNC_INTERVAL = IntervalTrigger(minutes=2)
@@ -42,6 +44,7 @@ MONTHLY_TRIGGER = CronTrigger(day=1, hour=0, minute=0, timezone="Australia/Brisb
 
 def main(dry_run: bool = False):
     try:
+        queue_check_time = datetime.now(tz=UTC) + timedelta(seconds=30)
         logger.info(
             f"Adding refresh_seqera_health_status to scheduler: trigger = {HEALTH_CHECK_INTERVAL}"
         )
@@ -56,13 +59,25 @@ def main(dry_run: bool = False):
             max_instances=1,
             replace_existing=True,
         )
+        logger.info(f"Adding promote_staging_jobs to scheduler: trigger = {SUBMIT_INTERVAL}")
+        SCHEDULER.add_job(
+            promote_staging_jobs,
+            kwargs={"dry_run": dry_run},
+            jobstore="memory",
+            trigger=SUBMIT_INTERVAL,
+            next_run_time=queue_check_time,
+            id="promote_staging_jobs",
+            misfire_grace_time=60,
+            max_instances=1,
+            replace_existing=True,
+        )
         logger.info(f"Adding submit_pending_jobs to scheduler: trigger = {SUBMIT_INTERVAL}")
         SCHEDULER.add_job(
             submit_pending_jobs,
             kwargs={"dry_run": dry_run},
             jobstore="memory",
             trigger=SUBMIT_INTERVAL,
-            next_run_time=datetime.now(tz=UTC),
+            next_run_time=queue_check_time + STAGING_CHECK_LEAD_TIME,
             id="submit_pending_jobs",
             misfire_grace_time=60,
             max_instances=1,
