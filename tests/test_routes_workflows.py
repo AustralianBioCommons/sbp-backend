@@ -14,9 +14,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.models import ComputeBackend, QueuedJob
 from app.db.models.backends import BackendSelectionSettings
-from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
+from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.schemas.backend import BackendSelectionMethod, ComputeBackendName, RepositoryTransferMode
+from app.schemas.backend import (
+    BackendSelectionMethod,
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryTransferMode,
+)
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
 from tests.datagen import (
@@ -679,7 +684,7 @@ def _add_proteinfold_workflow(test_engine):
             db.commit()
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
@@ -726,7 +731,7 @@ def test_launch_proteinfold_success(
         assert queued_job.status == "staging"
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_configuration_error(
@@ -765,7 +770,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
     assert "run name" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_error(
@@ -875,7 +880,7 @@ def test_launch_single_prediction_rejects_oversized_alphafold2(
     assert "less than 1000" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
@@ -1079,7 +1084,7 @@ def wisps_client(test_engine, default_backend):
         yield c
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_success(
@@ -1161,7 +1166,7 @@ def test_launch_interaction_screening_success(
         }
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_records_per_run_work_dir(
@@ -1252,7 +1257,7 @@ def test_launch_interaction_screening_rejects_bad_samplesheet(
     mock_prepare.assert_not_called()
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_configuration_error(
@@ -1285,7 +1290,7 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
         assert count == 0
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_error(
@@ -1318,7 +1323,7 @@ def test_launch_interaction_screening_queue_preparation_error(
         assert count == 0
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_with_workflow_field_in_launch(
@@ -1555,7 +1560,7 @@ def _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv):
 
 
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_stages_single_multi_fasta(
@@ -1620,7 +1625,7 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     ],
 )
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_deducts_credits_when_enabled(
@@ -1744,7 +1749,7 @@ def test_upload_bulk_prediction_dataset_endpoint_rejects_sequences_payload(
 
 
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_deducts_credits_when_enabled(
@@ -1889,6 +1894,7 @@ def test_launch_uses_workflow_override(
     assert config.ref_database_dir == "/backend/database"
 
 
+@pytest.mark.parametrize("data_mode", list(DataTransferMode))
 @pytest.mark.parametrize("repo_mode", list(RepositoryTransferMode))
 def test_launch_prepares_proteindj_with_resolved_backend_config(
     client,
@@ -1898,10 +1904,12 @@ def test_launch_prepares_proteindj_with_resolved_backend_config(
     tmp_path,
     mocker,
     repo_mode,
+    data_mode,
 ):
     from app.db.models import WorkflowRepoStatus
     from app.services.workflow_repo_staging import prepare_repository
 
+    default_backend.data_transfer = data_mode
     default_backend.repository_transfer = repo_mode
     test_db.commit()
     mocker.patch("app.routes.workflows.prepare_repository", side_effect=prepare_repository)
@@ -1961,3 +1969,24 @@ def test_launch_prepares_proteindj_with_resolved_backend_config(
         not {"repository_transfer", "repository_location", "repository_ready"}
         & job.launch_payload.keys()
     )
+
+    input_rows = test_db.scalars(
+        select(RunInput).where(RunInput.run_id == job.workflow_run_id)
+    ).all()
+    assert len(input_rows) == 1
+    if data_mode == DataTransferMode.NATIVE:
+        assert input_rows[0].data_transfer_id is None
+        assert "s3://bucket/input.pdb" in job.launch_payload["paramsText"]
+        assert f"s3://test-s3-bucket/{job.workflow_run_id}" in job.launch_payload["paramsText"]
+        assert test_db.scalar(select(func.count()).select_from(DataTransfer)) == 0
+    else:
+        assert input_rows[0].data_transfer_id is not None
+        assert "/test/input/" in job.launch_payload["paramsText"]
+        assert "/test/output/" in job.launch_payload["paramsText"]
+    assert job.status == "staging"
+    if data_mode == DataTransferMode.NATIVE and repo_mode == RepositoryTransferMode.NATIVE:
+        from app.scheduler.jobs import promote_staging_jobs
+
+        promote_staging_jobs(db_session=test_db)
+        test_db.refresh(job)
+        assert job.status == "pending"

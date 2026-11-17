@@ -705,7 +705,7 @@ def test_poll_promotes_only_runs_on_the_matching_backend(
     mock_settings,
 ):
     from app.schemas.backend import ComputeBackendName
-    from app.services.globus_transfer import _try_promote_staging_job
+    from app.services.job_queue import promote_ready_job
     from tests.datagen import AppUserFactory, ComputeBackendFactory, WorkflowRunFactory
 
     repo = repo_status_factory(status="in_progress", transfer_id="active-task")
@@ -740,7 +740,7 @@ def test_poll_promotes_only_runs_on_the_matching_backend(
     assert jobs[0].status == "pending"
     assert jobs[1].status == "staging"
     assert other_repo.status == "failed"
-    _try_promote_staging_job(test_db, jobs[1])
+    promote_ready_job(test_db, jobs[1])
     assert jobs[1].status == "failed"
     assert "other backend failure" in jobs[1].error
 
@@ -797,7 +797,7 @@ def test_old_checkout_remains_ready_while_inputs_wait_and_cache_refreshes(
     mock_transfer_client,
     mock_settings,
 ):
-    from app.services.globus_transfer import _try_promote_staging_job
+    from app.services.job_queue import promote_ready_job
     from tests.datagen import AppUserFactory, DataTransferFactory, WorkflowRunFactory
 
     repo = repo_status_factory(status="in_progress", transfer_id="old-task")
@@ -833,7 +833,7 @@ def test_old_checkout_remains_ready_while_inputs_wait_and_cache_refreshes(
     test_db.commit()
     transfer.status = "completed"
     test_db.commit()
-    _try_promote_staging_job(test_db, job)
+    promote_ready_job(test_db, job)
     assert job.status == "pending"
     assert job.repository_location == old_location
 
@@ -844,7 +844,7 @@ def test_different_checkout_does_not_satisfy_or_fail_repository_gate(
     repo_status_factory,
     status,
 ):
-    from app.services.globus_transfer import _try_promote_staging_job
+    from app.services.job_queue import promote_ready_job
     from tests.datagen import AppUserFactory, WorkflowRunFactory
 
     repo = repo_status_factory(status=status)
@@ -859,13 +859,13 @@ def test_different_checkout_does_not_satisfy_or_fail_repository_gate(
         repository_location="/different/checkout",
         repository_ready=False,
     )
-    _try_promote_staging_job(test_db, job)
+    promote_ready_job(test_db, job)
     assert job.status == "staging"
     assert not job.repository_ready
 
 
 def test_native_job_ignores_stale_failed_globus_status(test_db, repo_status_factory):
-    from app.services.globus_transfer import _try_promote_staging_job
+    from app.services.job_queue import promote_ready_job
     from tests.datagen import AppUserFactory, WorkflowRunFactory
 
     repo = repo_status_factory(status="failed", error_message="stale error")
@@ -879,7 +879,7 @@ def test_native_job_ignores_stale_failed_globus_status(test_db, repo_status_fact
         repository_transfer="native",
         repository_ready=True,
     )
-    _try_promote_staging_job(test_db, job)
+    promote_ready_job(test_db, job)
     assert job.status == "pending"
 
 

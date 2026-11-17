@@ -610,3 +610,108 @@ def test_sync_data_transfers_calls_globus_transfer_sync(
     scheduler_jobs.sync_data_transfers(dry_run=False)
 
     mock_sync.assert_called_once_with(test_db, limit=scheduler_jobs.DATA_TRANSFER_SYNC_BATCH_LIMIT)
+
+
+@pytest.mark.parametrize(
+    "dependency, expected",
+    [
+        ("native", "pending"),
+        ("pending_input", "staging"),
+        ("in_progress_input", "staging"),
+        ("completed_input", "pending"),
+        ("failed_input", "failed"),
+        ("pending_repo", "staging"),
+        ("in_progress_repo", "staging"),
+        ("completed_repo", "pending"),
+        ("failed_repo", "failed"),
+    ],
+)
+def test_promote_staging_jobs_checks_dependencies(
+    test_db,
+    persistent_models,
+    default_backend,
+    dependency,
+    expected,
+):
+    from tests.datagen import WorkflowRepoStatusFactory
+
+    workflow = WorkflowFactory.create_sync()
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow, backend=default_backend, owner=AppUserFactory.create_sync()
+    )
+    repo_dependency = dependency.endswith("_repo")
+    job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        status="staging",
+        next_attempt_at=None,
+        repository_transfer="globus" if repo_dependency else "native",
+        repository_location="/backend/checkout" if repo_dependency else None,
+        repository_ready=not repo_dependency,
+    )
+    if dependency.endswith("_input"):
+        DataTransferFactory.create_sync(
+            workflow_run=run,
+            direction="input",
+            provider="globus",
+            status=dependency.removesuffix("_input"),
+            error_message="input failed",
+        )
+    elif repo_dependency:
+        WorkflowRepoStatusFactory.create_sync(
+            workflow=workflow,
+            compute_backend=default_backend,
+            location=job.repository_location,
+            status=dependency.removesuffix("_repo"),
+            error_message="repository failed",
+        )
+    scheduler_jobs.promote_staging_jobs(db_session=test_db)
+    test_db.refresh(job)
+    assert job.status == expected
+    if expected == "pending":
+        assert job.next_attempt_at is not None
+    elif expected == "failed":
+        assert "failed" in job.error
+
+
+@pytest.mark.parametrize("status", ["pending", "launching", "submitted", "failed", "cancelled"])
+def test_promote_staging_jobs_ignores_other_statuses(test_db, persistent_models, mocker, status):
+    job = _create_queued_job(status=status)
+    promote = mocker.patch("app.scheduler.jobs.promote_ready_job")
+    scheduler_jobs.promote_staging_jobs(db_session=test_db)
+    promote.assert_not_called()
+    test_db.refresh(job)
+    assert job.status == status
+
+
+def test_promote_staging_jobs_dry_run_does_not_modify_jobs(test_db, persistent_models, mocker):
+    job = _create_queued_job(status="staging")
+    promote = mocker.patch("app.scheduler.jobs.promote_ready_job")
+    commit = mocker.spy(test_db, "commit")
+    scheduler_jobs.promote_staging_jobs(dry_run=True, db_session=test_db)
+    promote.assert_not_called()
+    commit.assert_not_called()
+    test_db.refresh(job)
+    assert job.status == "staging"
+
+
+def test_promote_staging_jobs_continues_after_error(test_db, persistent_models, mocker):
+    broken = _create_queued_job(status="staging")
+    healthy = _create_queued_job(status="staging", workflow_name="single-prediction")
+    broken.queued_at = datetime.now(UTC) - timedelta(minutes=1)
+    healthy.queued_at = datetime.now(UTC)
+    test_db.commit()
+    broken_id = broken.id
+    promote = scheduler_jobs.promote_ready_job
+
+    def fail_one_job(session, job):
+        if job.id == broken_id:
+            raise RuntimeError("cannot check this job")
+        promote(session, job)
+
+    mocker.patch("app.scheduler.jobs.promote_ready_job", side_effect=fail_one_job)
+    scheduler_jobs.promote_staging_jobs(db_session=test_db)
+    test_db.refresh(broken)
+    test_db.refresh(healthy)
+    assert broken.status == "staging"
+    assert healthy.status == "pending"

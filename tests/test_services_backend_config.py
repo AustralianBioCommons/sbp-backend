@@ -131,6 +131,7 @@ def test_run_backend_mismatch_rejected(test_db, backend_context):
         validate_backend_launch_config(run, backend, config)
 
 
+@pytest.mark.parametrize("data_mode", list(DataTransferMode))
 @pytest.mark.parametrize("name", list(ComputeBackendName))
 @pytest.mark.parametrize("repo_mode", list(RepositoryTransferMode))
 @pytest.mark.parametrize(
@@ -149,12 +150,14 @@ async def test_preparation_uses_backend_config(
     monkeypatch,
     name,
     repo_mode,
+    data_mode,
     workflow_name,
     prepare,
 ):
     backend, workflow = backend_context
     backend.name = name
     backend.repository_transfer = repo_mode
+    backend.data_transfer = data_mode
     workflow.name = workflow_name
     workflow.prerun_script_path = None
     WorkflowRepoStatusFactory.create_sync(
@@ -195,7 +198,13 @@ async def test_preparation_uses_backend_config(
     kwargs = (
         {}
         if workflow_name == "de-novo-design"
-        else {"staged_input_location": "/backend/input/sheet.csv"}
+        else {
+            "staged_input_location": (
+                "s3://test-s3-bucket/inputs/sheet.csv"
+                if data_mode == DataTransferMode.NATIVE
+                else "/backend/input/sheet.csv"
+            )
+        }
     )
     job = await prepare(
         form,
@@ -219,7 +228,10 @@ async def test_preparation_uses_backend_config(
     assert payload["workspaceId"] == "backend-workspace"
     assert payload["computeEnvId"] == "backend-env"
     assert payload["workDir"] == "/backend/work/run-id"
-    assert "/backend/output/" in payload["paramsText"]
+    if data_mode == DataTransferMode.NATIVE:
+        assert f"s3://test-s3-bucket/{run.id}" in payload["paramsText"]
+    else:
+        assert "/backend/output/" in payload["paramsText"]
     assert "// backend-specific configuration" in payload["configText"]
     assert ("clusterOptions" in payload["configText"]) == (name == ComputeBackendName.GADI)
     assert ("module load" in payload["preRunScript"]) == (name == ComputeBackendName.GADI)
@@ -231,18 +243,27 @@ async def test_preparation_uses_backend_config(
         assert shlex.quote("/backend/db with spaces") in payload["preRunScript"]
         if name == ComputeBackendName.GADI:
             assert "-P backend-project" in payload["configText"]
-    else:
+    elif data_mode == DataTransferMode.GLOBUS:
         assert "/backend/input/" in payload["paramsText"]
+    else:
+        assert "s3://bucket/input.pdb" in payload["paramsText"]
 
 
 @pytest.mark.parametrize("repo_mode", list(RepositoryTransferMode))
-def test_native_data_preparation_is_explicitly_unsupported(test_db, backend_context, repo_mode):
+def test_native_data_movement_does_not_require_globus(
+    test_db, backend_context, mock_settings, repo_mode
+):
     backend, workflow = backend_context
     backend.data_transfer = DataTransferMode.NATIVE
     backend.repository_transfer = repo_mode
     config = resolve_backend_launch_config(test_db, backend, workflow)
-    with pytest.raises(ValueError, match="Native input/output preparation"):
-        config.require_globus()
+    from app.services.data_movement import DataMovement
+
+    movement = DataMovement(config.data_transfer, mock_settings, config.globus)
+    assert (
+        movement.output_location("native-run", workflow.name)
+        == f"s3://{mock_settings.aws.s3_bucket}/native-run"
+    )
 
 
 def test_new_unflushed_run_uses_relationship_ids(test_db, backend_context):
