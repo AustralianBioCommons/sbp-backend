@@ -79,7 +79,7 @@ from ..services.s3 import (
 )
 from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
-from ..services.workflow_repo_staging import RepoStagingError, ensure_repo_staging_requested
+from ..services.workflow_repo_staging import RepoStagingError, prepare_repository
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -555,13 +555,14 @@ async def launch_workflow(
         ) from exc
 
     try:
-        ensure_repo_staging_requested(db_session, workflow, backend=backend, settings=settings)
+        repository = prepare_repository(db_session, workflow, backend=backend, settings=settings)
     except RepoStagingError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
-    pipeline_url = workflow.repo_url
+    pipeline_url = repository.repo_url or workflow.repo_url
+    repository_revision = repository.revision or workflow.default_revision
 
     user = db_session.execute(
         select(AppUser.email).where(AppUser.id == current_user_id)
@@ -744,7 +745,8 @@ async def launch_workflow(
                 pipeline=pipeline_url,
                 backend=backend,
                 launch_config=launch_config,
-                revision=workflow.default_revision,
+                repository=repository,
+                revision=repository_revision,
                 output_id=str(run_id),
                 mode=tool_algo,
                 form_data=payload.formData,
@@ -764,7 +766,8 @@ async def launch_workflow(
                 pipeline=pipeline_url,
                 backend=backend,
                 launch_config=launch_config,
-                revision=workflow.default_revision,
+                repository=repository,
+                revision=repository_revision,
                 output_id=str(run_id),
                 form_data=payload.formData,
                 user_details=user_details,
@@ -779,9 +782,10 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                revision=workflow.default_revision,
+                revision=repository_revision,
                 backend=backend,
                 launch_config=launch_config,
+                repository=repository,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_details=user_details,

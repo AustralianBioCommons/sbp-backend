@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from hashlib import blake2b
 from typing import ClassVar, Self
 from uuid import UUID as PyUUID
 from uuid import uuid7
@@ -188,6 +189,21 @@ class WorkflowRepoStatus(Base):
         )
 
     @classmethod
+    def lock_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        if session.get_bind().dialect.name == "postgresql":
+            key = int.from_bytes(
+                blake2b(f"{backend_id}:{workflow_id}".encode(), digest_size=8).digest(), signed=True
+            )
+            session.execute(select(func.pg_advisory_xact_lock(key)))
+        return session.scalar(
+            select(cls)
+            .where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+            .execution_options(populate_existing=True)
+        )
+
+    @classmethod
     def request_staging(
         cls,
         session: Session,
@@ -197,7 +213,7 @@ class WorkflowRepoStatus(Base):
         location: str,
         commit_sha: str,
     ) -> Self:
-        repo = cls.get_for_workflow(session, backend.id, workflow.id)
+        repo = cls.lock_for_workflow(session, backend.id, workflow.id)
         if repo is None:
             repo = cls(compute_backend=backend, workflow=workflow)
             session.add(repo)
@@ -209,6 +225,8 @@ class WorkflowRepoStatus(Base):
             return repo
         elif repo.status in (RepositoryStatus.PENDING, RepositoryStatus.IN_PROGRESS):
             raise ValueError("Repository staging is already active for a different checkout")
+        if repo.status == RepositoryStatus.COMPLETED:
+            repo.record_waiting_jobs_ready(session)
         repo.location = location
         repo.staged_commit_sha = commit_sha
         repo.status = RepositoryStatus.PENDING
@@ -234,10 +252,19 @@ class WorkflowRepoStatus(Base):
         self.status = RepositoryStatus.FAILED
         self.record_error(message)
 
-    def mark_completed(self) -> None:
+    def record_waiting_jobs_ready(self, session: Session) -> None:
+        from .job_queue import QueuedJob
+
+        QueuedJob.record_repository_completion(
+            session, self.compute_backend_id, self.workflow_id, self.location
+        )
+
+    def mark_completed(self, session: Session | None = None) -> None:
         self.status = RepositoryStatus.COMPLETED
         self.error_message = None
         self.updated_at = datetime.now(UTC)
+        if session is not None:
+            self.record_waiting_jobs_ready(session)
 
 
 class BackendSelectionSettings(Base):

@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .compute_backends import validate_backend_launch_config
@@ -22,6 +22,7 @@ from .proteinfold_config import (
 )
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
+from .workflow_repo_staging import RepositoryPreparation
 
 # Params forwarded from the frontend's Tool Settings (step 2)
 _TOOL_PARAM_KEYS = frozenset(
@@ -66,6 +67,7 @@ async def prepare_proteinfold_workflow(
     pipeline: str,
     backend: ComputeBackend,
     launch_config: BackendLaunchConfig,
+    repository: RepositoryPreparation,
     revision: str | None = None,
     output_id: str | None = None,
     mode: str = "alphafold2",
@@ -120,13 +122,12 @@ async def prepare_proteinfold_workflow(
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
-    repo_status = WorkflowRepoStatus.get_for_workflow(db_session, backend.id, workflow.id)
     prerun_script = get_executor_script(
         prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=repo_status.location if repo_status is not None else None,
+        repo_checkout_path=repository.location,
         repo_url=workflow.repo_url,
         module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
-        offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,
+        offline=repository.mode == RepositoryTransferMode.GLOBUS,
     )
     if launch_config.ref_database_dir:
         prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(launch_config.ref_database_dir)}\n"
@@ -136,8 +137,11 @@ async def prepare_proteinfold_workflow(
         workflow=workflow,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending",
+        status="pending" if repository.ready else "staging",
         next_attempt_at=datetime.now(UTC),
+    )
+    queued_job.record_repository_preparation(
+        db_session, repository.mode, repository.location, repository.ready
     )
     db_session.add(queued_job)
     if commit:

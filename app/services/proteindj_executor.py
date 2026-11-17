@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
 from ..db.models.core import DataTransfer, RunInput, S3Object
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
@@ -27,6 +27,7 @@ from .proteindj_config import (
 from .results_utils import s3_uri_to_key
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
+from .workflow_repo_staging import RepositoryPreparation
 
 
 def _design_length(fields: ProteinDjFormData) -> str:
@@ -61,6 +62,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     pipeline: str,
     backend: ComputeBackend,
     launch_config: BackendLaunchConfig,
+    repository: RepositoryPreparation,
     revision: str | None = None,
     output_id: str | None = None,
     form_data: WorkflowFormData,
@@ -148,21 +150,23 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
 
     workflow = workflow_run.workflow
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
-    repo_status = WorkflowRepoStatus.get_for_workflow(db_session, backend.id, workflow.id)
     launch_payload["preRunScript"] = get_executor_script(
         prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=repo_status.location if repo_status is not None else None,
+        repo_checkout_path=repository.location,
         repo_url=workflow.repo_url,
         module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
-        offline=launch_config.repository_transfer == RepositoryTransferMode.GLOBUS,
+        offline=repository.mode == RepositoryTransferMode.GLOBUS,
     )
 
     queued_job = QueuedJob(
         workflow=workflow,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending",
+        status="pending" if repository.ready else "staging",
         next_attempt_at=datetime.now(UTC),
+    )
+    queued_job.record_repository_preparation(
+        db_session, repository.mode, repository.location, repository.ready
     )
     db_session.add(queued_job)
     if commit:

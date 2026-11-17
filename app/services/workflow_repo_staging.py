@@ -25,9 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
-from ..db.models import ComputeBackend, WorkflowRepoStatus
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus
 from ..db.models.core import Workflow
-from ..schemas.backend import RepositoryStatus
+from ..schemas.backend import RepositoryStatus, RepositoryTransferMode
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusTransferError
 from .globus_transfer import _gadi_relative_path
@@ -108,7 +108,7 @@ def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha
     return f"workflow-repos-assets/{owner}-{repo}/{revision}/{commit_sha}"
 
 
-def build_repo_gadi_path(
+def build_repo_checkout_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
     """Path to a real (non-bare) clone of the commit - used for reading
@@ -127,13 +127,14 @@ def build_repo_gadi_path(
 
 
 @dataclass(frozen=True)
-class RepoStagingLocations:
-    """Where a workflow's staged checkout lives on Gadi (see
-    build_repo_gadi_path). gadi_path and assets_gadi_path are always equal -
-    kept as two fields since callers use them for different purposes."""
+class RepositoryPreparation:
+    """Repository requirements captured when preparing a queued job."""
 
-    gadi_path: str
-    assets_gadi_path: str
+    mode: RepositoryTransferMode
+    location: str | None = None
+    ready: bool = False
+    repo_url: str | None = None
+    revision: str | None = None
 
 
 def get_repository_globus_settings(backend: ComputeBackend) -> GlobusSettings:
@@ -143,27 +144,37 @@ def get_repository_globus_settings(backend: ComputeBackend) -> GlobusSettings:
     return globus
 
 
-def ensure_repo_staging_requested(
+def prepare_repository(
     db: Session, workflow: Workflow, *, backend: ComputeBackend, settings: Settings | None = None
-) -> RepoStagingLocations:
-    """Resolve the checkout and request staging for this workflow/backend pair."""
+) -> RepositoryPreparation:
+    """Prepare a native repository or request its Globus checkout."""
+    repo_url, revision = workflow.repo_url, workflow.default_revision
+    if backend.repository_transfer == RepositoryTransferMode.NATIVE:
+        return RepositoryPreparation(
+            RepositoryTransferMode.NATIVE, ready=True, repo_url=repo_url, revision=revision
+        )
     settings = settings or get_settings()
     globus_settings = get_repository_globus_settings(backend)
-    owner, repo = parse_github_repo(workflow.repo_url)
-    commit_sha = resolve_latest_commit_sha(
-        workflow.repo_url, workflow.default_revision, settings=settings
-    )
-    location = build_repo_gadi_path(
-        owner, repo, workflow.default_revision, commit_sha, globus_settings=globus_settings
+    owner, repo = parse_github_repo(repo_url)
+    commit_sha = resolve_latest_commit_sha(repo_url, revision, settings=settings)
+    location = build_repo_checkout_path(
+        owner, repo, revision, commit_sha, globus_settings=globus_settings
     )
     try:
-        WorkflowRepoStatus.request_staging(
+        repo_status = WorkflowRepoStatus.request_staging(
             db, backend, workflow, location=location, commit_sha=commit_sha
         )
     except ValueError as exc:
         raise RepoStagingError(str(exc)) from exc
+    preparation = RepositoryPreparation(
+        RepositoryTransferMode.GLOBUS,
+        location,
+        repo_status.status == RepositoryStatus.COMPLETED,
+        repo_url=repo_url,
+        revision=revision,
+    )
     db.commit()
-    return RepoStagingLocations(gadi_path=location, assets_gadi_path=location)
+    return preparation
 
 
 def _run_git(*args: str, cwd: str) -> None:
@@ -185,7 +196,7 @@ def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) ->
     """Clone a real (non-bare) working checkout from the already-fetched bare
     repo (local filesystem clone, no second network fetch). A real `.git/`,
     unlike a `git archive` extract, so it's indistinguishable from a checkout
-    Nextflow would produce itself (see build_repo_gadi_path).
+    Nextflow would produce itself (see build_repo_checkout_path).
 
     `git clone` records bare_dir (an ephemeral tmp dir) as `origin`, so it
     must be rewritten to origin_url (the workflow's real repo_url) -
@@ -263,23 +274,35 @@ def stage_pending_repo(
     db: Session, repo_status: WorkflowRepoStatus, *, settings: Settings | None = None
 ) -> None:
     """Submit the S3 upload and Globus transfer for one pending repository."""
+    locked = WorkflowRepoStatus.lock_for_workflow(
+        db, repo_status.compute_backend_id, repo_status.workflow_id
+    )
+    if locked is None or locked.status != RepositoryStatus.PENDING:
+        return
+    repo_status = locked
     settings = settings or get_settings()
     workflow = repo_status.workflow
     globus_settings = get_repository_globus_settings(repo_status.compute_backend)
-    owner, repo = parse_github_repo(workflow.repo_url)
+    payload = (
+        QueuedJob.get_repository_launch_payload(
+            db, repo_status.compute_backend_id, repo_status.workflow_id, repo_status.location
+        )
+        or {}
+    )
+    repo_url = payload.get("pipeline") or workflow.repo_url
+    revision = payload.get("revision") or workflow.default_revision
+    owner, repo = parse_github_repo(repo_url)
     commit_sha = repo_status.staged_commit_sha
     if not commit_sha:
         raise RepoStagingError(f"Workflow {workflow.id} has no commit sha to stage")
-    assets_s3_prefix = build_repo_assets_s3_prefix(
-        owner, repo, workflow.default_revision, commit_sha
-    )
+    assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
     try:
         _clone_and_upload_repo(
             owner,
             repo,
             commit_sha,
-            workflow.repo_url,
-            revision=workflow.default_revision,
+            repo_url,
+            revision=revision,
             settings=settings,
         )
         transfer_client = get_transfer_client(globus_settings)
@@ -288,6 +311,13 @@ def stage_pending_repo(
             submission_id = cast(str, transfer_client.get_submission_id()["value"])
             repo_status.record_submission(submission_id)
             db.commit()
+            # Reacquire after persisting the idempotency key; another worker may have submitted it.
+            locked = WorkflowRepoStatus.lock_for_workflow(
+                db, repo_status.compute_backend_id, repo_status.workflow_id
+            )
+            if locked is None or locked.status != RepositoryStatus.PENDING:
+                return
+            repo_status = locked
         transfer_data = globus_sdk.TransferData(
             globus_settings.s3_collection_id,
             globus_settings.backend_collection_id,
@@ -314,6 +344,14 @@ def poll_repo_staging(
     """Poll the existing Globus task for one workflow/backend checkout."""
     if not repo_status.transfer_id:
         raise GlobusTransferError(f"Workflow {repo_status.workflow_id} has no transfer_id to poll")
+    locked = WorkflowRepoStatus.lock_for_workflow(
+        db, repo_status.compute_backend_id, repo_status.workflow_id
+    )
+    if locked is None or locked.status != RepositoryStatus.IN_PROGRESS:
+        return
+    repo_status = locked
+    if not repo_status.transfer_id:
+        raise GlobusTransferError(f"Workflow {repo_status.workflow_id} has no transfer_id to poll")
     transfer_client = get_transfer_client(
         get_repository_globus_settings(repo_status.compute_backend)
     )
@@ -324,7 +362,7 @@ def poll_repo_staging(
         db.commit()
         raise GlobusTransferError(f"Failed to poll workflow repo transfer: {exc}") from exc
     if task["status"] == "SUCCEEDED":
-        repo_status.mark_completed()
+        repo_status.mark_completed(db)
     elif task["status"] == "FAILED":
         fatal_error = task.get("fatal_error") or {}
         repo_status.mark_failed(fatal_error.get("description") or "Globus transfer failed")
