@@ -376,7 +376,7 @@ def _promote_queued_jobs_waiting_on_repo(db: Session, repo_status: WorkflowRepoS
     """Recheck queued runs for the workflow and backend whose staging settled."""
     from ..db.models import WorkflowRun
     from ..db.models.job_queue import QueuedJob
-    from .globus_transfer import _try_promote_staging_job
+    from .job_queue import promote_ready_job
 
     queued_jobs = db.scalars(
         select(QueuedJob)
@@ -388,7 +388,7 @@ def _promote_queued_jobs_waiting_on_repo(db: Session, repo_status: WorkflowRepoS
         )
     ).all()
     for queued_job in queued_jobs:
-        _try_promote_staging_job(db, queued_job)
+        promote_ready_job(db, queued_job)
 
 
 @dataclass(frozen=True)

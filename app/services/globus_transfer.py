@@ -15,11 +15,11 @@ from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
-from ..db.models.job_queue import QueuedJob
 from ..schemas.workflows.shared import PipelineStatus
 from .compute_backends import get_run_globus_settings
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
+from .job_queue import promote_ready_job
 from .s3 import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -543,51 +543,7 @@ def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
     queued_job = data_transfer.workflow_run.get_queued_job(db)
     if queued_job is None:
         return
-    _try_promote_staging_job(db, queued_job)
-
-
-def _try_promote_staging_job(db: Session, queued_job: QueuedJob, *, commit: bool = True) -> None:
-    """Flip a "staging" QueuedJob to "pending" once every gate clears: all of
-    its input DataTransfers completed, and its workflow's repo staging (if
-    applicable - see workflow_repo_staging.py) completed. Fails the job
-    immediately if any gate reports failure, rather than leaving it stuck.
-
-    Called both after an input transfer settles (_notify_launcher, above) and
-    after a workflow's repo staging settles (workflow_repo_staging.py) - either
-    event can be the last one a given run was waiting on.
-    """
-    if queued_job.status != "staging":
-        return
-
-    input_transfers = db.scalars(
-        select(DataTransfer).where(
-            DataTransfer.workflow_run_id == queued_job.workflow_run_id,
-            DataTransfer.direction == "input",
-        )
-    ).all()
-    failed_transfer = next((t for t in input_transfers if t.status == "failed"), None)
-    if failed_transfer is not None:
-        queued_job.status = "failed"
-        queued_job.error = f"Input staging failed: {failed_transfer.error_message}"
-        db.add(queued_job)
-        if commit:
-            db.commit()
-        return
-    if not all(transfer.status == "completed" for transfer in input_transfers):
-        return
-
-    if not queued_job.refresh_repository_readiness(db):
-        db.add(queued_job)
-        if commit:
-            db.commit()
-        return
-
-    queued_job.status = "pending"
-    # Make sure the pending job has next_attempt_at set so it gets picked up
-    queued_job.next_attempt_at = datetime.now(tz=UTC)
-    db.add(queued_job)
-    if commit:
-        db.commit()
+    promote_ready_job(db, queued_job)
 
 
 def sync_data_transfers(
