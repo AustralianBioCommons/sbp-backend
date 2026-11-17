@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 from uuid import UUID as PyUUID
 from uuid import uuid7
 
@@ -58,6 +58,36 @@ class QueuedJob(Base):
 
     workflow: Mapped[Workflow] = relationship()
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="queued_jobs")
+
+    @classmethod
+    def create_for_launch(
+        cls,
+        session: Session,
+        *,
+        workflow_run: WorkflowRun,
+        launch_payload: dict,
+        repository_mode: RepositoryTransferMode,
+        repository_location: str | None,
+        repository_ready: bool,
+        commit: bool = False,
+    ) -> Self:
+        """Queue a launch in staging until the readiness check clears its dependencies."""
+        job = cls(
+            workflow=workflow_run.workflow,
+            workflow_run=workflow_run,
+            launch_payload=launch_payload,
+            status="staging",
+            next_attempt_at=datetime.now(UTC),
+        )
+        job.record_repository_preparation(
+            session, repository_mode, repository_location, repository_ready
+        )
+        session.add(job)
+        if commit:
+            session.commit()
+        else:
+            session.flush()
+        return job
 
     def record_repository_preparation(
         self, session: Session, mode: RepositoryTransferMode, location: str | None, ready: bool

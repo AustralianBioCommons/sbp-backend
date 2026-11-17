@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shlex
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -17,11 +16,11 @@ from .data_movement import DataMovement
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteinfold_config import (
     get_proteinfold_config_profiles,
-    get_proteinfold_config_text,
     get_proteinfold_default_params,
 )
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
+from .workflow_config_fetcher import render_workflow_config
 from .workflow_repo_staging import RepositoryPreparation
 
 # Params forwarded from the frontend's Tool Settings (step 2)
@@ -107,7 +106,7 @@ async def prepare_proteinfold_workflow(
         "revision": revision or "dev",
         "paramsText": params_text,
         "configProfiles": get_proteinfold_config_profiles(),
-        "configText": get_proteinfold_config_text(
+        "configText": render_workflow_config(
             launch_config.config_path,
             user_details=user_details,
             gadi_project=launch_config.project_id,
@@ -129,22 +128,15 @@ async def prepare_proteinfold_workflow(
         prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(launch_config.ref_database_dir)}\n"
     launch_payload["preRunScript"] = prerun_script
 
-    queued_job = QueuedJob(
-        workflow=workflow,
+    return QueuedJob.create_for_launch(
+        db_session,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending" if repository.ready else "staging",
-        next_attempt_at=datetime.now(UTC),
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
+        commit=commit,
     )
-    queued_job.record_repository_preparation(
-        db_session, repository.mode, repository.location, repository.ready
-    )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
 
 
 async def launch_proteinfold_workflow(

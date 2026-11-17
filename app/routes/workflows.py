@@ -727,10 +727,6 @@ async def launch_workflow(
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
 
-        queued_job.status = "staging"
-        db_session.add(queued_job)
-        db_session.flush()
-
         # Deduct the run's credit cost now that the job is accepted into the queue. Atomic and
         # guarded (credit >= cost) so the balance can't go negative; committed
         # together with the queued run finalisation.

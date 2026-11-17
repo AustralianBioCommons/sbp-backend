@@ -224,6 +224,13 @@ async def test_preparation_uses_backend_config(
         user_details=WorkflowUserDetails(user_email="test@example.com", ip_address="1.2.3.4"),
         **kwargs,
     )
+    assert job.status == "staging"
+    assert job.repository_transfer == repo_mode
+    assert job.repository_ready is True
+    assert job.repository_location == (
+        "/checkout/owner/repo" if repo_mode == RepositoryTransferMode.GLOBUS else None
+    )
+    assert job.next_attempt_at is not None
     payload = job.launch_payload
     assert payload["workspaceId"] == "backend-workspace"
     assert payload["computeEnvId"] == "backend-env"

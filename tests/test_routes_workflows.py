@@ -77,17 +77,15 @@ def _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows):
 
 
 async def _queue_job_for_route_prepare(form, **kwargs):
-    db_session = kwargs["db_session"]
-    workflow_run = kwargs["workflow_run"]
-    queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
-        workflow_run=workflow_run,
+    repository = kwargs["repository"]
+    return QueuedJob.create_for_launch(
+        kwargs["db_session"],
+        workflow_run=kwargs["workflow_run"],
         launch_payload={"runName": form.runName},
-        status="pending",
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
     )
-    db_session.add(queued_job)
-    db_session.flush()
-    return queued_job
 
 
 @pytest.fixture

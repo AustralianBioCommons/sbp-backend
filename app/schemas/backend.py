@@ -56,8 +56,3 @@ class BackendLaunchConfig(BaseModel):
     data_transfer: DataTransferMode
     repository_transfer: RepositoryTransferMode
     globus: GlobusSettings | None = None
-
-    def require_globus(self) -> GlobusSettings:
-        if self.globus is None:
-            raise ValueError("Globus settings are required by the current input/output preparation")
-        return self.globus

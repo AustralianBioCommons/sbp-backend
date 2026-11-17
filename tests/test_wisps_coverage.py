@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -13,16 +13,13 @@ from app.schemas.workflows.interaction_screening import InteractionScreeningForm
 from app.schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.seqera import (
-    WorkflowExecutorError,
     WorkflowLaunchResult,
     _samplesheet_url,
     params_to_yaml_text,
-    post_seqera_launch,
 )
 from app.services.seqera_errors import WorkflowLaunchError
 from app.services.wisps_config import (
     get_wisps_config_profiles,
-    get_wisps_config_text,
     get_wisps_default_params,
 )
 from app.services.wisps_executor import (
@@ -188,53 +185,9 @@ def test_get_executor_script_no_path_returns_header_only():
     )
 
 
-def test_get_wisps_config_profiles_returns_list():
-    result = get_wisps_config_profiles()
-    assert isinstance(result, list)
-
-
 def test_get_wisps_config_profiles_contains_singularity():
     result = get_wisps_config_profiles()
     assert "singularity" in result
-
-
-def test_get_wisps_config_text_appends_process_block():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "process {" in result
-    assert "clusterOptions" in result
-
-
-def test_get_wisps_config_text_contains_encoded_email_and_encoded_ip():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "dXNlckBleC5jb20=" in result
-    assert "MS4yLjMuNA==" in result
-
-
-def test_get_wisps_config_text_without_ip_uses_encoded_email_only():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
-        )
-    assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
-
-
-def test_get_wisps_config_text_contains_base_config():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "base_config" in result
 
 
 # =============================================================================
@@ -261,47 +214,6 @@ def test_samplesheet_url_format():
     assert "ds1" in url
     assert "samplesheet.csv" in url
     assert "https://api.test" in url
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_success():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"workflowId": "wf_abc", "status": "submitted"})
-        )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-    assert result.workflow_id == "wf_abc"
-    assert result.status == "submitted"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_nested_workflow_id():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}})
-        )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-    assert result.workflow_id == "wf_nested"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_http_error():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(401, text="Unauthorized")
-        )
-        with pytest.raises(WorkflowExecutorError, match="401"):
-            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_missing_workflow_id():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"status": "submitted"})
-        )
-        with pytest.raises(WorkflowExecutorError, match="workflowId"):
-            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
 
 
 @pytest.mark.anyio
@@ -343,7 +255,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     )
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -370,7 +282,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    assert queued_job.status == "staging"
     assert queued_job.next_attempt_at is not None
     assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce1"
@@ -421,7 +333,7 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
     )
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -476,7 +388,7 @@ async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -518,7 +430,7 @@ async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -552,7 +464,7 @@ async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),

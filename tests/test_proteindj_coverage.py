@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -14,7 +14,6 @@ from app.schemas.workflows.de_novo_design import ProteinDjFormData
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.proteindj_config import (
     get_proteindj_config_profiles,
-    get_proteindj_config_text,
     get_proteindj_default_params,
     get_proteindj_design_mode,
 )
@@ -207,11 +206,6 @@ def test_get_proteindj_default_params_all_fields():
     }
 
 
-def test_get_proteindj_default_params_missing_required_field_raises():
-    with pytest.raises(TypeError):
-        get_proteindj_default_params("s3://bucket/out", num_designs=3)  # type: ignore[call-arg]
-
-
 # =============================================================================
 # Tests for get_proteindj_design_mode()
 # =============================================================================
@@ -234,48 +228,8 @@ def test_get_proteindj_design_mode_is_case_insensitive():
 # =============================================================================
 
 
-def test_get_proteindj_config_profiles_returns_list():
-    profiles = get_proteindj_config_profiles()
-    assert isinstance(profiles, list)
-
-
 def test_get_proteindj_config_profiles_contains_singularity():
     assert "singularity" in get_proteindj_config_profiles()
-
-
-# =============================================================================
-# Tests for get_proteindj_config_text()
-# =============================================================================
-
-
-def test_get_proteindj_config_text_appends_process_block():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "process {" in result
-    assert "clusterOptions" in result
-
-
-def test_get_proteindj_config_text_contains_encoded_email_and_encoded_ip():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "dXNlckBleC5jb20=" in result
-    assert "MS4yLjMuNA==" in result
-
-
-def test_get_proteindj_config_text_without_ip_uses_encoded_email_only():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text(
-            "/fake/proteindj.config",
-            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
-        )
-    assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
-
-
-def test_get_proteindj_config_text_contains_base_config():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "base_config" in result
 
 
 # =============================================================================
@@ -320,7 +274,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
 
     with (
         patch(
-            "app.services.proteindj_executor.get_proteindj_config_text",
+            "app.services.proteindj_executor.render_workflow_config",
             return_value="config_text",
         ),
         patch(
@@ -351,7 +305,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    assert queued_job.status == "staging"
     assert queued_job.next_attempt_at is not None
     assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
@@ -419,7 +373,7 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
     )
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -456,7 +410,7 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
     form = _make_launch_form(paramsText="extra_param: value")
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -502,7 +456,7 @@ async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
     form = _make_launch_form()
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],

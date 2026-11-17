@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -18,13 +17,13 @@ from .data_movement import DataMovement
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteindj_config import (
     get_proteindj_config_profiles,
-    get_proteindj_config_text,
     get_proteindj_default_params,
     get_proteindj_design_mode,
 )
 from .results_utils import s3_uri_to_key
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
+from .workflow_config_fetcher import render_workflow_config
 from .workflow_repo_staging import RepositoryPreparation
 
 
@@ -119,7 +118,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "revision": revision or "dev",
         "paramsText": params_text,
         "configProfiles": get_proteindj_config_profiles(),
-        "configText": get_proteindj_config_text(
+        "configText": render_workflow_config(
             launch_config.config_path,
             user_details=user_details,
             pbs_enabled=backend.name == ComputeBackendName.GADI,
@@ -138,22 +137,15 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         offline=repository.mode == RepositoryTransferMode.GLOBUS,
     )
 
-    queued_job = QueuedJob(
-        workflow=workflow,
+    return QueuedJob.create_for_launch(
+        db_session,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending" if repository.ready else "staging",
-        next_attempt_at=datetime.now(UTC),
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
+        commit=commit,
     )
-    queued_job.record_repository_preparation(
-        db_session, repository.mode, repository.location, repository.ready
-    )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
 
 
 async def launch_proteindj_workflow(

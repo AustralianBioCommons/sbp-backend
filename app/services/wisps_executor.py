@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shlex
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -20,9 +19,9 @@ from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
     WISPS_WORKFLOW_MODES,
     get_wisps_config_profiles,
-    get_wisps_config_text,
     get_wisps_default_params,
 )
+from .workflow_config_fetcher import render_workflow_config
 from .workflow_repo_staging import RepositoryPreparation
 
 
@@ -69,7 +68,7 @@ async def prepare_wisps_workflow(
         )
     )
 
-    config_text = get_wisps_config_text(
+    config_text = render_workflow_config(
         launch_config.config_path,
         user_details=user_details,
         gadi_project=launch_config.project_id,
@@ -105,22 +104,15 @@ async def prepare_wisps_workflow(
         prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(launch_config.ref_database_dir)}\n"
     launch_payload["preRunScript"] = prerun_script
 
-    queued_job = QueuedJob(
-        workflow=workflow,
+    return QueuedJob.create_for_launch(
+        db_session,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending" if repository.ready else "staging",
-        next_attempt_at=datetime.now(UTC),
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
+        commit=commit,
     )
-    queued_job.record_repository_preparation(
-        db_session, repository.mode, repository.location, repository.ready
-    )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
 
 
 async def launch_wisps_workflow(

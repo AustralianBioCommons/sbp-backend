@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..schemas.workflows.shared import WorkflowUserDetails
-from .workflow_config_fetcher import fetch_workflow_config
-
 
 def get_proteindj_design_mode(tool: str) -> str:
     """Map the de-novo-design tool selection to a ProteinDJ design_mode.
@@ -44,23 +41,3 @@ def get_proteindj_default_params(
 def get_proteindj_config_profiles() -> list[str]:
     """Get config profiles for proteindj workflow."""
     return ["singularity"]
-
-
-def get_proteindj_config_text(
-    config_file_path: str,
-    *,
-    user_details: WorkflowUserDetails,
-    pbs_enabled: bool = True,
-    gadi_project: str | None = None,
-) -> str:
-    """Read proteindj base config and append a process override block with runtime values."""
-    base = fetch_workflow_config(config_file_path)
-
-    if not pbs_enabled:
-        return base
-
-    cluster_opts = (
-        f"-P {gadi_project} " if gadi_project else ""
-    ) + f"-A {user_details.get_encoded_account_details()}"
-    override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
-    return base + override
