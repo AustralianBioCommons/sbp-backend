@@ -13,7 +13,7 @@ from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
 from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from .compute_backends import validate_backend_launch_config
-from .globus_transfer import build_gadi_output_path
+from .data_movement import DataMovement
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
@@ -46,17 +46,13 @@ async def prepare_wisps_workflow(
     tool: str | None = form_data.tool or None
 
     validate_backend_launch_config(workflow_run, backend, launch_config)
-    globus_settings = launch_config.require_globus()
+    movement = DataMovement(launch_config.data_transfer, settings, launch_config.globus)
     workspace_id = launch_config.workspace_id
     compute_env_id = launch_config.compute_env_id
 
     if not output_id or not output_id.strip():
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    out_dir = build_gadi_output_path(
-        output_id.strip(),
-        form_data.workflow,
-        globus_settings=globus_settings,
-    )
+    out_dir = movement.output_location(output_id.strip(), form_data.workflow)
 
     job_id = (form.runName or "").strip()
     if not job_id:

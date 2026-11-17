@@ -17,12 +17,14 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db.models.core import DataTransfer, RunOutput, S3Object, WorkflowRun
+from ..schemas.backend import DataTransferMode
 from ..schemas.workflows.shared import (
     ResultDownloadItem,
     ResultLogEntry,
     WorkflowName,
     WorkflowTool,
 )
+from .data_movement import DataMovement, uses_native_data
 from .s3 import (
     S3ConfigurationError,
     S3ServiceError,
@@ -31,6 +33,7 @@ from .s3 import (
     read_s3_bytes,
     read_s3_file,
 )
+from .s3 import s3_uri_to_key as s3_uri_to_key
 
 OutputCategory = Literal["report", "stats_csv", "pdb", "snapshot", "alignment", "pae", "usage"]
 
@@ -475,20 +478,6 @@ def format_log_entries(entries: list[str] | None) -> list[ResultLogEntry]:
     return formatted
 
 
-def s3_uri_to_key(uri: str | None) -> str | None:
-    if not uri:
-        return None
-    value = uri.strip()
-    if not value:
-        return None
-    if not value.startswith("s3://"):
-        return value
-    parts = value.split("/", 3)
-    if len(parts) < 4:
-        return None
-    return parts[3].strip() or None
-
-
 def run_has_missing_required_categories(db: Session, run: WorkflowRun) -> bool:
     """Whether this run's currently recorded RunOutputs miss a required category."""
     try:
@@ -549,7 +538,10 @@ def _build_output_transfer_items(
         return []
 
     run_prefix = f"{run.id}/"
-    source_root = f"{settings.globus.output_dir}/{workflow_name}/{run.id}"
+    movement = DataMovement.for_run(run, settings)
+    if movement.mode == DataTransferMode.NATIVE:
+        return []
+    source_root = movement.output_location(run.id, workflow_name)
     items: list[OutputTransferItem] = []
     seen: set[tuple[str, str]] = set()
 
@@ -1228,7 +1220,7 @@ def _sync_run_output_records(
         output_transfer = next(
             (transfer for transfer in globus_transfers if transfer.covers(s3_object.uri)), None
         )
-        if output_transfer is None:
+        if output_transfer is None and not uses_native_data(run):
             output_transfer = DataTransfer(
                 workflow_run_id=run.id,
                 direction="output",
