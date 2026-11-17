@@ -23,6 +23,12 @@ def uses_native_data(run: WorkflowRun) -> bool:
 
 @dataclass
 class DataMovement:
+    """
+    Handles input/output data movement for a run,
+    based on whether data transfer occurs natively or through
+    globus.
+    """
+
     mode: DataTransferMode
     settings: Settings
     globus: GlobusSettings | None = None
