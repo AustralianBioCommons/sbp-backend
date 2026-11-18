@@ -195,6 +195,8 @@ def launch_job(job_id: UUID, dry_run: bool = False, *, db_session: Session | Non
         logger.info(f"Skipping job {job_id}: launch reservation is not due yet.")
         return
 
+    # TODO: need health checks for each backend implemented: need to check
+    #   the backend for the current job here.
     ok_to_launch = is_seqera_available(db_session, settings=settings)
     if not ok_to_launch:
         logger.warning("Skipping job launching while system status is unhealthy.")
@@ -396,6 +398,7 @@ def submit_pending_jobs(dry_run: bool = False, *, db_session: Session | None = N
     db_session = require_scheduler_db_session(db_session)
     logger.info("Checking for pending jobs...")
     settings = get_settings()
+    # TODO: Need backend-specific health checks here instead of just a broad check
     ok_to_launch = is_seqera_available(db_session, settings=settings)
     if not ok_to_launch:
         logger.warning("Skipping pending job submission while system status is unhealthy.")
@@ -531,6 +534,7 @@ def sync_completed_workflow_runs(dry_run: bool = False, *, db_session: Session |
         logger.info(f"Dry run - found {len(runs)} workflow run(s) requiring sync.")
         return
 
+    # TODO: do backend-specific health checks affect this?
     ok_to_sync = is_seqera_available(db_session, settings=settings)
     if not ok_to_sync:
         logger.warning("Skipping workflow run result sync while system status is unhealthy.")
