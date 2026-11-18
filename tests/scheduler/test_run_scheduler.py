@@ -44,6 +44,7 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
 
     assert [job_config["id"] for _, job_config in scheduler.added_jobs] == [
         "refresh_seqera_health_status",
+        "promote_staging_jobs",
         "submit_pending_jobs",
         "sync_completed_workflow_runs",
         "sync_data_transfers",
@@ -54,6 +55,7 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
 
     (
         health_check_job,
+        promote_job,
         submit_job,
         sync_job,
         data_transfer_job,
@@ -67,11 +69,29 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
     assert health_check_config["jobstore"] == "memory"
     assert health_check_config["trigger"] is run_scheduler.HEALTH_CHECK_INTERVAL
 
+    promote_func, promote_config = promote_job
+    assert promote_func is run_scheduler.promote_staging_jobs
+    assert promote_config["kwargs"] == {"dry_run": True}
+    assert promote_config["jobstore"] == "memory"
+    assert promote_config["trigger"] is run_scheduler.SUBMIT_INTERVAL
+    assert promote_config["max_instances"] == 1
+
     submit_func, submit_config = submit_job
     assert submit_func is run_scheduler.submit_pending_jobs
     assert submit_config["kwargs"] == {"dry_run": True}
     assert submit_config["jobstore"] == "memory"
     assert submit_config["trigger"] is run_scheduler.SUBMIT_INTERVAL
+    promotion_time = promote_config["next_run_time"]
+    submission_time = submit_config["next_run_time"]
+    assert submission_time - promotion_time == run_scheduler.STAGING_CHECK_LEAD_TIME
+    for _ in range(2):
+        promotion_time = promote_config["trigger"].get_next_fire_time(
+            promotion_time, promotion_time
+        )
+        submission_time = submit_config["trigger"].get_next_fire_time(
+            submission_time, submission_time
+        )
+        assert submission_time - promotion_time == run_scheduler.STAGING_CHECK_LEAD_TIME
 
     sync_func, sync_config = sync_job
     assert sync_func is run_scheduler.sync_completed_workflow_runs
@@ -104,6 +124,7 @@ def test_main_adds_expected_jobs_and_starts_scheduler(monkeypatch):
 
     assert scheduler.events == [
         ("add_job", "refresh_seqera_health_status"),
+        ("add_job", "promote_staging_jobs"),
         ("add_job", "submit_pending_jobs"),
         ("add_job", "sync_completed_workflow_runs"),
         ("add_job", "sync_data_transfers"),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
@@ -29,7 +28,13 @@ from app.routes.workflow.jobs import (
 )
 from app.schemas.workflows.shared import BulkDeleteJobsRequest
 from app.services.seqera_errors import SeqeraAPIError
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
+)
 
 
 @pytest.mark.asyncio
@@ -143,7 +148,7 @@ async def test_cancel_workflow_cancels_staging_queued_job(test_db, persistent_mo
 
 
 @pytest.mark.asyncio
-async def test_get_job_details_success(test_db):
+async def test_get_job_details_success(default_backend, test_db):
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|user",
@@ -159,6 +164,7 @@ async def test_get_job_details_success(test_db):
         config_path="/config/bindcraft.config",
     )
     run = WorkflowRun(
+        backend=default_backend,
         id=uuid4(),
         owner_user_id=user.id,
         workflow_id=workflow.id,
@@ -191,7 +197,9 @@ async def test_get_job_details_success(test_db):
 
 
 @pytest.mark.asyncio
-async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db, mock_settings):
+async def test_delete_job_success_cancels_running_and_deletes_local_rows(
+    default_backend, test_db, mock_settings
+):
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|user",
@@ -202,6 +210,7 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
     test_db.commit()
 
     run = WorkflowRun(
+        backend=default_backend,
         id=uuid4(),
         owner_user_id=user.id,
         seqera_run_id="wf-1",
@@ -258,8 +267,12 @@ async def test_delete_job_success_cancels_running_and_deletes_local_rows(test_db
 
     assert resp.deleted is True
     assert resp.cancelledBeforeDelete is True
-    mock_cancel.assert_awaited_once_with("wf-1", settings=mock_settings)
-    mock_delete.assert_awaited_once_with("wf-1", settings=mock_settings)
+    mock_cancel.assert_awaited_once_with(
+        "wf-1", workspace_id=default_backend.seqera_workspace_id, settings=mock_settings
+    )
+    mock_delete.assert_awaited_once_with(
+        "wf-1", workspace_id=default_backend.seqera_workspace_id, settings=mock_settings
+    )
 
     assert test_db.get(WorkflowRun, run.id) is None
     assert test_db.execute(select(RunInput).where(RunInput.run_id == run.id)).first() is None
@@ -326,11 +339,12 @@ async def test_bulk_delete_jobs_mixed_results(mock_settings):
     def _owned(_db, _uid, run_id):
         if run_id == "missing":
             return None
-        return SimpleNamespace(
+        run = WorkflowRunWithGadiFactory.build(
             id=f"id-{run_id}",
             seqera_run_id=f"seqera-{run_id}",
-            get_queued_job=Mock(return_value=None),
         )
+        run.get_queued_job = Mock(return_value=None)
+        return run
 
     with (
         patch("app.routes.workflow.jobs.get_owned_run_by_id", side_effect=_owned),
@@ -354,11 +368,13 @@ async def test_bulk_delete_jobs_mixed_results(mock_settings):
 
     assert out.deleted == ["ok"]
     assert out.failed["missing"] == "Job not found"
-    mock_delete.assert_called_once_with(["seqera-ok"], settings=mock_settings)
+    mock_delete.assert_called_once_with(
+        ["seqera-ok"], workspace_id="test_workspace_id", settings=mock_settings
+    )
 
 
 @pytest.mark.asyncio
-async def test_bulk_delete_jobs_seqera_delete_failure_skips_db_delete(test_db):
+async def test_bulk_delete_jobs_seqera_delete_failure_skips_db_delete(default_backend, test_db):
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|bulk-delete-user",
@@ -366,6 +382,7 @@ async def test_bulk_delete_jobs_seqera_delete_failure_skips_db_delete(test_db):
         email="bulk-delete-user@example.com",
     )
     run = WorkflowRun(
+        backend=default_backend,
         id=uuid4(),
         owner_user_id=user.id,
         seqera_run_id="wf-bulk-delete-1",

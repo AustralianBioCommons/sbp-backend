@@ -414,3 +414,17 @@ async def calculate_csv_column_max(
         error_msg = f"Failed to parse CSV file: {str(exc)}"
         logger.error(error_msg)
         raise S3ServiceError(error_msg) from exc
+
+
+def s3_uri_to_key(uri: str | None) -> str | None:
+    if not uri:
+        return None
+    value = uri.strip()
+    if not value:
+        return None
+    if not value.startswith("s3://"):
+        return value
+    parts = value.split("/", 3)
+    if len(parts) < 4:
+        return None
+    return parts[3].strip() or None

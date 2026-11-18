@@ -5,8 +5,8 @@ Gadi compute nodes have no network access, so under NXF_OFFLINE Nextflow
 resolves `pipeline` (the workflow's GitHub URL) against a pre-staged checkout
 on Gadi's filesystem instead of fetching it, the same way input files are
 staged via Globus. A checkout is shared across every run of a workflow, so
-it's cached on the Workflow row: if default_revision still resolves to the
-commit already staged/staging under that revision, launches reuse it for free.
+it's cached on the workflow/backend repository-status row. If default_revision
+still resolves to the staged/staging commit, launches reuse the checkout.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
@@ -26,7 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRepoStatus
 from ..db.models.core import Workflow
+from ..schemas.backend import RepositoryStatus, RepositoryTransferMode
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusTransferError
 from .globus_transfer import _gadi_relative_path
@@ -107,7 +108,7 @@ def build_repo_assets_s3_prefix(owner: str, repo: str, revision: str, commit_sha
     return f"workflow-repos-assets/{owner}-{repo}/{revision}/{commit_sha}"
 
 
-def build_repo_gadi_path(
+def build_repo_checkout_path(
     owner: str, repo: str, revision: str, commit_sha: str, *, globus_settings: GlobusSettings
 ) -> str:
     """Path to a real (non-bare) clone of the commit - used for reading
@@ -126,54 +127,56 @@ def build_repo_gadi_path(
 
 
 @dataclass(frozen=True)
-class RepoStagingLocations:
-    """Where a workflow's staged checkout lives on Gadi (see
-    build_repo_gadi_path). gadi_path and assets_gadi_path are always equal -
-    kept as two fields since callers use them for different purposes."""
+class RepositoryPreparation:
+    """Repository requirements captured when preparing a queued job."""
 
-    gadi_path: str
-    assets_gadi_path: str
+    mode: RepositoryTransferMode
+    location: str | None = None
+    ready: bool = False
+    repo_url: str | None = None
+    revision: str | None = None
 
 
-def ensure_repo_staging_requested(
-    db: Session, workflow: Workflow, *, settings: Settings | None = None
-) -> RepoStagingLocations:
-    """Resolve the workflow's current commit, returning the Gadi paths it
-    will live at, and kick off staging if that commit isn't already
-    staged/staging.
+def get_repository_globus_settings(backend: ComputeBackend) -> GlobusSettings:
+    try:
+        return backend.get_globus_settings()
+    except ValueError as exc:
+        raise RepoStagingError(
+            f"Backend '{backend.name}' has invalid repository Globus settings"
+        ) from exc
 
-    Called synchronously at launch time - only the cheap GitHub API call
-    happens here. The actual clone/upload/Globus transfer happens later via
-    sync_workflow_repo_staging, so launch requests stay fast.
-    """
+
+def prepare_repository(
+    db: Session, workflow: Workflow, *, backend: ComputeBackend, settings: Settings | None = None
+) -> RepositoryPreparation:
+    """Prepare a native repository or request its Globus checkout."""
+    repo_url, revision = workflow.repo_url, workflow.default_revision
+    if backend.repository_transfer == RepositoryTransferMode.NATIVE:
+        return RepositoryPreparation(
+            RepositoryTransferMode.NATIVE, ready=True, repo_url=repo_url, revision=revision
+        )
     settings = settings or get_settings()
-    owner, repo = parse_github_repo(workflow.repo_url)
-    revision = workflow.default_revision
-    commit_sha = resolve_latest_commit_sha(workflow.repo_url, revision, settings=settings)
-    gadi_path = build_repo_gadi_path(
-        owner, repo, revision, commit_sha, globus_settings=settings.globus
+    globus_settings = get_repository_globus_settings(backend)
+    owner, repo = parse_github_repo(repo_url)
+    commit_sha = resolve_latest_commit_sha(repo_url, revision, settings=settings)
+    location = build_repo_checkout_path(
+        owner, repo, revision, commit_sha, globus_settings=globus_settings
     )
-
-    # Comparing the full gadi_path (not just commit_sha) means a revision
-    # change is always detected, even when the new revision happens to
-    # resolve to the same commit_sha as before - gadi_path bakes revision in,
-    # so a stale value here means either the commit or the revision moved.
-    up_to_date = workflow.repo_gadi_path == gadi_path and workflow.repo_staging_status in (
-        "pending",
-        "in_progress",
-        "completed",
+    try:
+        repo_status = WorkflowRepoStatus.request_staging(
+            db, backend, workflow, location=location, commit_sha=commit_sha
+        )
+    except ValueError as exc:
+        raise RepoStagingError(str(exc)) from exc
+    preparation = RepositoryPreparation(
+        RepositoryTransferMode.GLOBUS,
+        location,
+        repo_status.status == RepositoryStatus.COMPLETED,
+        repo_url=repo_url,
+        revision=revision,
     )
-    if not up_to_date:
-        workflow.repo_staged_commit_sha = commit_sha
-        workflow.repo_staging_status = "pending"
-        workflow.repo_gadi_path = gadi_path
-        workflow.repo_staging_transfer_id = None
-        workflow.repo_staging_error_message = None
-        workflow.repo_staging_updated_at = datetime.now(UTC)
-        db.add(workflow)
-        db.commit()
-
-    return RepoStagingLocations(gadi_path=gadi_path, assets_gadi_path=gadi_path)
+    db.commit()
+    return preparation
 
 
 def _run_git(*args: str, cwd: str) -> None:
@@ -195,7 +198,7 @@ def _clone_working_checkout(bare_dir: str, dest_dir: str, *, origin_url: str) ->
     """Clone a real (non-bare) working checkout from the already-fetched bare
     repo (local filesystem clone, no second network fetch). A real `.git/`,
     unlike a `git archive` extract, so it's indistinguishable from a checkout
-    Nextflow would produce itself (see build_repo_gadi_path).
+    Nextflow would produce itself (see build_repo_checkout_path).
 
     `git clone` records bare_dir (an ephemeral tmp dir) as `origin`, so it
     must be rewritten to origin_url (the workflow's real repo_url) -
@@ -270,117 +273,124 @@ def _clone_and_upload_repo(
 
 
 def stage_pending_repo(
-    db: Session, workflow: Workflow, *, settings: Settings | None = None
+    db: Session, repo_status: WorkflowRepoStatus, *, settings: Settings | None = None
 ) -> None:
-    """Submit the S3 upload + Globus transfer for a "pending" workflow repo."""
+    """Submit the S3 upload and Globus transfer for one pending repository."""
+    locked = WorkflowRepoStatus.lock_for_workflow(
+        db, repo_status.compute_backend_id, repo_status.workflow_id
+    )
+    if locked is None or locked.status != RepositoryStatus.PENDING:
+        return
+    repo_status = locked
     settings = settings or get_settings()
-    owner, repo = parse_github_repo(workflow.repo_url)
-    revision = workflow.default_revision
-    commit_sha = workflow.repo_staged_commit_sha
+    workflow = repo_status.workflow
+    globus_settings = get_repository_globus_settings(repo_status.compute_backend)
+    payload = (
+        QueuedJob.get_repository_launch_payload(
+            db, repo_status.compute_backend_id, repo_status.workflow_id, repo_status.location
+        )
+        or {}
+    )
+    repo_url = payload.get("pipeline") or workflow.repo_url
+    revision = payload.get("revision") or workflow.default_revision
+    owner, repo = parse_github_repo(repo_url)
+    commit_sha = repo_status.staged_commit_sha
     if not commit_sha:
         raise RepoStagingError(f"Workflow {workflow.id} has no commit sha to stage")
-
-    gadi_path = workflow.repo_gadi_path or build_repo_gadi_path(
-        owner, repo, revision, commit_sha, globus_settings=settings.globus
-    )
     assets_s3_prefix = build_repo_assets_s3_prefix(owner, repo, revision, commit_sha)
-
     try:
         _clone_and_upload_repo(
             owner,
             repo,
             commit_sha,
-            workflow.repo_url,
-            revision=workflow.default_revision,
+            repo_url,
+            revision=revision,
             settings=settings,
         )
-
-        transfer_client = get_transfer_client(settings.globus)
-        # Persist the submission id before submit_transfer, same as
-        # DataTransfer.transfer_id, so a crash-and-retry doesn't double-submit.
-        submission_id = workflow.repo_staging_transfer_id
+        transfer_client = get_transfer_client(globus_settings)
+        submission_id = repo_status.transfer_id
         if not submission_id:
             submission_id = cast(str, transfer_client.get_submission_id()["value"])
-            workflow.repo_staging_transfer_id = submission_id
-            db.add(workflow)
+            repo_status.record_submission(submission_id)
             db.commit()
-
+            # Reacquire after persisting the idempotency key; another worker may have submitted it.
+            locked = WorkflowRepoStatus.lock_for_workflow(
+                db, repo_status.compute_backend_id, repo_status.workflow_id
+            )
+            if locked is None or locked.status != RepositoryStatus.PENDING:
+                return
+            repo_status = locked
         transfer_data = globus_sdk.TransferData(
-            settings.globus.s3_collection_id,
-            settings.globus.backend_collection_id,
+            globus_settings.s3_collection_id,
+            globus_settings.backend_collection_id,
             submission_id=submission_id,
             label=f"sbp-repo-{owner}-{repo}-{commit_sha[:12]}",
         )
-        # gadi_path is absolute, but the Gadi collection's root maps to
-        # GLOBUS_GADI_COLLECTION_ROOT, not "/" - convert before add_item.
-        destination_path = _gadi_relative_path(gadi_path, globus_settings=settings.globus)
+        destination_path = _gadi_relative_path(
+            repo_status.location, globus_settings=globus_settings
+        )
         transfer_data.add_item(f"/{assets_s3_prefix}", destination_path, recursive=True)
         result = transfer_client.submit_transfer(transfer_data)
     except (RepoStagingError, globus_sdk.GlobusAPIError) as exc:
-        logger.warning("Workflow repo staging failed for %s: %s", workflow.id, exc)
-        workflow.repo_staging_status = "failed"
-        workflow.repo_staging_transfer_id = None
-        workflow.repo_staging_error_message = str(exc)
-        workflow.repo_staging_updated_at = datetime.now(UTC)
-        db.add(workflow)
+        logger.warning("Workflow repo staging failed for %s: %s", repo_status.workflow_id, exc)
+        repo_status.mark_failed(str(exc))
         db.commit()
         return
-
-    workflow.repo_gadi_path = gadi_path
-    workflow.repo_staging_transfer_id = result["task_id"]
-    workflow.repo_staging_status = "in_progress"
-    workflow.repo_staging_updated_at = datetime.now(UTC)
-    db.add(workflow)
+    repo_status.mark_in_progress(result["task_id"])
     db.commit()
 
 
-def poll_repo_staging(db: Session, workflow: Workflow, *, settings: Settings | None = None) -> None:
-    """Poll Globus for an "in_progress" workflow repo transfer's task status."""
-    if not workflow.repo_staging_transfer_id:
-        raise GlobusTransferError(f"Workflow {workflow.id} has no transfer_id to poll")
-
-    settings = settings or get_settings()
-    transfer_client = get_transfer_client(settings.globus)
+def poll_repo_staging(
+    db: Session, repo_status: WorkflowRepoStatus, *, settings: Settings | None = None
+) -> None:
+    """Poll the existing Globus task for one workflow/backend checkout."""
+    if not repo_status.transfer_id:
+        raise GlobusTransferError(f"Workflow {repo_status.workflow_id} has no transfer_id to poll")
+    locked = WorkflowRepoStatus.lock_for_workflow(
+        db, repo_status.compute_backend_id, repo_status.workflow_id
+    )
+    if locked is None or locked.status != RepositoryStatus.IN_PROGRESS:
+        return
+    repo_status = locked
+    if not repo_status.transfer_id:
+        raise GlobusTransferError(f"Workflow {repo_status.workflow_id} has no transfer_id to poll")
+    transfer_client = get_transfer_client(
+        get_repository_globus_settings(repo_status.compute_backend)
+    )
     try:
-        task = transfer_client.get_task(workflow.repo_staging_transfer_id)
+        task = transfer_client.get_task(repo_status.transfer_id)
     except globus_sdk.GlobusAPIError as exc:
-        # A poll failure doesn't mean the transfer failed - record it for
-        # visibility without touching status, same as poll_transfer.
-        workflow.repo_staging_error_message = f"Poll failed: {exc}"
-        workflow.repo_staging_updated_at = datetime.now(UTC)
-        db.add(workflow)
+        repo_status.record_error(f"Poll failed: {exc}")
         db.commit()
         raise GlobusTransferError(f"Failed to poll workflow repo transfer: {exc}") from exc
-
-    globus_status = task["status"]
-    if globus_status == "SUCCEEDED":
-        workflow.repo_staging_status = "completed"
-    elif globus_status == "FAILED":
-        workflow.repo_staging_status = "failed"
+    if task["status"] == "SUCCEEDED":
+        repo_status.mark_completed(db)
+    elif task["status"] == "FAILED":
         fatal_error = task.get("fatal_error") or {}
-        workflow.repo_staging_error_message = (
-            fatal_error.get("description") or "Globus transfer failed"
-        )
+        repo_status.mark_failed(fatal_error.get("description") or "Globus transfer failed")
     else:
         return
-
-    workflow.repo_staging_updated_at = datetime.now(UTC)
-    db.add(workflow)
     db.commit()
-    _promote_queued_jobs_waiting_on_repo(db, workflow)
+    _promote_queued_jobs_waiting_on_repo(db, repo_status)
 
 
-def _promote_queued_jobs_waiting_on_repo(db: Session, workflow: Workflow) -> None:
-    """Once a workflow's repo staging settles, re-check every run still
-    waiting on it - a repo staging event can unblock several runs at once."""
+def _promote_queued_jobs_waiting_on_repo(db: Session, repo_status: WorkflowRepoStatus) -> None:
+    """Recheck queued runs for the workflow and backend whose staging settled."""
+    from ..db.models import WorkflowRun
     from ..db.models.job_queue import QueuedJob
-    from .globus_transfer import _try_promote_staging_job  # local import: avoid import cycle
+    from .job_queue import promote_ready_job
 
     queued_jobs = db.scalars(
-        select(QueuedJob).where(QueuedJob.workflow_id == workflow.id, QueuedJob.status == "staging")
+        select(QueuedJob)
+        .join(WorkflowRun, QueuedJob.workflow_run_id == WorkflowRun.id)
+        .where(
+            QueuedJob.workflow_id == repo_status.workflow_id,
+            WorkflowRun.backend_id == repo_status.compute_backend_id,
+            QueuedJob.status == "staging",
+        )
     ).all()
     for queued_job in queued_jobs:
-        _try_promote_staging_job(db, queued_job)
+        promote_ready_job(db, queued_job)
 
 
 @dataclass(frozen=True)
@@ -399,39 +409,47 @@ def sync_workflow_repo_staging(
 ) -> RepoStagingSyncResult:
     """Submit pending and poll in-progress workflow repo stagings for one batch."""
     settings = settings or get_settings()
-    workflows = list(
+    repos = list(
         db.scalars(
-            select(Workflow).where(Workflow.repo_staging_status.in_(["pending", "in_progress"]))
+            select(WorkflowRepoStatus).where(
+                WorkflowRepoStatus.status.in_(
+                    [RepositoryStatus.PENDING, RepositoryStatus.IN_PROGRESS]
+                )
+            )
         )
     )
 
     submitted = completed = failed = errored = 0
-    for workflow in workflows:
+    for repo_status in repos:
         try:
-            if workflow.repo_staging_status == "pending":
-                stage_pending_repo(db, workflow, settings=settings)
-                if workflow.repo_staging_status == "in_progress":
+            if repo_status.status == "pending":
+                stage_pending_repo(db, repo_status, settings=settings)
+                if repo_status.status == "in_progress":
                     submitted += 1
             else:
-                poll_repo_staging(db, workflow, settings=settings)
+                poll_repo_staging(db, repo_status, settings=settings)
         except (RepoStagingError, GlobusTransferError) as exc:
             db.rollback()
-            logger.warning("Failed to sync workflow repo staging for %s: %s", workflow.id, exc)
+            logger.warning(
+                "Failed to sync workflow repo staging for %s: %s", repo_status.workflow_id, exc
+            )
             errored += 1
             continue
         except Exception:
             db.rollback()
-            logger.exception("Unexpected error syncing workflow repo staging for %s", workflow.id)
+            logger.exception(
+                "Unexpected error syncing workflow repo staging for %s", repo_status.workflow_id
+            )
             errored += 1
             continue
 
-        if workflow.repo_staging_status == "failed":
+        if repo_status.status == "failed":
             failed += 1
-        elif workflow.repo_staging_status == "completed":
+        elif repo_status.status == "completed":
             completed += 1
 
     return RepoStagingSyncResult(
-        checked=len(workflows),
+        checked=len(repos),
         submitted=submitted,
         completed=completed,
         failed=failed,

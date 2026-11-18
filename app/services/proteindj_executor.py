@@ -2,29 +2,29 @@
 
 from __future__ import annotations
 
-import os
-from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import QueuedJob, WorkflowRun
-from ..db.models.core import DataTransfer, RunInput, S3Object
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.de_novo_design import ProteinDjFormData
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .globus_transfer import build_gadi_input_path, build_gadi_output_path
+from .compute_backends import validate_backend_launch_config
+from .data_movement import DataMovement
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .proteindj_config import (
     get_proteindj_config_profiles,
-    get_proteindj_config_text,
     get_proteindj_default_params,
     get_proteindj_design_mode,
 )
 from .results_utils import s3_uri_to_key
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
+from .workflow_config_fetcher import render_workflow_config
+from .workflow_repo_staging import RepositoryPreparation
 
 
 def _design_length(fields: ProteinDjFormData) -> str:
@@ -57,7 +57,9 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
-    config_path: str,
+    backend: ComputeBackend,
+    launch_config: BackendLaunchConfig,
+    repository: RepositoryPreparation,
     revision: str | None = None,
     output_id: str | None = None,
     form_data: WorkflowFormData,
@@ -65,8 +67,10 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     commit: bool = False,
 ) -> QueuedJob:
     """Build and queue a proteindj launch payload."""
-    workspace_id = settings.seqera.work_space
-    compute_env_id = settings.seqera.compute_id
+    validate_backend_launch_config(workflow_run, backend, launch_config)
+    movement = DataMovement(launch_config.data_transfer, settings, launch_config.globus)
+    workspace_id = launch_config.workspace_id
+    compute_env_id = launch_config.compute_env_id
 
     run_name = (form.runName or "").strip()
     if not run_name:
@@ -75,36 +79,18 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     output_key = (output_id or "").strip()
     if not output_key:
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    out_dir = build_gadi_output_path(
-        output_key,
-        "de-novo-design",
-        globus_settings=settings.globus,
-    )
+    out_dir = movement.output_location(output_key, "de-novo-design")
 
     proteindj_fields = _parse_proteindj_form_data(form_data)
 
     pdb_key = s3_uri_to_key(proteindj_fields.starting_pdb)
     if not pdb_key:
         raise WorkflowLaunchError("Invalid S3 URI for starting_pdb")
-    if db_session.get(S3Object, pdb_key) is None:
-        db_session.add(S3Object(object_key=pdb_key, uri=proteindj_fields.starting_pdb))
-    staged_pdb_location = build_gadi_input_path(
+    staged_pdb_location = movement.prepare_input(
+        db_session,
         workflow_run.id,
         "de-novo-design",
-        os.path.basename(pdb_key),
-        globus_settings=settings.globus,
-    )
-    pdb_transfer = DataTransfer(
-        workflow_run_id=workflow_run.id,
-        direction="input",
-        provider="globus",
-        source_location=proteindj_fields.starting_pdb,
-        destination_location=staged_pdb_location,
-        recursive=False,
-    )
-    db_session.add(pdb_transfer)
-    db_session.add(
-        RunInput(run_id=workflow_run.id, s3_object_id=pdb_key, data_transfer=pdb_transfer)
+        proteindj_fields.starting_pdb,
     )
 
     default_params = get_proteindj_default_params(
@@ -132,9 +118,11 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "revision": revision or "dev",
         "paramsText": params_text,
         "configProfiles": get_proteindj_config_profiles(),
-        "configText": get_proteindj_config_text(
-            config_path,
+        "configText": render_workflow_config(
+            launch_config.config_path,
             user_details=user_details,
+            pbs_enabled=backend.name == ComputeBackendName.GADI,
+            gadi_project=launch_config.project_id,
         ),
         "resume": False,
     }
@@ -143,24 +131,21 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
     assert workflow is not None, "Queued job's workflow run has no associated workflow"
     launch_payload["preRunScript"] = get_executor_script(
         prerun_script_path=workflow.prerun_script_path,
-        repo_gadi_path=workflow.repo_gadi_path,
+        repo_checkout_path=repository.location,
         repo_url=workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
+        module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
+        offline=repository.mode == RepositoryTransferMode.GLOBUS,
     )
 
-    queued_job = QueuedJob(
-        workflow=workflow,
+    return QueuedJob.create_for_launch(
+        db_session,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending",
-        next_attempt_at=datetime.now(UTC),
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
+        commit=commit,
     )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
 
 
 async def launch_proteindj_workflow(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.config import GlobusSettings
@@ -63,28 +62,3 @@ def test_get_transfer_client_only_requests_data_access_scope_for_gadi_collection
         get_transfer_client(globus_settings)
 
     mock_transfer_client.add_app_data_access_scope.assert_called_once_with("the-gadi-collection-id")
-
-
-def test_get_transfer_client_uses_get_settings_when_settings_not_provided():
-    globus_settings = _globus_settings()
-
-    mock_app = MagicMock()
-    mock_transfer_client = MagicMock()
-    with (
-        patch(
-            "app.services.globus_client.get_settings",
-            return_value=SimpleNamespace(globus=globus_settings),
-        ),
-        patch(
-            "app.services.globus_client.globus_sdk.ClientApp", return_value=mock_app
-        ) as mock_app_cls,
-        patch(
-            "app.services.globus_client.globus_sdk.TransferClient",
-            return_value=mock_transfer_client,
-        ),
-    ):
-        result = get_transfer_client()
-
-    mock_app_cls.assert_called_once()
-    assert mock_app_cls.call_args.kwargs["client_id"] == "the-client-id"
-    assert result is mock_transfer_client

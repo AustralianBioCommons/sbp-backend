@@ -633,12 +633,11 @@ class RunInputAdmin(UrlSafePrimaryKeyModelView):
 class RunOutputAdmin(UrlSafePrimaryKeyModelView):
     fields = [
         HasOne("run", identity="workflow-run"),
+        StringField("run_id", exclude_from_create=True, exclude_from_edit=True),
         HasOne("s3_object", identity="s3-object", display_template=_SAFE_RELATION_TEMPLATE),
     ]
 
     def get_search_query(self, request: Request, term: str) -> Any:
-        # `run` is a relationship, not a column, so the default search only
-        # matches the raw run_id UUID. Add job name via a correlated EXISTS.
         base_clause = super().get_search_query(request, term)
         run_name_clause = exists().where(
             WorkflowRun.id == RunOutput.run_id,

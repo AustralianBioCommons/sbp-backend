@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import shlex
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..db.models import QueuedJob, WorkflowRun
+from ..db.models import ComputeBackend, QueuedJob, WorkflowRun
+from ..schemas.backend import BackendLaunchConfig, ComputeBackendName, RepositoryTransferMode
 from ..schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
-from .globus_transfer import build_gadi_output_path
+from .compute_backends import validate_backend_launch_config
+from .data_movement import DataMovement
 from .launch_payloads import DEFAULT_MODULE_LOADS, get_executor_script, send_queued_launch
 from .seqera import WorkflowLaunchResult, params_to_yaml_text
 from .seqera_errors import WorkflowLaunchError
 from .wisps_config import (
     WISPS_WORKFLOW_MODES,
     get_wisps_config_profiles,
-    get_wisps_config_text,
     get_wisps_default_params,
 )
+from .workflow_config_fetcher import render_workflow_config
+from .workflow_repo_staging import RepositoryPreparation
 
 
 async def prepare_wisps_workflow(
@@ -30,7 +32,9 @@ async def prepare_wisps_workflow(
     db_session: Session,
     workflow_run: WorkflowRun,
     pipeline: str,
-    config_path: str,
+    backend: ComputeBackend,
+    launch_config: BackendLaunchConfig,
+    repository: RepositoryPreparation,
     form_data: WorkflowFormData,
     revision: str | None = None,
     output_id: str | None = None,
@@ -40,16 +44,14 @@ async def prepare_wisps_workflow(
 ) -> QueuedJob:
     tool: str | None = form_data.tool or None
 
-    workspace_id = settings.seqera.work_space
-    compute_env_id = settings.seqera.compute_id
+    validate_backend_launch_config(workflow_run, backend, launch_config)
+    movement = DataMovement(launch_config.data_transfer, settings, launch_config.globus)
+    workspace_id = launch_config.workspace_id
+    compute_env_id = launch_config.compute_env_id
 
     if not output_id or not output_id.strip():
         raise WorkflowLaunchError("Missing output identifier for workflow launch")
-    out_dir = build_gadi_output_path(
-        output_id.strip(),
-        form_data.workflow,
-        globus_settings=settings.globus,
-    )
+    out_dir = movement.output_location(output_id.strip(), form_data.workflow)
 
     job_id = (form.runName or "").strip()
     if not job_id:
@@ -66,10 +68,11 @@ async def prepare_wisps_workflow(
         )
     )
 
-    config_text = get_wisps_config_text(
-        config_path,
+    config_text = render_workflow_config(
+        launch_config.config_path,
         user_details=user_details,
-        gadi_project=settings.seqera.gadi_project,
+        gadi_project=launch_config.project_id,
+        pbs_enabled=backend.name == ComputeBackendName.GADI,
     )
 
     launch_payload: dict[str, Any] = {
@@ -92,27 +95,24 @@ async def prepare_wisps_workflow(
     # script: just load the modules the pipeline needs.
     prerun_script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path=workflow.repo_gadi_path,
+        repo_checkout_path=repository.location,
         repo_url=workflow.repo_url,
-        module_loads=DEFAULT_MODULE_LOADS,
+        module_loads=DEFAULT_MODULE_LOADS if backend.name == ComputeBackendName.GADI else [],
+        offline=repository.mode == RepositoryTransferMode.GLOBUS,
     )
-    if workflow.ref_database:
-        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(workflow.ref_database)}\n"
+    if launch_config.ref_database_dir:
+        prerun_script += f"\nexport PF_DB_BASE_DIR={shlex.quote(launch_config.ref_database_dir)}\n"
     launch_payload["preRunScript"] = prerun_script
 
-    queued_job = QueuedJob(
-        workflow=workflow,
+    return QueuedJob.create_for_launch(
+        db_session,
         workflow_run=workflow_run,
         launch_payload=launch_payload,
-        status="pending",
-        next_attempt_at=datetime.now(UTC),
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
+        commit=commit,
     )
-    db_session.add(queued_job)
-    if commit:
-        db_session.commit()
-    else:
-        db_session.flush()
-    return queued_job
 
 
 async def launch_wisps_workflow(

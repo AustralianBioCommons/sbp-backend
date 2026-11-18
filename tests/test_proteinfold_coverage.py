@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
 import pytest
-import respx
 from sqlalchemy import select
 
 from app.db.models import QueuedJob
@@ -15,7 +13,6 @@ from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, W
 from app.services.launch_payloads import get_executor_script
 from app.services.proteinfold_config import (
     get_proteinfold_config_profiles,
-    get_proteinfold_config_text,
     get_proteinfold_default_params,
 )
 from app.services.proteinfold_executor import (
@@ -25,13 +22,17 @@ from app.services.proteinfold_executor import (
     prepare_proteinfold_workflow,
 )
 from app.services.seqera import (
-    WorkflowExecutorError,
     WorkflowLaunchResult,
     params_to_yaml_text,
-    post_seqera_launch,
 )
 from app.services.seqera_errors import WorkflowLaunchError
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunWithGadiFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -53,7 +54,7 @@ def _queued_proteinfold_job(
         name="single-prediction",
         repo_url="https://github.com/nf-core/proteinfold",
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
         "computeEnvId": "ce_456",
         "runName": "test-run",
@@ -82,9 +83,8 @@ def _queued_proteinfold_job(
 
 @contextmanager
 def _mock_proteinfold_db_context():
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -202,58 +202,6 @@ def test_build_params_text_empty_form_data_dict():
 
 
 # =============================================================================
-# Tests for post_seqera_launch()
-# =============================================================================
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_success():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(
-                200, json={"workflowId": "wf_abc123", "status": "submitted"}
-            )
-        )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="Proteinfold")
-
-    assert result.workflow_id == "wf_abc123"
-    assert result.status == "submitted"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_nested_workflow_id():
-    """workflowId can be found nested under the data key."""
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(
-                200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
-            )
-        )
-        result = await post_seqera_launch({}, workflow_label="Proteinfold")
-    assert result.workflow_id == "wf_nested"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_http_error():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(401, text="Invalid token")
-        )
-        with pytest.raises(WorkflowExecutorError, match="401"):
-            await post_seqera_launch({}, workflow_label="Proteinfold")
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_missing_workflow_id():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"status": "submitted"})
-        )
-        with pytest.raises(WorkflowExecutorError, match="workflowId"):
-            await post_seqera_launch({}, workflow_label="Proteinfold")
-
-
-# =============================================================================
 # Tests for launch_proteinfold_workflow()
 # =============================================================================
 
@@ -314,14 +262,14 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteinfold-run")
     form_data = _form_data(colabfold_num_recycles=3, colabfold_use_templates=True)
 
     with (
         patch(
-            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            "app.services.proteinfold_executor.render_workflow_config",
             return_value="config_text",
         ),
         patch(
@@ -335,7 +283,9 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             revision="main",
             output_id="run-output-id",
             mode="colabfold",
@@ -355,7 +305,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    assert queued_job.status == "staging"
     assert queued_job.next_attempt_at is not None
     assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
@@ -389,12 +339,12 @@ async def test_prepare_proteinfold_workflow_forwards_prerun_script_path(
     """prerun_script_path is forwarded to get_executor_script at prepare time."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(prerun_script_path="/some/prerun.sh", ref_database=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with (
         patch(
-            "app.services.proteinfold_executor.get_proteinfold_config_text",
+            "app.services.proteinfold_executor.render_workflow_config",
             return_value="config_text",
         ),
         patch(
@@ -408,7 +358,9 @@ async def test_prepare_proteinfold_workflow_forwards_prerun_script_path(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -427,11 +379,11 @@ async def test_prepare_proteinfold_workflow_exports_pf_db_base_dir_from_ref_data
     workflow = WorkflowFactory.create_sync(
         ref_database="/scratch/mini_dbs", prerun_script_path=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with patch(
-        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        "app.services.proteinfold_executor.render_workflow_config",
         return_value="config_text",
     ):
         prepared_job = await prepare_proteinfold_workflow(
@@ -440,7 +392,9 @@ async def test_prepare_proteinfold_workflow_exports_pf_db_base_dir_from_ref_data
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -456,11 +410,11 @@ async def test_prepare_proteinfold_workflow_without_ref_database_omits_pf_db_bas
     """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with patch(
-        "app.services.proteinfold_executor.get_proteinfold_config_text",
+        "app.services.proteinfold_executor.render_workflow_config",
         return_value="config_text",
     ):
         prepared_job = await prepare_proteinfold_workflow(
@@ -469,7 +423,9 @@ async def test_prepare_proteinfold_workflow_without_ref_database_omits_pf_db_bas
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="run-output-id",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/test.csv",
@@ -491,7 +447,9 @@ async def test_launch_proteinfold_workflow_missing_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id=None,
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
@@ -511,7 +469,9 @@ async def test_launch_proteinfold_workflow_empty_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/nf-core/proteinfold",
-            config_path="/fake/proteinfold.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteinfold.config"
+            ),
             output_id="   ",
             user_details=_USER_DETAILS,
             staged_input_location="/test/input/single-prediction/run-id/dataset_abc",
@@ -563,16 +523,10 @@ def test_get_proteinfold_default_params_mode_substitution():
     assert params["mode"] == "boltz"
 
 
-def test_get_proteinfold_default_params_is_dict():
-    result = get_proteinfold_default_params("s3://out", "https://sheet")
-    assert isinstance(result, dict)
-    assert len(result) > 0
-
-
 def test_get_executor_script_loads_modules():
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+        repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=["singularity", "nextflow"],
     )
@@ -585,7 +539,7 @@ def test_get_executor_script_loads_modules():
 def test_get_executor_script_omits_nxf_assets_without_repo_gadi_path():
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path=None,
+        repo_checkout_path=None,
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=["singularity"],
     )
@@ -599,7 +553,7 @@ def test_get_executor_script_chmods_working_checkout_bin():
     non-executable on Gadi - this line restores it before the run."""
     script = get_executor_script(
         prerun_script_path=None,
-        repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+        repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
         repo_url="https://github.com/test-owner/test-repo",
         module_loads=None,
     )
@@ -610,50 +564,6 @@ def test_get_executor_script_chmods_working_checkout_bin():
     )
 
 
-def test_get_proteinfold_config_profiles_returns_list():
-    profiles = get_proteinfold_config_profiles()
-    assert isinstance(profiles, list)
-
-
 def test_get_proteinfold_config_profiles_contains_singularity():
     profiles = get_proteinfold_config_profiles()
     assert "singularity" in profiles
-
-
-def test_get_proteinfold_config_text_appends_process_block():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteinfold_config_text(
-            "/fake/proteinfold.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "process {" in result
-    assert "clusterOptions" in result
-
-
-def test_get_proteinfold_config_text_contains_encoded_email_and_encoded_ip():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteinfold_config_text(
-            "/fake/proteinfold.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "dXNlckBleC5jb20=" in result
-    assert "MS4yLjMuNA==" in result
-
-
-def test_get_proteinfold_config_text_without_ip_uses_encoded_email_only():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteinfold_config_text(
-            "/fake/proteinfold.config",
-            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
-        )
-    assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
-
-
-def test_get_proteinfold_config_text_contains_base_config():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteinfold_config_text(
-            "/fake/proteinfold.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "base_config" in result

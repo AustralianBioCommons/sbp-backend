@@ -152,7 +152,11 @@ def test_app_user_admin_includes_credit_column() -> None:
     assert "credit_updated_by" in field_names
 
 
-def test_run_output_admin_search_matches_by_job_run_name(test_db) -> None:
+@pytest.mark.filterwarnings("error::sqlalchemy.exc.SADeprecationWarning")
+@pytest.mark.parametrize(
+    "term, matches", [("staging-wf-sp", True), ("absent-job", False), (None, True)]
+)
+def test_run_output_admin_search_matches_by_job_run_name(test_db, term, matches) -> None:
     user = AppUser(
         id=uuid4(),
         auth0_user_id="auth0|run-output-search",
@@ -206,10 +210,15 @@ def test_run_output_admin_search_matches_by_job_run_name(test_db) -> None:
     request.state.action = RequestAction.LIST
 
     view = RunOutputAdmin(RunOutput)
-    query = view.get_search_query(request, "staging-wf-sp")
+    # Exercise inherited scalar-column search as well as the custom job-name search.
+    if term is None:
+        term = matching_run.id.hex[:8]
+    query = view.get_search_query(request, term)
     rows = test_db.scalars(select(RunOutput).where(query)).all()
 
-    assert {row.s3_object_id for row in rows} == {matching_object.object_key}
+    assert {row.s3_object_id for row in rows} == (
+        {matching_object.object_key} if matches else set()
+    )
 
 
 def test_s3_object_relation_fields_use_safe_relation_template() -> None:

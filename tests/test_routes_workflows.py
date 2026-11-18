@@ -13,14 +13,35 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import ComputeBackend, QueuedJob
-from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
+from app.db.models.backends import BackendSelectionSettings
+from app.db.models.core import AppUser, DataTransfer, RunInput, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
-from app.schemas.backend import ComputeBackendName
+from app.schemas.backend import (
+    BackendSelectionMethod,
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryTransferMode,
+)
 from app.services.s3 import S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
+from tests.datagen import (
+    BackendSelectionSettingsFactory,
+    BackendWorkflowSettingsFactory,
+    ComputeBackendFactory,
+)
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
+
+
+@pytest.fixture(autouse=True)
+def backend_selection_settings(persistent_models, monkeypatch, mock_globus_settings):
+    for prefix in ("GADI_", "SETONIX_"):
+        for field, value in mock_globus_settings.model_dump().items():
+            monkeypatch.setenv(f"{prefix}GLOBUS_{field.upper()}", str(value))
+    return BackendSelectionSettingsFactory.create_sync(
+        selection_method=BackendSelectionMethod.RANDOM,
+    )
 
 
 def _mock_samplesheet_staging(mock_read_csv, mock_upload_csv, field_name: str, s3_uri: str):
@@ -56,17 +77,15 @@ def _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows):
 
 
 async def _queue_job_for_route_prepare(form, **kwargs):
-    db_session = kwargs["db_session"]
-    workflow_run = kwargs["workflow_run"]
-    queued_job = QueuedJob(
-        workflow=workflow_run.workflow,
-        workflow_run=workflow_run,
+    repository = kwargs["repository"]
+    return QueuedJob.create_for_launch(
+        kwargs["db_session"],
+        workflow_run=kwargs["workflow_run"],
         launch_payload={"runName": form.runName},
-        status="pending",
+        repository_mode=repository.mode,
+        repository_location=repository.location,
+        repository_ready=repository.ready,
     )
-    db_session.add(queued_job)
-    db_session.flush()
-    return queued_job
 
 
 @pytest.fixture
@@ -121,10 +140,33 @@ def role_check_client(test_engine, default_backend):
 
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+@pytest.mark.parametrize("backend_name", list(ComputeBackendName))
+@pytest.mark.parametrize("selection_method", list(BackendSelectionMethod))
 def test_launch_success_without_dataset(
-    mock_prepare, client: TestClient, test_engine, default_backend
+    mock_prepare,
+    client: TestClient,
+    test_engine,
+    test_db,
+    default_backend,
+    backend_selection_settings,
+    backend_name,
+    selection_method,
 ):
     """Test successful workflow launch without dataset."""
+    backend_selection_settings.selection_method = selection_method
+    selected_backend = default_backend
+    if backend_name != ComputeBackendName.GADI:
+        workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+        BackendWorkflowSettingsFactory.create_sync(
+            compute_backend=default_backend,
+            workflow=workflow,
+            enabled=False,
+        )
+        backend_selection_settings.last_selected_id = default_backend.id
+        selected_backend = ComputeBackendFactory.create_sync(name=backend_name, enabled=True)
+    test_db.commit()
+    selected_backend_id = selected_backend.id
+
     payload = {
         "launch": {
             "workflow": "de-novo-design",
@@ -169,7 +211,11 @@ def test_launch_success_without_dataset(
             ).where(WorkflowRun.id == UUID(data["runId"]))
         ).first()
         assert created_run is not None
-        assert created_run.backend_id == ComputeBackend.get_by_name(db, ComputeBackendName.GADI).id
+        assert created_run.backend_id == selected_backend_id
+        if selection_method == BackendSelectionMethod.CYCLE:
+            selection_settings = BackendSelectionSettings.current_settings(db)
+            assert selection_settings.last_selected_id == selected_backend_id
+            assert selection_settings.last_selected_at is not None
         assert created_run.seqera_run_id is None
         assert created_run.run_name == "test-run"
         assert created_run.binder_name == "PDL1"
@@ -636,7 +682,7 @@ def _add_proteinfold_workflow(test_engine):
             db.commit()
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
@@ -683,7 +729,7 @@ def test_launch_proteinfold_success(
         assert queued_job.status == "staging"
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_configuration_error(
@@ -722,7 +768,7 @@ def test_launch_proteinfold_queue_preparation_configuration_error(
     assert "run name" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_proteinfold_workflow")
 def test_launch_proteinfold_queue_preparation_error(
@@ -832,7 +878,7 @@ def test_launch_single_prediction_rejects_oversized_alphafold2(
     assert "less than 1000" in response.json()["detail"]
 
 
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch(
     "app.routes.workflows.prepare_proteinfold_workflow", side_effect=_queue_job_for_route_prepare
@@ -871,8 +917,12 @@ _LAUNCH_PAYLOAD = {
 }
 
 
-def test_launch_requires_configured_gadi_backend(client, test_engine, default_backend):
+@pytest.mark.parametrize("selection_method", list(BackendSelectionMethod))
+def test_launch_requires_enabled_backend(
+    client, test_engine, default_backend, mock_repo_staging, selection_method
+):
     with Session(test_engine) as session:
+        BackendSelectionSettings.current_settings(session).selection_method = selection_method
         backend = ComputeBackend.get_by_name(session, ComputeBackendName.GADI)
         session.delete(backend)
         session.commit()
@@ -880,7 +930,22 @@ def test_launch_requires_configured_gadi_backend(client, test_engine, default_ba
     response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Gadi compute backend is not configured."
+    assert response.json()["detail"] == "No compute backend could be selected."
+    mock_repo_staging.assert_not_called()
+    with Session(test_engine) as session:
+        assert session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+
+def test_launch_requires_backend_selection_settings(client, test_engine, mock_repo_staging):
+    with Session(test_engine) as session:
+        session.delete(BackendSelectionSettings.current_settings(session))
+        session.commit()
+
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Backend selection settings are not configured."
+    mock_repo_staging.assert_not_called()
     with Session(test_engine) as session:
         assert session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
 
@@ -1017,7 +1082,7 @@ def wisps_client(test_engine, default_backend):
         yield c
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_success(
@@ -1099,7 +1164,7 @@ def test_launch_interaction_screening_success(
         }
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_records_per_run_work_dir(
@@ -1108,8 +1173,11 @@ def test_launch_records_per_run_work_dir(
     """Each run gets its own workdir, "<base workdir>/<run id>", recorded on
     workflow_runs and sent to Seqera."""
     _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
-    get_settings_override = wisps_client.app.dependency_overrides.get(get_settings, get_settings)
-    expected_work_dir = get_settings_override().seqera.work_dir
+    with Session(test_engine) as session:
+        backend = session.scalar(select(ComputeBackend))
+        backend.base_work_dir = "/backend-specific/work"
+        session.commit()
+    expected_work_dir = "/backend-specific/work"
 
     run_ids = []
     for run_name in ("workdir-run-1", "workdir-run-2"):
@@ -1187,7 +1255,7 @@ def test_launch_interaction_screening_rejects_bad_samplesheet(
     mock_prepare.assert_not_called()
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_configuration_error(
@@ -1220,7 +1288,7 @@ def test_launch_interaction_screening_queue_preparation_configuration_error(
         assert count == 0
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow")
 def test_launch_interaction_screening_queue_preparation_error(
@@ -1253,7 +1321,7 @@ def test_launch_interaction_screening_queue_preparation_error(
         assert count == 0
 
 
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_with_workflow_field_in_launch(
@@ -1383,7 +1451,7 @@ def test_launch_deducts_credits_when_enabled(
 
 @patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_rejected_when_insufficient_credits(
-    mock_prepare, client, test_engine, monkeypatch, mock_settings
+    mock_prepare, client, test_engine, monkeypatch, mock_settings, default_backend
 ):
     """With credits enabled, an unaffordable launch is rejected (402) and not queued."""
     monkeypatch.setenv("ENABLE_CREDITS", "true")
@@ -1490,7 +1558,7 @@ def _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv):
 
 
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_stages_single_multi_fasta(
@@ -1555,7 +1623,7 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     ],
 )
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_csv_to_s3")
+@patch("app.services.data_movement.upload_csv_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_bulk_prediction_deducts_credits_when_enabled(
@@ -1679,7 +1747,7 @@ def test_upload_bulk_prediction_dataset_endpoint_rejects_sequences_payload(
 
 
 @patch("app.routes.workflows.read_s3_file")
-@patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
+@patch("app.services.data_movement.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
 def test_launch_interaction_screening_deducts_credits_when_enabled(
@@ -1767,3 +1835,156 @@ def test_launch_interaction_screening_rejected_when_insufficient_credits(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 0  # unchanged
+
+
+@pytest.mark.parametrize(
+    "invalid", ["workflow_disabled", "empty_override", "empty_workspace", "missing_globus"]
+)
+def test_invalid_backend_config_fails_before_staging(
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+    mock_repo_staging,
+    monkeypatch,
+    invalid,
+):
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    if invalid in ("workflow_disabled", "empty_override"):
+        BackendWorkflowSettingsFactory.create_sync(
+            compute_backend=default_backend,
+            workflow=workflow,
+            enabled=invalid != "workflow_disabled",
+            config_path="" if invalid == "empty_override" else None,
+            ref_database_dir=None,
+        )
+    elif invalid == "empty_workspace":
+        default_backend.seqera_workspace_id = ""
+        test_db.commit()
+    else:
+        monkeypatch.setenv("GADI_GLOBUS_CLIENT_SECRET", "")
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+    assert response.status_code == 503
+    mock_repo_staging.assert_not_called()
+    assert test_db.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+
+@patch("app.routes.workflows.prepare_proteindj_workflow", side_effect=_queue_job_for_route_prepare)
+def test_launch_uses_workflow_override(
+    mock_prepare,
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+):
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    BackendWorkflowSettingsFactory.create_sync(
+        compute_backend=default_backend,
+        workflow=workflow,
+        enabled=True,
+        config_path="/backend/custom.config",
+        ref_database_dir="/backend/database",
+    )
+    response = client.post("/api/workflows/launch", json=_LAUNCH_PAYLOAD)
+    assert response.status_code == 201
+    config = mock_prepare.call_args.kwargs["launch_config"]
+    assert config.config_path == "/backend/custom.config"
+    assert config.ref_database_dir == "/backend/database"
+
+
+@pytest.mark.parametrize("data_mode", list(DataTransferMode))
+@pytest.mark.parametrize("repo_mode", list(RepositoryTransferMode))
+def test_launch_prepares_proteindj_with_resolved_backend_config(
+    client,
+    test_db,
+    default_backend,
+    persistent_models,
+    tmp_path,
+    mocker,
+    repo_mode,
+    data_mode,
+):
+    from app.db.models import WorkflowRepoStatus
+    from app.services.workflow_repo_staging import prepare_repository
+
+    default_backend.data_transfer = data_mode
+    default_backend.repository_transfer = repo_mode
+    test_db.commit()
+    mocker.patch("app.routes.workflows.prepare_repository", side_effect=prepare_repository)
+    resolve = mocker.patch(
+        "app.services.workflow_repo_staging.resolve_latest_commit_sha", return_value="launch-sha"
+    )
+    workflow = test_db.scalar(select(Workflow).where(Workflow.name == "de-novo-design"))
+    config_path = tmp_path / "backend.config"
+    config_path.write_text("// backend launch configuration\n")
+    BackendWorkflowSettingsFactory.create_sync(
+        compute_backend=default_backend,
+        workflow=workflow,
+        enabled=True,
+        config_path=str(config_path),
+        ref_database_dir=None,
+    )
+    payload = {
+        "launch": {"workflow": "de-novo-design", "tool": "bindcraft", "runName": "real-prepare"},
+        "s3InputKey": "inputs/pdb/input.pdb",
+        "formData": {
+            "workflow": "de-novo-design",
+            "tool": "bindcraft",
+            "starting_pdb": "s3://bucket/input.pdb",
+            "number_of_final_designs": 1,
+            "min_length": 100,
+            "max_length": 150,
+            "target_hotspot_residues": "A20",
+        },
+    }
+    response = client.post("/api/workflows/launch", json=payload)
+    assert response.status_code == 201, response.text
+    job = test_db.scalar(
+        select(QueuedJob).where(QueuedJob.workflow_run_id == UUID(response.json()["runId"]))
+    )
+    assert "// backend launch configuration" in job.launch_payload["configText"]
+    assert job.launch_payload["workspaceId"] == default_backend.seqera_workspace_id
+
+    assert job.repository_transfer == repo_mode
+    assert job.launch_payload["pipeline"] == workflow.repo_url
+    assert job.launch_payload["revision"] == workflow.default_revision
+    if repo_mode == RepositoryTransferMode.NATIVE:
+        resolve.assert_not_called()
+        assert job.repository_location is None
+        assert job.repository_ready
+        assert test_db.scalar(select(func.count()).select_from(WorkflowRepoStatus)) == 0
+        assert "NXF_OFFLINE" not in job.launch_payload["preRunScript"]
+        assert "NXF_ASSETS" not in job.launch_payload["preRunScript"]
+        assert "chmod +x" not in job.launch_payload["preRunScript"]
+    else:
+        resolve.assert_called_once()
+        repo = WorkflowRepoStatus.get_for_workflow(test_db, default_backend.id, workflow.id)
+        assert job.repository_location == repo.location
+        assert not job.repository_ready
+        assert "NXF_ASSETS" in job.launch_payload["preRunScript"]
+        assert "chmod +x" in job.launch_payload["preRunScript"]
+    assert (
+        not {"repository_transfer", "repository_location", "repository_ready"}
+        & job.launch_payload.keys()
+    )
+
+    input_rows = test_db.scalars(
+        select(RunInput).where(RunInput.run_id == job.workflow_run_id)
+    ).all()
+    assert len(input_rows) == 1
+    if data_mode == DataTransferMode.NATIVE:
+        assert input_rows[0].data_transfer_id is None
+        assert "s3://bucket/input.pdb" in job.launch_payload["paramsText"]
+        assert f"s3://test-s3-bucket/{job.workflow_run_id}" in job.launch_payload["paramsText"]
+        assert test_db.scalar(select(func.count()).select_from(DataTransfer)) == 0
+    else:
+        assert input_rows[0].data_transfer_id is not None
+        assert "/test/input/" in job.launch_payload["paramsText"]
+        assert "/test/output/" in job.launch_payload["paramsText"]
+    assert job.status == "staging"
+    if data_mode == DataTransferMode.NATIVE and repo_mode == RepositoryTransferMode.NATIVE:
+        from app.scheduler.jobs import promote_staging_jobs
+
+        promote_staging_jobs(db_session=test_db)
+        test_db.refresh(job)
+        assert job.status == "pending"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cmp_to_key
@@ -136,7 +137,12 @@ async def cancel_workflow(
 
     if owned_run.seqera_run_id is not None:
         try:
-            await cancel_workflow_raw(owned_run.seqera_run_id, settings=settings)
+            backend = owned_run.get_backend_or_raise()
+            await cancel_workflow_raw(
+                owned_run.seqera_run_id,
+                workspace_id=backend.seqera_workspace_id,
+                settings=settings,
+            )
         except SeqeraAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -272,8 +278,13 @@ async def list_jobs(
         seqera_run_id = user_run.seqera_run_id
         if not seqera_run_id:
             return user_run.run_id, {}
+        backend = user_run.run.get_backend_or_raise()
         try:
-            return user_run.run_id, await describe_workflow(seqera_run_id, settings=settings)
+            return user_run.run_id, await describe_workflow(
+                seqera_run_id,
+                workspace_id=backend.seqera_workspace_id,
+                settings=settings,
+            )
         except SeqeraAPIError as exc:
             if exc.status_code is not None and exc.status_code < 500:
                 return user_run.run_id, None
@@ -405,7 +416,10 @@ async def get_job_details(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Seqera run ID not available"
             )
         try:
-            seqera_payload = await describe_workflow(seqera_run_id, settings=settings)
+            backend = owned_run.get_backend_or_raise()
+            seqera_payload = await describe_workflow(
+                seqera_run_id, workspace_id=backend.seqera_workspace_id, settings=settings
+            )
         except SeqeraAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -469,13 +483,22 @@ async def delete_job(
         queued_job.cancel_pending_job(session=db)
     if seqera_run_id:
         try:
-            payload = await describe_workflow(seqera_run_id, settings=settings)
+            backend = owned_run.get_backend_or_raise()
+            payload = await describe_workflow(
+                seqera_run_id, workspace_id=backend.seqera_workspace_id, settings=settings
+            )
             pipeline_status = extract_pipeline_status(payload)
             if pipeline_status in {"SUBMITTED", "RUNNING"}:
-                await cancel_workflow_raw(seqera_run_id, settings=settings)
+                await cancel_workflow_raw(
+                    seqera_run_id,
+                    workspace_id=backend.seqera_workspace_id,
+                    settings=settings,
+                )
                 cancelled = True
 
-            await delete_workflow_raw(seqera_run_id, settings=settings)
+            await delete_workflow_raw(
+                seqera_run_id, workspace_id=backend.seqera_workspace_id, settings=settings
+            )
         except SeqeraAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
@@ -524,9 +547,19 @@ async def bulk_delete_jobs(
 
         if owned_run.seqera_run_id is not None:
             try:
-                details = await describe_workflow(owned_run.seqera_run_id, settings=settings)
+                backend = owned_run.get_backend_or_raise()
+                run_status["workspace_id"] = backend.seqera_workspace_id
+                details = await describe_workflow(
+                    owned_run.seqera_run_id,
+                    workspace_id=backend.seqera_workspace_id,
+                    settings=settings,
+                )
                 if extract_pipeline_status(details) in {"SUBMITTED", "RUNNING"}:
-                    await cancel_workflow_raw(owned_run.seqera_run_id, settings=settings)
+                    await cancel_workflow_raw(
+                        owned_run.seqera_run_id,
+                        workspace_id=backend.seqera_workspace_id,
+                        settings=settings,
+                    )
                 run_status["seqera_cancelled"] = True
                 run_status["seqera_id"] = owned_run.seqera_run_id
             except SeqeraAPIError as exc:
@@ -534,17 +567,17 @@ async def bulk_delete_jobs(
 
         status[run_id] = run_status
 
-    delete_from_seqera = [
-        (run_id, run_status)
-        for run_id, run_status in status.items()
-        if run_status.get("seqera_cancelled") and run_status.get("seqera_id")
-    ]
-    if delete_from_seqera:
+    delete_from_seqera: dict[str, list[str]] = defaultdict(list)
+    for run_id, run_status in status.items():
+        if run_status.get("seqera_cancelled") and run_status.get("seqera_id"):
+            workspace_id = run_status["workspace_id"]
+            delete_from_seqera[workspace_id].append(run_id)
+    for workspace_id, run_ids in delete_from_seqera.items():
         try:
-            seqera_ids = [run_status["seqera_id"] for run_id, run_status in delete_from_seqera]
-            await delete_workflows_raw(seqera_ids, settings=settings)
+            seqera_ids = [status[run_id]["seqera_id"] for run_id in run_ids]
+            await delete_workflows_raw(seqera_ids, workspace_id=workspace_id, settings=settings)
         except SeqeraAPIError as exc:
-            for run_id, _run_status in delete_from_seqera:
+            for run_id in run_ids:
                 failed[run_id] = str(exc)
 
     delete_from_db = [

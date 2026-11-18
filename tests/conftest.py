@@ -35,13 +35,13 @@ os.environ["AWS_ACCESS_KEY_ID"] = "test_access_key_id"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "test_secret_access_key"
 os.environ["AWS_REGION"] = "ap-southeast-2"
 os.environ["AWS_S3_BUCKET"] = "test-s3-bucket"
-os.environ["GLOBUS_CLIENT_ID"] = "test-globus-client-id"
-os.environ["GLOBUS_CLIENT_SECRET"] = "test-globus-client-secret"
-os.environ["GLOBUS_GADI_COLLECTION_ID"] = "test-gadi-collection-id"
-os.environ["GLOBUS_GADI_COLLECTION_ROOT"] = "/test"
-os.environ["GLOBUS_S3_COLLECTION_ID"] = "test-s3-collection-id"
-os.environ["GLOBUS_INPUT_DIR"] = "/test/input"
-os.environ["GLOBUS_OUTPUT_DIR"] = "/test/output"
+os.environ["GADI_GLOBUS_CLIENT_ID"] = "test-globus-client-id"
+os.environ["GADI_GLOBUS_CLIENT_SECRET"] = "test-globus-client-secret"
+os.environ["GADI_GLOBUS_BACKEND_COLLECTION_ID"] = "test-gadi-collection-id"
+os.environ["GADI_GLOBUS_COLLECTION_ROOT"] = "/test"
+os.environ["GADI_GLOBUS_S3_COLLECTION_ID"] = "test-s3-collection-id"
+os.environ["GADI_GLOBUS_INPUT_DIR"] = "/test/input"
+os.environ["GADI_GLOBUS_OUTPUT_DIR"] = "/test/output"
 os.environ["ENABLE_DB_ADMIN"] = "false"
 os.environ["DB_ADMIN_AUTH_REDIRECT_URI"] = "http://localhost:3000/admin/login"
 os.environ["DB_ADMIN_FORBIDDEN_HOME_URL"] = "http://localhost:3000"
@@ -187,12 +187,14 @@ def persistent_models(test_db):
         datagen.AppUserFactory,
         datagen.WorkflowFactory,
         datagen.WorkflowRunFactory,
+        datagen.WorkflowRunWithGadiFactory,
         datagen.RunInputFactory,
         datagen.RunOutputFactory,
         datagen.S3ObjectFactory,
         datagen.QueuedJobFactory,
         datagen.DataTransferFactory,
         datagen.ComputeBackendFactory,
+        datagen.BackendSelectionSettingsFactory,
         datagen.BackendWorkflowSettingsFactory,
         datagen.WorkflowRepoStatusFactory,
     ]
@@ -353,8 +355,12 @@ class SettingsNoEnv(Settings):
     aws: AwsSettings = Field(default_factory=AwsSettingsNoEnv)
     admin: AdminSettings = Field(default_factory=AdminSettingsNoEnv)
     auth: AuthSettings = Field(default_factory=AuthSettingsNoEnv)
-    globus: GlobusSettings = Field(default_factory=GlobusSettingsNoEnv)
     github: GithubSettings = Field(default_factory=GithubSettingsNoEnv)
+
+
+@pytest.fixture
+def mock_globus_settings():
+    return GlobusSettingsNoEnv(_env_prefix="GADI_GLOBUS_")
 
 
 @pytest.fixture
@@ -373,17 +379,18 @@ def override_settings(mock_settings):
 @pytest.fixture(autouse=True)
 def mock_repo_staging(mocker):
     """launch_workflow resolves+stages the workflow's GitHub repo on every call
-    (workflow_repo_staging.ensure_repo_staging_requested), which makes a real
+    (workflow_repo_staging.prepare_repository), which makes a real
     GitHub API request - stub it out by default so tests don't hit the network.
     Tests that specifically exercise repo staging behavior can override this
     with their own patch of the same target."""
-    from app.services.workflow_repo_staging import RepoStagingLocations
+    from app.services.workflow_repo_staging import RepositoryPreparation
 
     return mocker.patch(
-        "app.routes.workflows.ensure_repo_staging_requested",
-        return_value=RepoStagingLocations(
-            gadi_path="/staged/workflow-repo/path",
-            assets_gadi_path="/staged/workflow-repo/assets",
+        "app.routes.workflows.prepare_repository",
+        return_value=RepositoryPreparation(
+            mode="globus",
+            location="/staged/workflow-repo/path",
+            ready=True,
         ),
     )
 

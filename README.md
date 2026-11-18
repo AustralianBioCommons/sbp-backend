@@ -80,7 +80,7 @@ The database schema is managed by SQLAlchemy and Alembic migrations. To visualiz
 bash generate_db_diagram.sh
 ```
 
-This creates [docs/schema_diagram.svg](docs/schema_diagram.svg) showing all tables, relationships, and constraints. The diagram is always generated from the actual SQLAlchemy models, ensuring it stays in sync with your database structure.
+This creates [docs/schema_diagram.svg](docs/schema_diagram.svg) showing all tables, relationships, and constraints, grouped by model module. The diagram is generated from the actual SQLAlchemy models using our [local model visualizer](tools/model_visualizer/README.md).
 
 ### Updating the Database Schema Diagram
 

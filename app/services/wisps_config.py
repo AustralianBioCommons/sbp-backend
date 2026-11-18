@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from ..schemas.workflows.shared import WorkflowUserDetails
-from .workflow_config_fetcher import fetch_workflow_config
-
 WispsMode = Literal["g1-g2", "manual"]
 
 WISPS_WORKFLOW_MODES: dict[str, WispsMode] = {
@@ -34,21 +31,3 @@ def get_wisps_default_params(
 
 def get_wisps_config_profiles() -> list[str]:
     return ["singularity"]
-
-
-def get_wisps_config_text(
-    config_file_path: str,
-    *,
-    user_details: WorkflowUserDetails,
-    gadi_project: str = "yz52",
-) -> str:
-    """Read wisps config and append a process override block with runtime values.
-
-    Appending a process block with the
-    values embedded directly overrides the file's clusterOptions.
-    """
-    base = fetch_workflow_config(config_file_path)
-
-    cluster_opts = f"-P {gadi_project} -A {user_details.get_encoded_account_details()}"
-    override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
-    return base + override

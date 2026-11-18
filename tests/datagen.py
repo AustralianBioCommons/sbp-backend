@@ -4,8 +4,15 @@ import uuid
 from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
+from polyfactory.fields import Ignore
 
-from app.db.models.backends import BackendWorkflowSettings, ComputeBackend, WorkflowRepoStatus
+from app.config import Settings
+from app.db.models.backends import (
+    BackendSelectionSettings,
+    BackendWorkflowSettings,
+    ComputeBackend,
+    WorkflowRepoStatus,
+)
 from app.db.models.core import (
     AppUser,
     DataTransfer,
@@ -16,7 +23,14 @@ from app.db.models.core import (
     WorkflowRun,
 )
 from app.db.models.job_queue import QueuedJob
+from app.schemas.backend import (
+    BackendLaunchConfig,
+    ComputeBackendName,
+    DataTransferMode,
+    RepositoryTransferMode,
+)
 from app.services.job_utils import UserJobListRow
+from app.services.workflow_repo_staging import RepositoryPreparation
 
 fake = Faker()
 
@@ -40,6 +54,7 @@ def biocommons_username() -> str:
 
 
 class AppUserFactory(SQLAlchemyFactory[AppUser]):
+    __check_model__ = False
     __set_relationships__ = False
 
     @staticmethod
@@ -56,33 +71,49 @@ class AppUserFactory(SQLAlchemyFactory[AppUser]):
 
 
 class WorkflowFactory(SQLAlchemyFactory[Workflow]):
+    __check_model__ = False
     __set_relationships__ = False
     config_path = "/test/workflow.config"
     prerun_script_path = None
+    repo_staged_commit_sha = None
+    repo_staging_status = None
+    repo_gadi_path = None
+    repo_staging_transfer_id = None
+    repo_staging_error_message = None
+    repo_staging_updated_at = None
 
 
 class WorkflowRunFactory(SQLAlchemyFactory[WorkflowRun]):
+    __check_model__ = False
     __set_relationships__ = False
     backend_id = None
 
 
 class RunInputFactory(SQLAlchemyFactory[RunInput]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class RunOutputFactory(SQLAlchemyFactory[RunOutput]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class S3ObjectFactory(SQLAlchemyFactory[S3Object]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class QueuedJobFactory(SQLAlchemyFactory[QueuedJob]):
+    __check_model__ = False
     __set_relationships__ = False
+    repository_transfer = RepositoryTransferMode.NATIVE
+    repository_location = None
+    repository_ready = True
 
 
 class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
+    __check_model__ = False
     __set_relationships__ = False
     recursive = False
     attempts = 0
@@ -90,6 +121,8 @@ class DataTransferFactory(SQLAlchemyFactory[DataTransfer]):
 
 
 class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
+    __check_model__ = False
+
     @classmethod
     def build(cls, **kwargs):
         run = kwargs.pop("run", None)
@@ -101,7 +134,7 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
         tool = kwargs.pop("tool", "Unknown")
 
         if run is None:
-            run = WorkflowRunFactory.build(
+            run = WorkflowRunWithGadiFactory.build(
                 seqera_run_id=seqera_run_id,
                 binder_name=binder_name,
                 run_name=run_name,
@@ -125,12 +158,89 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
 
 
 class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
+    __check_model__ = False
     __set_relationships__ = False
+    seqera_workspace_id = "test_workspace_id"
+    seqera_compute_env_id = "test_compute_env_id"
+    base_work_dir = "/test/work/dir"
+    env_prefix = "GADI_"
+    project_id = "yz52"
+    repository_transfer = RepositoryTransferMode.GLOBUS
+    data_transfer = DataTransferMode.GLOBUS
+
+
+class WorkflowRunWithGadiFactory(WorkflowRunFactory):
+    __set_relationships__ = True
+    owner = Ignore()
+    workflow = Ignore()
+    metrics = Ignore()
+    inputs = Ignore()
+    outputs = Ignore()
+    data_transfers = Ignore()
+    queued_jobs = Ignore()
+
+    @classmethod
+    def backend(cls) -> ComputeBackend:
+        session = cls.__session__
+        if session is not None:
+            existing = ComputeBackend.get_by_name(session, ComputeBackendName.GADI)
+            if existing is not None:
+                return existing
+        return ComputeBackendFactory.build(
+            name=ComputeBackendName.GADI,
+            enabled=True,
+            service_usage_enabled=True,
+            env_prefix="GADI_",
+        )
+
+
+class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings]):
+    __check_model__ = False
+    __set_relationships__ = False
+    key = BackendSelectionSettings.DEFAULT_KEY
+    last_selected_id = None
+    last_selected_at = None
 
 
 class BackendWorkflowSettingsFactory(SQLAlchemyFactory[BackendWorkflowSettings]):
+    __check_model__ = False
     __set_relationships__ = False
 
 
 class WorkflowRepoStatusFactory(SQLAlchemyFactory[WorkflowRepoStatus]):
+    __check_model__ = False
     __set_relationships__ = False
+    transfer_id = None
+    error_message = None
+
+
+def build_backend_launch_kwargs(
+    workflow_run: WorkflowRun, settings: Settings, config_path: str
+) -> dict:
+    """Build explicit backend inputs for executor tests, independently of environment loading."""
+    backend = workflow_run.get_backend()
+    backend.seqera_workspace_id = settings.seqera.work_space
+    backend.seqera_compute_env_id = settings.seqera.compute_id
+    backend.base_work_dir = settings.seqera.work_dir
+    workflow_run.backend_id = backend.id
+    workflow_run.workflow_id = workflow_run.workflow.id
+    return {
+        "backend": backend,
+        "repository": RepositoryPreparation(
+            backend.repository_transfer, "/test/checkouts/dev/sha/owner/repo", True
+        ),
+        "launch_config": BackendLaunchConfig(
+            backend_id=backend.id,
+            workflow_id=workflow_run.workflow_id,
+            backend_name=backend.name,
+            workspace_id=backend.seqera_workspace_id,
+            compute_env_id=backend.seqera_compute_env_id,
+            base_work_dir=backend.base_work_dir,
+            config_path=config_path,
+            ref_database_dir=workflow_run.workflow.ref_database,
+            project_id=backend.project_id,
+            repository_transfer=backend.repository_transfer,
+            data_transfer=backend.data_transfer,
+            globus=backend.get_globus_settings(),
+        ),
+    }

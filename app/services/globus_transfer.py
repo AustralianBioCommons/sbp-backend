@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 
 from ..config import GlobusSettings, Settings, get_settings
 from ..db.models.core import DataTransfer, DataTransferStatus
-from ..db.models.job_queue import QueuedJob
 from ..schemas.workflows.shared import PipelineStatus
+from .compute_backends import get_run_globus_settings
 from .globus_client import get_transfer_client
 from .globus_errors import GlobusConfigurationError, GlobusTransferError
+from .job_queue import promote_ready_job
 from .s3 import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,9 @@ def build_gadi_input_path(
     workflow_name: str,
     filename: str,
     *,
-    globus_settings: GlobusSettings | None = None,
+    globus_settings: GlobusSettings,
 ) -> str:
     """Build the Gadi-local destination path for a staged input file."""
-    globus_settings = globus_settings or get_settings().globus
     return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{sanitize_filename(filename)}"
 
 
@@ -56,10 +56,9 @@ def build_gadi_output_path(
     workflow_name: str,
     filename: str | None = None,
     *,
-    globus_settings: GlobusSettings | None = None,
+    globus_settings: GlobusSettings,
 ) -> str:
     """Build the Gadi-local output directory or child path for a workflow run."""
-    globus_settings = globus_settings or get_settings().globus
     run_output_dir = f"{globus_settings.output_dir}/{workflow_name}/{run_id}"
     if filename is None:
         return run_output_dir
@@ -80,17 +79,14 @@ def _s3_relative_path(source_location: str) -> str:
     return f"/{key}"
 
 
-def _gadi_relative_path(
-    destination_location: str, *, globus_settings: GlobusSettings | None = None
-) -> str:
+def _gadi_relative_path(destination_location: str, *, globus_settings: GlobusSettings) -> str:
     """Path relative to the Gadi Globus collection root for a real absolute Gadi path.
 
-    The collection's root maps to GLOBUS_GADI_COLLECTION_ROOT on the real filesystem, not
+    The backend collection's root maps to its configured collection_root, not
     "/" (confirmed in production: sending the full absolute path unchanged
     double-nests it under the collection root and the destination never appears at
     the expected real path).
     """
-    globus_settings = globus_settings or get_settings().globus
     collection_root = globus_settings.collection_root
     if not destination_location.startswith(collection_root + "/"):
         raise GlobusTransferError(
@@ -101,7 +97,7 @@ def _gadi_relative_path(
     return destination_location[len(collection_root) :]
 
 
-def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> str:
+def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings) -> str:
     """Absolute Gadi path that the Gadi-side PBS jobs push script writes to
     (runs under the yz52_workflow service account, outside this repo).
 
@@ -109,11 +105,12 @@ def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> s
     Globus setting - this is just a filesystem location, not a credential, so
     another required env var per environment isn't worth it.
     """
-    globus_settings = globus_settings or get_settings().globus
     return f"{globus_settings.output_dir}/_system-status/gadi-pbs-jobs.json"
 
 
-def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
+def sync_gadi_pbs_jobs(
+    *, globus_settings: GlobusSettings, settings: Settings | None = None
+) -> None:
     """Submit a Globus transfer of the Gadi-local sbp_service jobs file into S3.
 
     Fire-and-forget by design: no DataTransfer row, no polling/retry, unlike
@@ -123,7 +120,6 @@ def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
     so there is nothing worth resuming.
     """
     settings = settings or get_settings()
-    globus_settings = settings.globus
     transfer_client = get_transfer_client(globus_settings)
 
     source_path = _gadi_relative_path(
@@ -162,7 +158,7 @@ def submit_pending_transfer(
     globus_settings: GlobusSettings | None = None,
 ) -> None:
     """Submit a Globus transfer for a ``pending`` DataTransfer row."""
-    globus_settings = globus_settings or get_settings().globus
+    globus_settings = globus_settings or get_run_globus_settings(data_transfer.workflow_run)
     transfer_client = get_transfer_client(globus_settings)
     direction = data_transfer.direction
     match direction:
@@ -242,7 +238,7 @@ def poll_transfer(
     if not data_transfer.transfer_id:
         raise GlobusTransferError(f"DataTransfer {data_transfer.id} has no transfer_id to poll")
 
-    globus_settings = globus_settings or get_settings().globus
+    globus_settings = globus_settings or get_run_globus_settings(data_transfer.workflow_run)
     transfer_client = get_transfer_client(globus_settings)
     try:
         task = transfer_client.get_task(data_transfer.transfer_id)
@@ -378,7 +374,7 @@ def submit_pending_cleanup(
 ) -> None:
     """Submit a Globus delete task for a completed output DataTransfer's Gadi
     source (``cleanup_status == "pending"``)."""
-    globus_settings = globus_settings or get_settings().globus
+    globus_settings = globus_settings or get_run_globus_settings(data_transfer.workflow_run)
     transfer_client = get_transfer_client(globus_settings)
     gadi_path = _gadi_relative_path(data_transfer.source_location, globus_settings=globus_settings)
 
@@ -434,7 +430,7 @@ def poll_cleanup(
             f"DataTransfer {data_transfer.id} has no cleanup_transfer_id to poll"
         )
 
-    globus_settings = globus_settings or get_settings().globus
+    globus_settings = globus_settings or get_run_globus_settings(data_transfer.workflow_run)
     transfer_client = get_transfer_client(globus_settings)
     try:
         task = transfer_client.get_task(data_transfer.cleanup_transfer_id)
@@ -471,10 +467,8 @@ def sync_data_cleanups(
     db: Session,
     *,
     limit: int = 100,
-    globus_settings: GlobusSettings | None = None,
 ) -> DataTransferSyncResult:
     """Submit pending and poll in-progress Gadi cleanup deletes for one batch."""
-    globus_settings = globus_settings or get_settings().globus
     stmt = (
         select(DataTransfer)
         .where(
@@ -490,12 +484,13 @@ def sync_data_cleanups(
     submitted = completed = failed = errored = 0
     for data_transfer in transfers:
         try:
+            transfer_settings = get_run_globus_settings(data_transfer.workflow_run)
             if data_transfer.cleanup_status == "pending":
-                submit_pending_cleanup(db, data_transfer, globus_settings=globus_settings)
+                submit_pending_cleanup(db, data_transfer, globus_settings=transfer_settings)
                 if data_transfer.cleanup_status == "in_progress":
                     submitted += 1
             else:
-                poll_cleanup(db, data_transfer, globus_settings=globus_settings)
+                poll_cleanup(db, data_transfer, globus_settings=transfer_settings)
         except (GlobusConfigurationError, GlobusTransferError) as exc:
             db.rollback()
             logger.warning("Failed to sync Globus cleanup %s: %s", data_transfer.id, exc)
@@ -542,63 +537,15 @@ def _notify_launcher(db: Session, data_transfer: DataTransfer) -> None:
     queued_job = data_transfer.workflow_run.get_queued_job(db)
     if queued_job is None:
         return
-    _try_promote_staging_job(db, queued_job)
-
-
-def _try_promote_staging_job(db: Session, queued_job: QueuedJob) -> None:
-    """Flip a "staging" QueuedJob to "pending" once every gate clears: all of
-    its input DataTransfers completed, and its workflow's repo staging (if
-    applicable - see workflow_repo_staging.py) completed. Fails the job
-    immediately if any gate reports failure, rather than leaving it stuck.
-
-    Called both after an input transfer settles (_notify_launcher, above) and
-    after a workflow's repo staging settles (workflow_repo_staging.py) - either
-    event can be the last one a given run was waiting on.
-    """
-    if queued_job.status != "staging":
-        return
-
-    input_transfers = db.scalars(
-        select(DataTransfer).where(
-            DataTransfer.workflow_run_id == queued_job.workflow_run_id,
-            DataTransfer.direction == "input",
-        )
-    ).all()
-    failed_transfer = next((t for t in input_transfers if t.status == "failed"), None)
-    if failed_transfer is not None:
-        queued_job.status = "failed"
-        queued_job.error = f"Input staging failed: {failed_transfer.error_message}"
-        db.add(queued_job)
-        db.commit()
-        return
-    if not all(transfer.status == "completed" for transfer in input_transfers):
-        return
-
-    workflow = queued_job.workflow
-    if workflow.repo_staging_status == "failed":
-        queued_job.status = "failed"
-        queued_job.error = f"Workflow repo staging failed: {workflow.repo_staging_error_message}"
-        db.add(queued_job)
-        db.commit()
-        return
-    if workflow.repo_staging_status is not None and workflow.repo_staging_status != "completed":
-        return
-
-    queued_job.status = "pending"
-    # Make sure the pending job has next_attempt_at set so it gets picked up
-    queued_job.next_attempt_at = datetime.now(tz=UTC)
-    db.add(queued_job)
-    db.commit()
+    promote_ready_job(db, queued_job)
 
 
 def sync_data_transfers(
     db: Session,
     *,
     limit: int = 100,
-    globus_settings: GlobusSettings | None = None,
 ) -> DataTransferSyncResult:
     """Submit pending and poll in-progress Globus data transfers for one batch."""
-    globus_settings = globus_settings or get_settings().globus
     stmt = (
         select(DataTransfer)
         .where(
@@ -613,12 +560,13 @@ def sync_data_transfers(
     submitted = completed = failed = errored = 0
     for data_transfer in transfers:
         try:
+            transfer_settings = get_run_globus_settings(data_transfer.workflow_run)
             if data_transfer.status == "pending":
-                submit_pending_transfer(db, data_transfer, globus_settings=globus_settings)
+                submit_pending_transfer(db, data_transfer, globus_settings=transfer_settings)
                 if data_transfer.status == "in_progress":
                     submitted += 1
             else:
-                poll_transfer(db, data_transfer, globus_settings=globus_settings)
+                poll_transfer(db, data_transfer, globus_settings=transfer_settings)
             _notify_launcher(db, data_transfer)
         except (GlobusConfigurationError, GlobusTransferError) as exc:
             db.rollback()

@@ -1,346 +1,61 @@
-// Interactive Data Models
+// SQLAlchemy Data Models
 digraph {
 	graph [bgcolor="#EEEEEE" rankdir=TB splines=spline]
 	node [fontname=Roboto fontsize=12 shape=none]
 	edge [fontname=Roboto fontsize=10]
-	AppUser [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">AppUser</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">auth0_user_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">name</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">email</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">credit</TD>
-                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">credit_updated_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">credit_updated_by</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">sbp_bundle_credit_granted_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR></TABLE>> URL="http://AppUser_details.html"]
-	AppUser -> WorkflowRun [label=workflow_runs color="#1E88E5" style=dashed tooltip="Relation between AppUser and WorkflowRun"]
-	Workflow [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">Workflow</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">name</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">description</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_url</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">default_revision</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">config_path</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">prerun_script_path</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">tool</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_staged_commit_sha</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_staging_status</TD>
-                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_gadi_path</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_staging_transfer_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_staging_error_message</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">repo_staging_updated_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">ref_database</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR></TABLE>> URL="http://Workflow_details.html"]
-	Workflow -> WorkflowRun [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
-	WorkflowRun [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">WorkflowRun</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">workflow_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">owner_user_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">seqera_run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">binder_name</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">sample_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">run_name</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">submitted_form_data</TD>
-                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">work_dir</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">launch_ip</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">submission_timestamp</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">tool</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">service_usage</TD>
-                         <TD BGCOLOR="#BBDEFB">FLOAT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">credit_cost</TD>
-                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">seqera_final_status</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">sync_completed_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR></TABLE>> URL="http://WorkflowRun_details.html"]
-	WorkflowRun -> AppUser [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
-	WorkflowRun -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]
-	WorkflowRun -> RunMetric [label=metrics color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunMetric"]
-	WorkflowRun -> RunInput [label=inputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunInput"]
-	WorkflowRun -> RunOutput [label=outputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunOutput"]
-	WorkflowRun -> DataTransfer [label=data_transfers color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and DataTransfer"]
-	WorkflowRun -> QueuedJob [label=queued_jobs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and QueuedJob"]
-	S3Object [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">S3Object</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">object_key</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">URI</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">version_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">size_bytes</TD>
-                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
-                         </TR></TABLE>> URL="http://S3Object_details.html"]
-	S3Object -> RunInput [label=run_inputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunInput"]
-	S3Object -> RunOutput [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunOutput"]
-	RunInput [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunInput</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">data_transfer_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR></TABLE>> URL="http://RunInput_details.html"]
-	RunInput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunInput and WorkflowRun"]
-	RunInput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunInput and S3Object"]
-	RunInput -> DataTransfer [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunInput and DataTransfer"]
-	RunOutput [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunOutput</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">s3_object_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">data_transfer_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR></TABLE>> URL="http://RunOutput_details.html"]
-	RunOutput -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunOutput and WorkflowRun"]
-	RunOutput -> S3Object [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunOutput and S3Object"]
-	RunOutput -> DataTransfer [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunOutput and DataTransfer"]
-	RunMetric [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunMetric</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">max_score</TD>
-                         <TD BGCOLOR="#BBDEFB">NUMERIC(8, 2) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">final_design_count</TD>
-                         <TD BGCOLOR="#BBDEFB">BIGINT ()</TD>
-                         </TR></TABLE>> URL="http://RunMetric_details.html"]
-	RunMetric -> WorkflowRun [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
-	DataTransfer [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">DataTransfer</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">workflow_run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">direction</TD>
-                         <TD BGCOLOR="#BBDEFB">VARCHAR(10) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">provider</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">source_location</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">destination_location</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">recursive</TD>
-                         <TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">transfer_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">status</TD>
-                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">attempts</TD>
-                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">created_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">updated_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">error_message</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">cleanup_status</TD>
-                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">cleanup_transfer_id</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">cleanup_error_message</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">cleanup_attempts</TD>
-                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
-                         </TR></TABLE>> URL="http://DataTransfer_details.html"]
-	DataTransfer -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and WorkflowRun"]
-	DataTransfer -> RunInput [label=run_input color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunInput"]
-	DataTransfer -> RunOutput [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunOutput"]
-	QueuedJob [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">QueuedJob</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">workflow_run_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">workflow_id</TD>
-                         <TD BGCOLOR="#BBDEFB">UUID ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">launch_payload</TD>
-                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">status</TD>
-                         <TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">attempts</TD>
-                         <TD BGCOLOR="#BBDEFB">INTEGER ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">queued_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">last_attempt_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">next_attempt_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">submitted_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">error</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR></TABLE>> URL="http://QueuedJob_details.html"]
-	QueuedJob -> Workflow [label=workflow color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and Workflow"]
-	QueuedJob -> WorkflowRun [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and WorkflowRun"]
-	SystemStatusCache [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusCache</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">key</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">payload</TD>
-                         <TD BGCOLOR="#BBDEFB">JSON ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">checked_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">expires_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">updated_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR></TABLE>> URL="http://SystemStatusCache_details.html"]
-	SystemStatusIncident [label=<
-        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusIncident</FONT></TD></TR>
-        <TR>
-                         <TD BGCOLOR="#BBDEFB">id</TD>
-                         <TD BGCOLOR="#BBDEFB">INTEGER (PK)</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">component</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">status</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">started_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">ended_at</TD>
-                         <TD BGCOLOR="#BBDEFB">DATETIME ()</TD>
-                         </TR><TR>
-                         <TD BGCOLOR="#BBDEFB">message</TD>
-                         <TD BGCOLOR="#BBDEFB">TEXT ()</TD>
-                         </TR></TABLE>> URL="http://SystemStatusIncident_details.html"]
+	subgraph "cluster_app.db.models.backends" {
+		bgcolor="#B7D9C3" color="#9EA7BB" label="app.db.models.backends" style=rounded
+		"app.db.models.backends.BackendSelectionSettings" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">BackendSelectionSettings</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">key</TD><TD BGCOLOR="#BBDEFB">VARCHAR(50) (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">selection_method</TD><TD BGCOLOR="#BBDEFB">VARCHAR(6) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">last_selected_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">last_selected_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+		"app.db.models.backends.BackendWorkflowSettings" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">BackendWorkflowSettings</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">compute_backend_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">enabled</TD><TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">config_path</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">ref_database_dir</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR></TABLE>>]
+		"app.db.models.backends.ComputeBackend" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">ComputeBackend</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">name</TD><TD BGCOLOR="#BBDEFB">VARCHAR(7) (Unique)</TD></TR><TR><TD BGCOLOR="#BBDEFB">label</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">enabled</TD><TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">seqera_workspace_id</TD><TD BGCOLOR="#BBDEFB">VARCHAR(100) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">seqera_compute_env_id</TD><TD BGCOLOR="#BBDEFB">VARCHAR(100) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">env_prefix</TD><TD BGCOLOR="#BBDEFB">VARCHAR(32) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">base_work_dir</TD><TD BGCOLOR="#BBDEFB">VARCHAR(256) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">project_id</TD><TD BGCOLOR="#BBDEFB">VARCHAR(64) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repository_transfer</TD><TD BGCOLOR="#BBDEFB">VARCHAR(6) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">data_transfer</TD><TD BGCOLOR="#BBDEFB">VARCHAR(6) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">max_workflows</TD><TD BGCOLOR="#BBDEFB">INTEGER ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">service_usage_enabled</TD><TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">created_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+		"app.db.models.backends.WorkflowRepoStatus" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">WorkflowRepoStatus</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">compute_backend_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">staged_commit_sha</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">location</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">status</TD><TD BGCOLOR="#BBDEFB">VARCHAR(11) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">transfer_id</TD><TD BGCOLOR="#BBDEFB">VARCHAR(48) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">error_message</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">created_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+	}
+	subgraph "cluster_app.db.models.core" {
+		bgcolor="#B6DCE2" color="#9EA7BB" label="app.db.models.core" style=rounded
+		"app.db.models.core.AppUser" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">AppUser</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">auth0_user_id</TD><TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD></TR><TR><TD BGCOLOR="#BBDEFB">name</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">email</TD><TD BGCOLOR="#BBDEFB">TEXT (Unique)</TD></TR><TR><TD BGCOLOR="#BBDEFB">credit</TD><TD BGCOLOR="#BBDEFB">BIGINT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">credit_updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">credit_updated_by</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">sbp_bundle_credit_granted_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+		"app.db.models.core.DataTransfer" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">DataTransfer</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_run_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">direction</TD><TD BGCOLOR="#BBDEFB">VARCHAR(10) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">provider</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">source_location</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">destination_location</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">recursive</TD><TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">transfer_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">status</TD><TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">attempts</TD><TD BGCOLOR="#BBDEFB">INTEGER ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">created_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">error_message</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">cleanup_status</TD><TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">cleanup_transfer_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">cleanup_error_message</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">cleanup_attempts</TD><TD BGCOLOR="#BBDEFB">INTEGER ()</TD></TR></TABLE>>]
+		"app.db.models.core.RunInput" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunInput</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">run_id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">s3_object_id</TD><TD BGCOLOR="#BBDEFB">TEXT (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">data_transfer_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR></TABLE>>]
+		"app.db.models.core.RunMetric" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunMetric</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">run_id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">max_score</TD><TD BGCOLOR="#BBDEFB">NUMERIC(8, 2) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">final_design_count</TD><TD BGCOLOR="#BBDEFB">BIGINT ()</TD></TR></TABLE>>]
+		"app.db.models.core.RunOutput" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">RunOutput</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">run_id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">s3_object_id</TD><TD BGCOLOR="#BBDEFB">TEXT (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">data_transfer_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR></TABLE>>]
+		"app.db.models.core.S3Object" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">S3Object</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">object_key</TD><TD BGCOLOR="#BBDEFB">TEXT (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">URI</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">version_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">size_bytes</TD><TD BGCOLOR="#BBDEFB">BIGINT ()</TD></TR></TABLE>>]
+		"app.db.models.core.Workflow" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">Workflow</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">name</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">description</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_url</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">default_revision</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">config_path</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">prerun_script_path</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">tool</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_staged_commit_sha</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_staging_status</TD><TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_gadi_path</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_staging_transfer_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_staging_error_message</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repo_staging_updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">ref_database</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR></TABLE>>]
+		"app.db.models.core.WorkflowRun" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">WorkflowRun</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">backend_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">owner_user_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">seqera_run_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">binder_name</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">sample_id</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">run_name</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">submitted_form_data</TD><TD BGCOLOR="#BBDEFB">JSON ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">work_dir</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">launch_ip</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">submission_timestamp</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">tool</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">service_usage</TD><TD BGCOLOR="#BBDEFB">FLOAT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">credit_cost</TD><TD BGCOLOR="#BBDEFB">BIGINT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">seqera_final_status</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">sync_completed_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+	}
+	subgraph "cluster_app.db.models.job_queue" {
+		bgcolor="#E6D6AD" color="#9EA7BB" label="app.db.models.job_queue" style=rounded
+		"app.db.models.job_queue.QueuedJob" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">QueuedJob</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">UUID (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_run_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">workflow_id</TD><TD BGCOLOR="#BBDEFB">UUID ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">launch_payload</TD><TD BGCOLOR="#BBDEFB">JSON ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repository_transfer</TD><TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repository_location</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">repository_ready</TD><TD BGCOLOR="#BBDEFB">BOOLEAN ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">status</TD><TD BGCOLOR="#BBDEFB">VARCHAR(20) ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">attempts</TD><TD BGCOLOR="#BBDEFB">INTEGER ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">queued_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">last_attempt_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">next_attempt_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">submitted_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">error</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR></TABLE>>]
+	}
+	subgraph "cluster_app.db.models.system_status" {
+		bgcolor="#D2C5E3" color="#9EA7BB" label="app.db.models.system_status" style=rounded
+		"app.db.models.system_status.SystemStatusCache" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusCache</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">key</TD><TD BGCOLOR="#BBDEFB">TEXT (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">payload</TD><TD BGCOLOR="#BBDEFB">JSON ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">checked_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">expires_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">updated_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR></TABLE>>]
+		"app.db.models.system_status.SystemStatusIncident" [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="#3F51B5"><FONT COLOR="white">SystemStatusIncident</FONT></TD></TR><TR><TD BGCOLOR="#BBDEFB">id</TD><TD BGCOLOR="#BBDEFB">INTEGER (PK)</TD></TR><TR><TD BGCOLOR="#BBDEFB">component</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">status</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">started_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">ended_at</TD><TD BGCOLOR="#BBDEFB">DATETIME ()</TD></TR><TR><TD BGCOLOR="#BBDEFB">message</TD><TD BGCOLOR="#BBDEFB">TEXT ()</TD></TR></TABLE>>]
+	}
+	"app.db.models.backends.BackendWorkflowSettings" -> "app.db.models.backends.ComputeBackend" [label=compute_backend color="#1E88E5" style=dashed tooltip="Relation between BackendWorkflowSettings and ComputeBackend"]
+	"app.db.models.backends.BackendWorkflowSettings" -> "app.db.models.core.Workflow" [label=workflow color="#1E88E5" style=dashed tooltip="Relation between BackendWorkflowSettings and Workflow"]
+	"app.db.models.backends.WorkflowRepoStatus" -> "app.db.models.backends.ComputeBackend" [label=compute_backend color="#1E88E5" style=dashed tooltip="Relation between WorkflowRepoStatus and ComputeBackend"]
+	"app.db.models.backends.WorkflowRepoStatus" -> "app.db.models.core.Workflow" [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRepoStatus and Workflow"]
+	"app.db.models.core.AppUser" -> "app.db.models.core.WorkflowRun" [label=workflow_runs color="#1E88E5" style=dashed tooltip="Relation between AppUser and WorkflowRun"]
+	"app.db.models.core.DataTransfer" -> "app.db.models.core.WorkflowRun" [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and WorkflowRun"]
+	"app.db.models.core.DataTransfer" -> "app.db.models.core.RunInput" [label=run_input color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunInput"]
+	"app.db.models.core.DataTransfer" -> "app.db.models.core.RunOutput" [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between DataTransfer and RunOutput"]
+	"app.db.models.core.RunInput" -> "app.db.models.core.WorkflowRun" [label=run color="#1E88E5" style=dashed tooltip="Relation between RunInput and WorkflowRun"]
+	"app.db.models.core.RunInput" -> "app.db.models.core.S3Object" [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunInput and S3Object"]
+	"app.db.models.core.RunInput" -> "app.db.models.core.DataTransfer" [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunInput and DataTransfer"]
+	"app.db.models.core.RunMetric" -> "app.db.models.core.WorkflowRun" [label=run color="#1E88E5" style=dashed tooltip="Relation between RunMetric and WorkflowRun"]
+	"app.db.models.core.RunOutput" -> "app.db.models.core.WorkflowRun" [label=run color="#1E88E5" style=dashed tooltip="Relation between RunOutput and WorkflowRun"]
+	"app.db.models.core.RunOutput" -> "app.db.models.core.S3Object" [label=s3_object color="#1E88E5" style=dashed tooltip="Relation between RunOutput and S3Object"]
+	"app.db.models.core.RunOutput" -> "app.db.models.core.DataTransfer" [label=data_transfer color="#1E88E5" style=dashed tooltip="Relation between RunOutput and DataTransfer"]
+	"app.db.models.core.S3Object" -> "app.db.models.core.RunInput" [label=run_inputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunInput"]
+	"app.db.models.core.S3Object" -> "app.db.models.core.RunOutput" [label=run_outputs color="#1E88E5" style=dashed tooltip="Relation between S3Object and RunOutput"]
+	"app.db.models.core.Workflow" -> "app.db.models.core.WorkflowRun" [label=runs color="#1E88E5" style=dashed tooltip="Relation between Workflow and WorkflowRun"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.AppUser" [label=owner color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and AppUser"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.Workflow" [label=workflow color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and Workflow"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.backends.ComputeBackend" [label=backend color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and ComputeBackend"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.RunMetric" [label=metrics color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunMetric"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.RunInput" [label=inputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunInput"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.RunOutput" [label=outputs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and RunOutput"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.core.DataTransfer" [label=data_transfers color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and DataTransfer"]
+	"app.db.models.core.WorkflowRun" -> "app.db.models.job_queue.QueuedJob" [label=queued_jobs color="#1E88E5" style=dashed tooltip="Relation between WorkflowRun and QueuedJob"]
+	"app.db.models.job_queue.QueuedJob" -> "app.db.models.core.Workflow" [label=workflow color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and Workflow"]
+	"app.db.models.job_queue.QueuedJob" -> "app.db.models.core.WorkflowRun" [label=workflow_run color="#1E88E5" style=dashed tooltip="Relation between QueuedJob and WorkflowRun"]
 }

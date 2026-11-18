@@ -19,7 +19,7 @@ from app.db.models.core import (
 )
 from app.db.models.job_queue import QueuedJob
 from app.services import job_utils, results_utils
-from tests.datagen import WorkflowRunFactory
+from tests.datagen import WorkflowFactory, WorkflowRunFactory, WorkflowRunWithGadiFactory
 
 
 def _make_run_output(run: WorkflowRun, object_key: str) -> RunOutput:
@@ -411,10 +411,9 @@ async def test_ensure_completed_run_score_force_recomputes_despite_existing_valu
 
 @pytest.mark.asyncio
 async def test_sync_service_usage_force_recomputes_despite_existing_value():
-    run = SimpleNamespace(
-        id="rid",
+    run = WorkflowRunWithGadiFactory.build(
         seqera_run_id="wf-1",
-        workflow=SimpleNamespace(name="de-novo-design"),
+        workflow=WorkflowFactory.build(name="de-novo-design"),
         tool="bindcraft",
         service_usage=1.0,
     )

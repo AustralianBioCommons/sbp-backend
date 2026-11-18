@@ -202,7 +202,6 @@ class Settings(BaseSettings):
     aws: AwsSettings = Field(default_factory=AwsSettings)
     admin: AdminSettings = Field(default_factory=AdminSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
-    globus: GlobusSettings = Field(default_factory=GlobusSettings)
     github: GithubSettings = Field(default_factory=GithubSettings)
 
     model_config = SettingsConfigDict(env_file=".env", dotenv_filtering="only_existing")

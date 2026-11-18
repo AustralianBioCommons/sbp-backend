@@ -1,10 +1,16 @@
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import ComputeBackend, WorkflowRun
 from app.schemas.backend import ComputeBackendName
-from tests.datagen import AppUserFactory, ComputeBackendFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    ComputeBackendFactory,
+    WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
+)
 
 
 def test_get_backend_by_name(test_db, persistent_models):
@@ -18,6 +24,13 @@ def test_factory_builds_without_backend():
     run = WorkflowRunFactory.build()
 
     assert run.backend is None
+    assert run.backend_id is None
+
+
+def test_gadi_factory_sets_backend():
+    run = WorkflowRunWithGadiFactory.build()
+
+    assert run.backend.name == ComputeBackendName.GADI
     assert run.backend_id is None
 
 
@@ -47,7 +60,26 @@ def test_explicit_backend_is_preserved(test_db, persistent_models, field_name):
 
     assert run.backend_id == backend.id
     assert run.backend is backend
+    assert run.get_backend() is backend
+    assert run.get_backend_or_raise() is backend
     assert test_db.scalar(select(func.count()).select_from(ComputeBackend)) == 1
+
+
+def test_get_backend_raises_when_unassigned():
+    run = WorkflowRunFactory.build(backend=None)
+
+    with pytest.raises(ValueError, match="has no assigned compute backend"):
+        run.get_backend()
+
+
+def test_get_backend_or_raise_returns_http_error_when_unassigned():
+    run = WorkflowRunFactory.build(backend=None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        run.get_backend_or_raise()
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == f"Workflow run {run.id} has no assigned compute backend"
 
 
 def test_backend_can_be_referenced_across_sessions(

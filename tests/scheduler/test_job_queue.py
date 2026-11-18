@@ -1,12 +1,20 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from app.scheduler import jobs as scheduler_jobs
+from app.schemas.backend import ComputeBackendName
 from app.services.gadi_pbs_jobs import GadiPbsJobsError, GadiPbsJobsSnapshot, PbsJobStatus
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    ComputeBackendFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunFactory,
+)
 
 
 def _make_scheduler() -> BlockingScheduler:
@@ -20,11 +28,19 @@ def _get_db_override(db):
     return _get_db
 
 
-def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | None = None):
+def _create_queued_job(
+    *,
+    backend,
+    status: str = "pending",
+    next_attempt_at: datetime | None = None,
+    seqera_final_status: str | None = None,
+):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync()
     workflow_run = WorkflowRunFactory.create_sync(
         owner=user,
+        backend=backend,
+        seqera_final_status=seqera_final_status,
         workflow=workflow,
         work_dir=f"/work/{status}-{next_attempt_at.timestamp() if next_attempt_at else 'none'}-{uuid4()}",
     )
@@ -38,9 +54,11 @@ def _create_queued_job(*, status: str = "pending", next_attempt_at: datetime | N
 
 
 def test_submit_pending_jobs_skips_when_seqera_unavailable(
-    test_db, persistent_models, monkeypatch, mock_settings
+    default_backend, test_db, persistent_models, monkeypatch, mock_settings
 ):
-    due_job = _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+    due_job = _create_queued_job(
+        backend=default_backend, next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
     scheduler = _make_scheduler()
     checked_sessions = []
 
@@ -62,16 +80,22 @@ def test_submit_pending_jobs_skips_when_seqera_unavailable(
 
 
 def test_submit_pending_jobs_schedules_only_due_pending_jobs(
-    test_db, persistent_models, monkeypatch
+    default_backend, test_db, persistent_models, monkeypatch
 ):
     now = datetime.now(UTC)
     due_pending_job = _create_queued_job(
-        status="pending", next_attempt_at=now - timedelta(minutes=1)
+        backend=default_backend, status="pending", next_attempt_at=now - timedelta(minutes=1)
     )
-    _create_queued_job(status="pending", next_attempt_at=now + timedelta(minutes=1))
-    _create_queued_job(status="submitted", next_attempt_at=now - timedelta(minutes=1))
-    _create_queued_job(status="failed", next_attempt_at=now - timedelta(minutes=1))
-    _create_queued_job(status="pending", next_attempt_at=None)
+    _create_queued_job(
+        backend=default_backend, status="pending", next_attempt_at=now + timedelta(minutes=1)
+    )
+    _create_queued_job(
+        backend=default_backend, status="submitted", next_attempt_at=now - timedelta(minutes=1)
+    )
+    _create_queued_job(
+        backend=default_backend, status="failed", next_attempt_at=now - timedelta(minutes=1)
+    )
+    _create_queued_job(backend=default_backend, status="pending", next_attempt_at=None)
     scheduler = _make_scheduler()
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
@@ -95,8 +119,12 @@ def test_submit_pending_jobs_schedules_only_due_pending_jobs(
     assert scheduled_job.max_instances == 1
 
 
-def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_models, monkeypatch):
-    due_job = _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+def test_submit_pending_jobs_skips_jobs_already_scheduled(
+    default_backend, test_db, persistent_models, monkeypatch
+):
+    due_job = _create_queued_job(
+        backend=default_backend, next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
     launch_id = f"launch_job_{due_job.id}"
     scheduler = _make_scheduler()
     scheduler.add_job(
@@ -128,8 +156,12 @@ def test_submit_pending_jobs_skips_jobs_already_scheduled(test_db, persistent_mo
     assert due_job.next_attempt_at is not None
 
 
-def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_models, monkeypatch):
-    _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+def test_submit_pending_jobs_skips_when_no_gadi_capacity(
+    default_backend, test_db, persistent_models, monkeypatch
+):
+    _create_queued_job(
+        backend=default_backend, next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
     scheduler = _make_scheduler()
 
     monkeypatch.setattr(scheduler_jobs, "get_db", _get_db_override(test_db))
@@ -145,11 +177,13 @@ def test_submit_pending_jobs_skips_when_no_gadi_capacity(test_db, persistent_mod
 
 
 def test_submit_pending_jobs_caps_submissions_to_available_capacity(
-    test_db, persistent_models, monkeypatch
+    default_backend, test_db, persistent_models, monkeypatch
 ):
     now = datetime.now(UTC)
     due_jobs = [
-        _create_queued_job(status="pending", next_attempt_at=now - timedelta(minutes=1))
+        _create_queued_job(
+            backend=default_backend, status="pending", next_attempt_at=now - timedelta(minutes=1)
+        )
         for _ in range(3)
     ]
     scheduler = _make_scheduler()
@@ -174,10 +208,12 @@ def test_submit_pending_jobs_caps_submissions_to_available_capacity(
 
 
 def test_submit_pending_jobs_reschedules_due_launching_jobs(
-    test_db, persistent_models, monkeypatch
+    default_backend, test_db, persistent_models, monkeypatch
 ):
     due_launching_job = _create_queued_job(
-        status="launching", next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+        backend=default_backend,
+        status="launching",
+        next_attempt_at=datetime.now(UTC) - timedelta(minutes=1),
     )
     scheduler = _make_scheduler()
 
@@ -218,7 +254,7 @@ def _patch_pbs_snapshot(monkeypatch, jobs: list[PbsJobStatus], generated_at: dat
 
 
 def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec_jobs(
-    test_db, monkeypatch, mock_settings
+    default_backend, test_db, monkeypatch, mock_settings
 ):
     _patch_pbs_snapshot(
         monkeypatch,
@@ -236,32 +272,45 @@ def test_get_available_workflow_capacity_counts_queued_and_running_workflow_exec
         ],
         generated_at=datetime.now(UTC),
     )
-    mock_settings.seqera.max_concurrent_workflows = 10
+    default_backend.max_workflows = 10
 
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 6
+    assert (
+        scheduler_jobs.get_available_workflow_capacity(
+            test_db, default_backend, settings=mock_settings
+        )
+        == 6
+    )
 
 
 def test_get_available_workflow_capacity_counts_jobs_submitted_after_snapshot(
-    test_db, persistent_models, monkeypatch, mock_settings
+    default_backend, test_db, persistent_models, monkeypatch, mock_settings
 ):
     generated_at = datetime.now(UTC) - timedelta(minutes=10)
-    before = _create_queued_job(status="submitted")
+    before = _create_queued_job(backend=default_backend, status="submitted")
     before.submitted_at = generated_at - timedelta(minutes=1)
-    after = _create_queued_job(status="submitted")
+    after = _create_queued_job(backend=default_backend, status="submitted")
     after.submitted_at = generated_at + timedelta(minutes=1)
-    test_db.add_all([before, after])
+    other_backend = ComputeBackendFactory.create_sync(name=ComputeBackendName.SETONIX)
+    other = _create_queued_job(backend=other_backend, status="submitted")
+    other.submitted_at = generated_at + timedelta(minutes=1)
+    test_db.add_all([before, after, other])
     test_db.commit()
     _patch_pbs_snapshot(
         monkeypatch, [_pbs_job("1", queue="workflow-exec", state="R")], generated_at
     )
-    mock_settings.seqera.max_concurrent_workflows = 10
+    default_backend.max_workflows = 10
 
     # 1 in the snapshot + 1 submitted since it was generated.
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 8
+    assert (
+        scheduler_jobs.get_available_workflow_capacity(
+            test_db, default_backend, settings=mock_settings
+        )
+        == 8
+    )
 
 
 def test_get_available_workflow_capacity_falls_back_to_seqera_for_stale_snapshot(
-    test_db, monkeypatch, mock_settings
+    default_backend, test_db, monkeypatch, mock_settings
 ):
     """A stuck snapshot must fall back to Seqera's live count, not a rolling
     window that would fail open unboundedly the longer it stays stuck."""
@@ -273,31 +322,49 @@ def test_get_available_workflow_capacity_falls_back_to_seqera_for_stale_snapshot
         generated_at,
     )
 
-    async def _count_active_workflows(**_kwargs):
+    async def _count_active_workflows(*, workspace_id, settings):
+        assert workspace_id == default_backend.seqera_workspace_id
+        assert settings is mock_settings
         return 3
 
     monkeypatch.setattr(scheduler_jobs.seqera, "count_active_workflows", _count_active_workflows)
-    mock_settings.seqera.max_concurrent_workflows = 10
+    default_backend.max_workflows = 10
 
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 7
+    assert (
+        scheduler_jobs.get_available_workflow_capacity(
+            test_db, default_backend, settings=mock_settings
+        )
+        == 7
+    )
 
 
-def test_get_available_workflow_capacity_floors_at_zero(test_db, monkeypatch, mock_settings):
+def test_get_available_workflow_capacity_floors_at_zero(
+    default_backend, test_db, monkeypatch, mock_settings
+):
     _patch_pbs_snapshot(
         monkeypatch,
         [_pbs_job(str(i), queue="workflow-exec", state="Q") for i in range(12)],
         generated_at=datetime.now(UTC),
     )
-    mock_settings.seqera.max_concurrent_workflows = 10
+    default_backend.max_workflows = 10
 
-    assert scheduler_jobs.get_available_workflow_capacity(test_db, settings=mock_settings) == 0
+    assert (
+        scheduler_jobs.get_available_workflow_capacity(
+            test_db, default_backend, settings=mock_settings
+        )
+        == 0
+    )
 
 
 def test_submit_pending_jobs_skips_when_pbs_snapshot_unavailable(
-    test_db, persistent_models, monkeypatch
+    default_backend, test_db, persistent_models, monkeypatch
 ):
-    _create_queued_job(next_attempt_at=datetime.now(UTC) - timedelta(minutes=1))
+    _create_queued_job(
+        backend=default_backend, next_attempt_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
     scheduler = _make_scheduler()
+
+    default_backend.max_workflows = 10
 
     async def _get_pbs_jobs(**_kwargs):
         raise GadiPbsJobsError("missing")
@@ -310,3 +377,67 @@ def test_submit_pending_jobs_skips_when_pbs_snapshot_unavailable(
     scheduler_jobs.submit_pending_jobs()
 
     assert scheduler.get_jobs(jobstore="memory") == []
+
+
+@pytest.mark.parametrize("limit", [None, 0, 1, 5])
+def test_setonix_capacity_counts_only_its_submitted_unfinished_runs(
+    test_db, default_backend, mock_settings, mocker, limit
+):
+    backend = ComputeBackendFactory.create_sync(
+        name=ComputeBackendName.SETONIX, max_workflows=limit
+    )
+    for status in [None, "RUNNING", "SUBMITTED", "SUCCEEDED", "failed", "CANCELLED", "UNKNOWN"]:
+        _create_queued_job(backend=backend, status="submitted", seqera_final_status=status)
+    for status in ["pending", "staging", "launching", "failed", "cancelled"]:
+        _create_queued_job(backend=backend, status=status)
+    _create_queued_job(backend=default_backend, status="submitted")
+    pbs = mocker.patch.object(scheduler_jobs.gadi_pbs_jobs, "get_pbs_jobs")
+
+    capacity = scheduler_jobs.get_available_workflow_capacity(
+        test_db, backend, settings=mock_settings
+    )
+
+    assert capacity == (None if limit is None else max(0, limit - 3))
+    pbs.assert_not_called()
+
+
+def test_uncapped_gadi_does_not_require_pbs_snapshot(test_db, default_backend, mocker):
+    default_backend.max_workflows = None
+    pbs = mocker.patch.object(scheduler_jobs.gadi_pbs_jobs, "get_pbs_jobs")
+
+    assert scheduler_jobs.get_available_workflow_capacity(test_db, default_backend) is None
+    pbs.assert_not_called()
+
+
+@pytest.mark.parametrize("gadi_capacity", [0, 1, "unavailable"])
+@pytest.mark.parametrize("setonix_limit", [2, None])
+def test_submission_applies_each_backends_capacity_independently(
+    test_db, default_backend, monkeypatch, mocker, gadi_capacity, setonix_limit
+):
+    backend = ComputeBackendFactory.create_sync(
+        name=ComputeBackendName.SETONIX, max_workflows=setonix_limit
+    )
+    due = datetime.now(UTC) - timedelta(minutes=1)
+    gadi_jobs = [_create_queued_job(backend=default_backend, next_attempt_at=due) for _ in range(2)]
+    setonix_jobs = [_create_queued_job(backend=backend, next_attempt_at=due) for _ in range(3)]
+    _create_queued_job(backend=backend, status="submitted")
+    scheduler = _make_scheduler()
+    monkeypatch.setattr(scheduler_jobs, "SCHEDULER", scheduler)
+    monkeypatch.setattr(scheduler_jobs, "is_seqera_available", lambda *_args, **_kwargs: True)
+    check = mocker.Mock(
+        side_effect=GadiPbsJobsError("missing") if gadi_capacity == "unavailable" else None,
+        return_value=gadi_capacity,
+    )
+    monkeypatch.setitem(scheduler_jobs.WORKFLOW_CAPACITY_CHECKS, ComputeBackendName.GADI, check)
+
+    scheduler_jobs.submit_pending_jobs(db_session=test_db)
+
+    scheduled = {job.kwargs["job_id"] for job in scheduler.get_jobs(jobstore="memory")}
+    expected_gadi = 0 if gadi_capacity == "unavailable" else gadi_capacity
+    expected_setonix = 3 if setonix_limit is None else 1
+    assert len(scheduled & {job.id for job in gadi_jobs}) == expected_gadi
+    assert len(scheduled & {job.id for job in setonix_jobs}) == expected_setonix
+    assert check.call_count == 1
+    for job in gadi_jobs + setonix_jobs:
+        test_db.refresh(job)
+        assert job.status == ("launching" if job.id in scheduled else "pending")

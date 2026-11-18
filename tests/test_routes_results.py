@@ -287,13 +287,14 @@ async def test_get_result_setting_params_keeps_pdb_s3_uri_on_s3_error(test_db, m
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_returns_formatted_entries(test_db, mock_settings):
+async def test_get_result_logs_returns_formatted_entries(default_backend, test_db, mock_settings):
     user = AppUser(
         auth0_user_id="auth0|results-user-3",
         name="Results User 3",
         email="results3@example.com",
     )
     run = WorkflowRun(
+        backend=default_backend,
         owner=user,
         seqera_run_id="wf-logs-1",
         work_dir="/tmp/wf-logs-1",
@@ -354,7 +355,7 @@ async def test_get_result_logs_returns_404_for_missing_owned_run(test_db, mock_s
 
 @pytest.mark.asyncio
 async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
-    test_db, mock_settings
+    default_backend, test_db, mock_settings
 ):
     user = AppUser(
         auth0_user_id="auth0|results-user-logs-top-level",
@@ -362,6 +363,7 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
         email="results-logs@example.com",
     )
     run = WorkflowRun(
+        backend=default_backend,
         owner=user,
         seqera_run_id="wf-logs-top-level",
         work_dir="/tmp/wf-logs-top-level",
@@ -396,13 +398,16 @@ async def test_get_result_logs_handles_top_level_payload_and_seqera_defaults(
 
 
 @pytest.mark.asyncio
-async def test_get_result_logs_maps_seqera_api_error_to_502(test_db, mock_settings):
+async def test_get_result_logs_maps_seqera_api_error_to_502(
+    default_backend, test_db, mock_settings
+):
     user = AppUser(
         auth0_user_id="auth0|results-user-logs-api-error",
         name="Results User Logs API",
         email="results-logs-api@example.com",
     )
     run = WorkflowRun(
+        backend=default_backend,
         owner=user,
         seqera_run_id="wf-logs-api-error",
         work_dir="/tmp/wf-logs-api-error",

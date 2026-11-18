@@ -6,7 +6,12 @@ import httpx
 import pytest
 import respx
 
-from app.services.seqera import count_active_workflows, get_queue_status
+from app.services.seqera import (
+    WorkflowExecutorError,
+    count_active_workflows,
+    get_queue_status,
+    post_seqera_launch,
+)
 from app.services.seqera_errors import SeqeraAPIError
 
 
@@ -91,3 +96,59 @@ async def test_get_queue_status_capacity_floors_at_zero_when_over_cap():
 
     assert status.active_workflows == 30
     assert status.available_capacity == 0
+
+
+@pytest.mark.anyio
+async def test_post_seqera_launch_success():
+    with respx.mock:
+        route = respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
+            return_value=httpx.Response(
+                200, json={"workflowId": "wf_abc123", "status": "submitted"}
+            )
+        )
+        result = await post_seqera_launch(
+            {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+        )
+
+    assert result.workflow_id == "wf_abc123"
+    assert result.status == "submitted"
+    assert route.calls[0].request.url.params["workspaceId"] == "selected-workspace"
+
+
+@pytest.mark.anyio
+async def test_post_seqera_launch_nested_workflow_id():
+    """workflowId can be found nested under the data key."""
+    with respx.mock:
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
+            return_value=httpx.Response(
+                200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
+            )
+        )
+        result = await post_seqera_launch(
+            {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+        )
+    assert result.workflow_id == "wf_nested"
+
+
+@pytest.mark.anyio
+async def test_post_seqera_launch_http_error():
+    with respx.mock:
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
+            return_value=httpx.Response(401, text="Invalid token")
+        )
+        with pytest.raises(WorkflowExecutorError, match="401"):
+            await post_seqera_launch(
+                {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+            )
+
+
+@pytest.mark.anyio
+async def test_post_seqera_launch_missing_workflow_id():
+    with respx.mock:
+        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
+            return_value=httpx.Response(200, json={"status": "submitted"})
+        )
+        with pytest.raises(WorkflowExecutorError, match="workflowId"):
+            await post_seqera_launch(
+                {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+            )

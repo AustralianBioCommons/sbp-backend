@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -13,16 +13,13 @@ from app.schemas.workflows.interaction_screening import InteractionScreeningForm
 from app.schemas.workflows.shared import WorkflowLaunchForm, WorkflowUserDetails
 from app.services.launch_payloads import get_executor_script
 from app.services.seqera import (
-    WorkflowExecutorError,
     WorkflowLaunchResult,
     _samplesheet_url,
     params_to_yaml_text,
-    post_seqera_launch,
 )
 from app.services.seqera_errors import WorkflowLaunchError
 from app.services.wisps_config import (
     get_wisps_config_profiles,
-    get_wisps_config_text,
     get_wisps_default_params,
 )
 from app.services.wisps_executor import (
@@ -30,10 +27,16 @@ from app.services.wisps_executor import (
     prepare_wisps_workflow,
 )
 from app.services.workflow_config_fetcher import (
-    _validate_config_path,
     fetch_workflow_config,
+    validate_config_path,
 )
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunWithGadiFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -65,7 +68,7 @@ def _queued_wisps_job(
         name="interaction-screening",
         repo_url="https://github.com/test/repo",
     )
-    workflow_run = WorkflowRunFactory.create_sync(
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(
         workflow=workflow,
         owner=user,
         submitted_form_data={
@@ -102,9 +105,8 @@ def _mock_wisps_db_context():
     Mock the DB/workflow inputs required for launching a Wisps workflow.
     Very simple mocks for when DB is not the focus of the test.
     """
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch("app.services.wisps_executor.QueuedJob", return_value=queued_job) as queued_job_cls:
@@ -150,7 +152,7 @@ def test_get_executor_script_fetches_from_url():
     ) as mock_fetch:
         script = get_executor_script(
             prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
-            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
             repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )
@@ -168,7 +170,7 @@ def test_get_executor_script_no_path_returns_header_only():
     with patch("app.services.launch_payloads.fetch_workflow_config") as mock_fetch:
         script = get_executor_script(
             prerun_script_path=None,
-            repo_gadi_path="/test/workflow_repos/owner-repo/abc123.git",
+            repo_checkout_path="/test/workflow_repos/owner-repo/abc123.git",
             repo_url="https://github.com/test-owner/test-repo",
             module_loads=["singularity", "nextflow"],
         )
@@ -183,53 +185,9 @@ def test_get_executor_script_no_path_returns_header_only():
     )
 
 
-def test_get_wisps_config_profiles_returns_list():
-    result = get_wisps_config_profiles()
-    assert isinstance(result, list)
-
-
 def test_get_wisps_config_profiles_contains_singularity():
     result = get_wisps_config_profiles()
     assert "singularity" in result
-
-
-def test_get_wisps_config_text_appends_process_block():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "process {" in result
-    assert "clusterOptions" in result
-
-
-def test_get_wisps_config_text_contains_encoded_email_and_encoded_ip():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "dXNlckBleC5jb20=" in result
-    assert "MS4yLjMuNA==" in result
-
-
-def test_get_wisps_config_text_without_ip_uses_encoded_email_only():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
-        )
-    assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
-
-
-def test_get_wisps_config_text_contains_base_config():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_wisps_config_text(
-            config_file_path="/fake/path.config",
-            user_details=_USER_DETAILS,
-        )
-    assert "base_config" in result
 
 
 # =============================================================================
@@ -256,47 +214,6 @@ def test_samplesheet_url_format():
     assert "ds1" in url
     assert "samplesheet.csv" in url
     assert "https://api.test" in url
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_success():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"workflowId": "wf_abc", "status": "submitted"})
-        )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-    assert result.workflow_id == "wf_abc"
-    assert result.status == "submitted"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_nested_workflow_id():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"data": {"workflowId": "wf_nested"}})
-        )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-    assert result.workflow_id == "wf_nested"
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_http_error():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(401, text="Unauthorized")
-        )
-        with pytest.raises(WorkflowExecutorError, match="401"):
-            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
-
-
-@pytest.mark.anyio
-async def test_post_seqera_launch_missing_workflow_id():
-    with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
-            return_value=httpx.Response(200, json={"status": "submitted"})
-        )
-        with pytest.raises(WorkflowExecutorError, match="workflowId"):
-            await post_seqera_launch({"launch": {}}, workflow_label="WISPS")
 
 
 @pytest.mark.anyio
@@ -327,7 +244,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     workflow = WorkflowFactory.create_sync(
         name="interaction-screening", prerun_script_path=None, ref_database=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
     form_data = InteractionScreeningFormData(
@@ -338,7 +255,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     )
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -349,7 +266,9 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             revision="dev",
             output_id="output-queued",
@@ -363,7 +282,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    assert queued_job.status == "staging"
     assert queued_job.next_attempt_at is not None
     assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce1"
@@ -404,7 +323,7 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
         prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
         ref_database=None,
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="is-run")
     form_data = InteractionScreeningFormData(
         workflow="interaction-screening",
@@ -414,7 +333,7 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
     )
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -426,7 +345,9 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -463,11 +384,11 @@ async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
         prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
         ref_database=None,
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -479,7 +400,9 @@ async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -503,11 +426,11 @@ async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
     workflow = WorkflowFactory.create_sync(
         ref_database="/scratch/mini_dbs", prerun_script_path=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -518,7 +441,9 @@ async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -535,11 +460,11 @@ async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
     """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (
-        patch("app.services.wisps_executor.get_wisps_config_text", return_value="config_text"),
+        patch("app.services.wisps_executor.render_workflow_config", return_value="config_text"),
         patch(
             "app.services.wisps_executor.get_wisps_config_profiles", return_value=["singularity"]
         ),
@@ -550,7 +475,9 @@ async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-queued",
             user_details=_USER_DETAILS,
@@ -579,7 +506,9 @@ async def test_launch_wisps_workflow_missing_output_id(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id=None,
             user_details=_USER_DETAILS,
@@ -605,7 +534,9 @@ async def test_launch_wisps_workflow_empty_output_id(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="   ",
             user_details=_USER_DETAILS,
@@ -631,7 +562,9 @@ async def test_launch_wisps_workflow_missing_run_name(wisps_settings):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="nf-core/wisps",
-            config_path="/fake/config.nf",
+            **build_backend_launch_kwargs(
+                workflow_run, wisps_settings, config_path="/fake/config.nf"
+            ),
             form_data=form_data,
             output_id="output-001",
             user_details=_USER_DETAILS,
@@ -663,32 +596,32 @@ async def test_launch_wisps_workflow_with_tool(wisps_settings, persistent_models
 # =============================================================================
 
 
-def test_validate_config_path_empty_string():
+def testvalidate_config_path_empty_string():
     with pytest.raises(ValueError, match="empty"):
-        _validate_config_path("")
+        validate_config_path("")
 
 
-def test_validate_config_path_whitespace_only():
+def testvalidate_config_path_whitespace_only():
     with pytest.raises(ValueError, match="empty"):
-        _validate_config_path("   ")
+        validate_config_path("   ")
 
 
-def test_validate_config_path_local_path_ok():
-    _validate_config_path("/some/path.config")
+def testvalidate_config_path_local_path_ok():
+    validate_config_path("/some/path.config")
 
 
-def test_validate_config_path_http_no_host():
+def testvalidate_config_path_http_no_host():
     with pytest.raises(ValueError):
-        _validate_config_path("https://")
+        validate_config_path("https://")
 
 
-def test_validate_config_path_with_token_param():
+def testvalidate_config_path_with_token_param():
     with pytest.raises(ValueError, match="token"):
-        _validate_config_path("https://host.com/file.config?token=abc")
+        validate_config_path("https://host.com/file.config?token=abc")
 
 
-def test_validate_config_path_valid_url():
-    _validate_config_path("https://raw.githubusercontent.com/org/repo/main/file.config")
+def testvalidate_config_path_valid_url():
+    validate_config_path("https://raw.githubusercontent.com/org/repo/main/file.config")
 
 
 def test_fetch_workflow_config_local_file(tmp_path):

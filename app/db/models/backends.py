@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
-from typing import Self
+from hashlib import blake2b
+from typing import ClassVar, Self
 from uuid import UUID as PyUUID
 from uuid import uuid7
 
@@ -18,8 +19,9 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...config import ComputeBackendSettings
+from ...config import ComputeBackendSettings, GlobusSettings
 from ...schemas.backend import (
+    BackendSelectionMethod,
     ComputeBackendName,
     DataTransferMode,
     RepositoryStatus,
@@ -104,6 +106,10 @@ class ComputeBackend(Base):
             env_file=env_file,
         )
 
+    def get_globus_settings(self, env_file: str | None = ".env") -> GlobusSettings:
+        """Load credentials for a Globus operation independently of current transfer modes."""
+        return GlobusSettings(_env_prefix=f"{self.env_prefix}GLOBUS_", _env_file=env_file)
+
 
 class BackendWorkflowSettings(Base):
     """
@@ -129,6 +135,14 @@ class BackendWorkflowSettings(Base):
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
 
+    @classmethod
+    def get_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        return session.scalar(
+            select(cls).where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+        )
+
 
 class WorkflowRepoStatus(Base):
     __tablename__ = "workflow_repo_status"
@@ -153,6 +167,7 @@ class WorkflowRepoStatus(Base):
         )
     )
     transfer_id: Mapped[str | None] = mapped_column(String(length=48), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -168,3 +183,144 @@ class WorkflowRepoStatus(Base):
 
     compute_backend: Mapped[ComputeBackend] = relationship()
     workflow: Mapped[core.Workflow] = relationship(core.Workflow)
+
+    @classmethod
+    def get_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        return session.scalar(
+            select(cls).where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+        )
+
+    @classmethod
+    def lock_for_workflow(
+        cls, session: Session, backend_id: PyUUID, workflow_id: PyUUID
+    ) -> Self | None:
+        if session.get_bind().dialect.name == "postgresql":
+            key = int.from_bytes(
+                blake2b(f"{backend_id}:{workflow_id}".encode(), digest_size=8).digest(), signed=True
+            )
+            session.execute(select(func.pg_advisory_xact_lock(key)))
+        return session.scalar(
+            select(cls)
+            .where(cls.compute_backend_id == backend_id, cls.workflow_id == workflow_id)
+            .execution_options(populate_existing=True)
+        )
+
+    @classmethod
+    def request_staging(
+        cls,
+        session: Session,
+        backend: ComputeBackend,
+        workflow: core.Workflow,
+        *,
+        location: str,
+        commit_sha: str,
+    ) -> Self:
+        repo = cls.lock_for_workflow(session, backend.id, workflow.id)
+        if repo is None:
+            repo = cls(compute_backend=backend, workflow=workflow)
+            session.add(repo)
+        elif repo.location == location and repo.status in (
+            RepositoryStatus.PENDING,
+            RepositoryStatus.IN_PROGRESS,
+            RepositoryStatus.COMPLETED,
+        ):
+            return repo
+        elif repo.status in (RepositoryStatus.PENDING, RepositoryStatus.IN_PROGRESS):
+            raise ValueError("Repository staging is already active for a different checkout")
+        if repo.status == RepositoryStatus.COMPLETED:
+            repo.record_waiting_jobs_ready(session)
+        elif repo.status == RepositoryStatus.FAILED and repo.location != location:
+            repo.record_waiting_jobs_failed(session)
+        repo.location = location
+        repo.staged_commit_sha = commit_sha
+        repo.status = RepositoryStatus.PENDING
+        repo.transfer_id = None
+        repo.error_message = None
+        repo.updated_at = datetime.now(UTC)
+        return repo
+
+    def record_submission(self, submission_id: str) -> None:
+        self.transfer_id = submission_id
+        self.updated_at = datetime.now(UTC)
+
+    def mark_in_progress(self, task_id: str) -> None:
+        self.record_submission(task_id)
+        self.status = RepositoryStatus.IN_PROGRESS
+        self.error_message = None
+
+    def record_error(self, message: str) -> None:
+        self.error_message = message
+        self.updated_at = datetime.now(UTC)
+
+    def mark_failed(self, message: str) -> None:
+        self.status = RepositoryStatus.FAILED
+        self.record_error(message)
+
+    def record_waiting_jobs_ready(self, session: Session) -> None:
+        from .job_queue import QueuedJob
+
+        QueuedJob.record_repository_completion(
+            session, self.compute_backend_id, self.workflow_id, self.location
+        )
+
+    def record_waiting_jobs_failed(self, session: Session) -> None:
+        from .job_queue import QueuedJob
+
+        QueuedJob.record_repository_failure(
+            session, self.compute_backend_id, self.workflow_id, self.location, self.error_message
+        )
+
+    def mark_completed(self, session: Session | None = None) -> None:
+        self.status = RepositoryStatus.COMPLETED
+        self.error_message = None
+        self.updated_at = datetime.now(UTC)
+        if session is not None:
+            self.record_waiting_jobs_ready(session)
+
+
+class BackendSelectionSettings(Base):
+    """
+    Stores options and data for backend selection.
+    We should only need one row here, so key
+    """
+
+    __tablename__ = "backend_selection_settings"
+    DEFAULT_KEY: ClassVar[str] = "selection_settings"
+
+    key: Mapped[str] = mapped_column(
+        String(length=50), primary_key=True, default="selection_settings", nullable=False
+    )
+    selection_method: Mapped[BackendSelectionMethod] = mapped_column(
+        SAEnum(
+            BackendSelectionMethod,
+            name="backend_selection_method",
+            values_callable=lambda members: [member.value for member in members],
+            validate_strings=True,
+        ),
+        default=BackendSelectionMethod.RANDOM,
+    )
+    last_selected_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, default=None
+    )
+    last_selected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        nullable=True,
+        onupdate=func.now(),
+    )
+
+    @classmethod
+    def current_settings(cls, session: Session) -> Self | None:
+        return session.get(cls, cls.DEFAULT_KEY)
+
+    def record_selection(self, backend: ComputeBackend) -> None:
+        """
+        Update last_select_at fields when a selection is made
+        """
+        self.last_selected_id = backend.id
+        self.last_selected_at = datetime.now(tz=UTC)

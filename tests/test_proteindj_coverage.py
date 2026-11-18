@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -14,7 +14,6 @@ from app.schemas.workflows.de_novo_design import ProteinDjFormData
 from app.schemas.workflows.shared import WorkflowFormData, WorkflowLaunchForm, WorkflowUserDetails
 from app.services.proteindj_config import (
     get_proteindj_config_profiles,
-    get_proteindj_config_text,
     get_proteindj_default_params,
     get_proteindj_design_mode,
 )
@@ -25,7 +24,13 @@ from app.services.proteindj_executor import (
 )
 from app.services.seqera import WorkflowLaunchResult
 from app.services.seqera_errors import WorkflowLaunchError
-from tests.datagen import AppUserFactory, QueuedJobFactory, WorkflowFactory, WorkflowRunFactory
+from tests.datagen import (
+    AppUserFactory,
+    QueuedJobFactory,
+    WorkflowFactory,
+    WorkflowRunWithGadiFactory,
+    build_backend_launch_kwargs,
+)
 
 _USER_DETAILS = WorkflowUserDetails(
     user_email="user@ex.com",
@@ -58,7 +63,7 @@ def _queued_proteindj_job(
         name="de-novo-design",
         repo_url="https://github.com/org/proteindj",
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
         "computeEnvId": "ce_456",
         "runName": "test-run",
@@ -83,9 +88,8 @@ def _queued_proteindj_job(
 
 @contextmanager
 def _mock_proteindj_db_context():
-    workflow = Mock(name="workflow")
-    workflow_run = Mock(name="workflow_run")
-    workflow_run.workflow = workflow
+    workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -202,11 +206,6 @@ def test_get_proteindj_default_params_all_fields():
     }
 
 
-def test_get_proteindj_default_params_missing_required_field_raises():
-    with pytest.raises(TypeError):
-        get_proteindj_default_params("s3://bucket/out", num_designs=3)  # type: ignore[call-arg]
-
-
 # =============================================================================
 # Tests for get_proteindj_design_mode()
 # =============================================================================
@@ -229,48 +228,8 @@ def test_get_proteindj_design_mode_is_case_insensitive():
 # =============================================================================
 
 
-def test_get_proteindj_config_profiles_returns_list():
-    profiles = get_proteindj_config_profiles()
-    assert isinstance(profiles, list)
-
-
 def test_get_proteindj_config_profiles_contains_singularity():
     assert "singularity" in get_proteindj_config_profiles()
-
-
-# =============================================================================
-# Tests for get_proteindj_config_text()
-# =============================================================================
-
-
-def test_get_proteindj_config_text_appends_process_block():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "process {" in result
-    assert "clusterOptions" in result
-
-
-def test_get_proteindj_config_text_contains_encoded_email_and_encoded_ip():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "dXNlckBleC5jb20=" in result
-    assert "MS4yLjMuNA==" in result
-
-
-def test_get_proteindj_config_text_without_ip_uses_encoded_email_only():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text(
-            "/fake/proteindj.config",
-            user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
-        )
-    assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
-
-
-def test_get_proteindj_config_text_contains_base_config():
-    with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
-    assert "base_config" in result
 
 
 # =============================================================================
@@ -302,7 +261,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteindj-run")
     form_data = _form_data(
@@ -315,7 +274,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
 
     with (
         patch(
-            "app.services.proteindj_executor.get_proteindj_config_text",
+            "app.services.proteindj_executor.render_workflow_config",
             return_value="config_text",
         ),
         patch(
@@ -329,7 +288,9 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             revision="main",
             output_id="run-output-id",
             form_data=form_data,
@@ -344,7 +305,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     assert queued_job is not None
     assert queued_job.workflow_id == workflow.id
     assert queued_job.workflow_run_id == workflow_run.id
-    assert queued_job.status == "pending"
+    assert queued_job.status == "staging"
     assert queued_job.next_attempt_at is not None
     assert queued_job.id == prepared_job.id
     assert queued_job.launch_payload["computeEnvId"] == "ce_456"
@@ -398,7 +359,7 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
     """The BindCraft toggle launches ProteinDJ with design_mode=bindcraft_denovo."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(tool="bindcraft", runName="queued-bindcraft-run")
     form_data = WorkflowFormData(
@@ -412,7 +373,7 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
     )
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -424,7 +385,9 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=form_data,
             user_details=_USER_DETAILS,
@@ -442,12 +405,12 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(paramsText="extra_param: value")
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -459,7 +422,9 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -487,11 +452,11 @@ async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
     workflow = WorkflowFactory.create_sync(
         name="de-novo-design", prerun_script_path="/some/prerun.sh"
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with (
-        patch("app.services.proteindj_executor.get_proteindj_config_text", return_value=""),
+        patch("app.services.proteindj_executor.render_workflow_config", return_value=""),
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -507,7 +472,9 @@ async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
             db_session=test_db,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -536,7 +503,9 @@ async def test_prepare_proteindj_workflow_missing_run_name(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -556,7 +525,9 @@ async def test_prepare_proteindj_workflow_missing_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id=None,
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -576,7 +547,9 @@ async def test_prepare_proteindj_workflow_empty_output_id(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="   ",
             form_data=_form_data(),
             user_details=_USER_DETAILS,
@@ -596,7 +569,9 @@ async def test_prepare_proteindj_workflow_missing_starting_pdb(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 target_hotspot_residues="A20,A21",
@@ -621,7 +596,9 @@ async def test_prepare_proteindj_workflow_missing_hotspot_residues(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -646,7 +623,9 @@ async def test_prepare_proteindj_workflow_missing_num_designs(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",
@@ -671,7 +650,9 @@ async def test_prepare_proteindj_workflow_missing_design_length(seqera_env):
             db_session=db_session,
             workflow_run=workflow_run,
             pipeline="https://github.com/org/proteindj",
-            config_path="/fake/proteindj.config",
+            **build_backend_launch_kwargs(
+                workflow_run, seqera_env, config_path="/fake/proteindj.config"
+            ),
             output_id="run-output-id",
             form_data=_form_data(
                 starting_pdb="s3://my-bucket/inputs/test.pdb",

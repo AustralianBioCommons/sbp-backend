@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import random
 import re
 import string
@@ -16,18 +15,15 @@ from pydantic import ValidationError
 from sqlalchemy import CursorResult, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..config import GlobusSettings, Settings, get_settings
-from ..db.models import ComputeBackend, QueuedJob
+from ..config import Settings, get_settings
+from ..db.models import QueuedJob
+from ..db.models.backends import BackendSelectionSettings
 from ..db.models.core import (
     AppUser,
-    DataTransfer,
-    RunInput,
     RunMetric,
-    S3Object,
     Workflow,
     WorkflowRun,
 )
-from ..schemas.backend import ComputeBackendName
 from ..schemas.workflows.interaction_screening import (
     BulkPredictionDatasetUploadRequest,
     InteractionScreeningDatasetUploadRequest,
@@ -51,20 +47,22 @@ from ..schemas.workflows.single_prediction import (
     SinglePredictionEntity,
     validate_single_prediction_entities,
 )
+from ..services import compute_backends
+from ..services.compute_backends import resolve_backend_launch_config
 from ..services.credits import (
     WorkflowCreditsResponse,
     is_credits_enabled,
     launch_credit_cost,
     list_workflow_credit_configs,
 )
+from ..services.data_movement import DataMovement
 from ..services.datasets import (
     get_fasta_entry_lengths,
     upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
-    upload_samplesheet_rows_to_s3,
 )
-from ..services.globus_transfer import build_gadi_input_path
+from ..services.globus_errors import GlobusConfigurationError
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
 from ..services.results_utils import s3_uri_to_key
@@ -77,7 +75,7 @@ from ..services.s3 import (
 )
 from ..services.seqera_errors import WorkflowLaunchError
 from ..services.wisps_executor import prepare_wisps_workflow
-from ..services.workflow_repo_staging import RepoStagingError, ensure_repo_staging_requested
+from ..services.workflow_repo_staging import RepoStagingError, prepare_repository
 from .dependencies import (
     get_client_ip,
     get_current_user_id,
@@ -180,14 +178,14 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
     raw_entities = form_data.extra_fields.get("entities")
     if not isinstance(raw_entities, list):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="'entities' is required in formData for single-prediction.",
         )
     try:
         entities = [SinglePredictionEntity.model_validate(item) for item in raw_entities]
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid entity data in formData for single-prediction.",
         ) from exc
 
@@ -204,7 +202,7 @@ def _validate_single_prediction_form(form_data: WorkflowFormData, tool: str) -> 
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -216,19 +214,9 @@ async def _stage_referenced_samplesheet_file(
     field_name: str,
     run_id: UUID,
     workflow_name: str,
-    globus_settings: GlobusSettings,
+    movement: DataMovement,
 ) -> str:
-    """Stage a file referenced by a samplesheet column to Gadi via Globus, and
-    return the s3InputKey of a corrected samplesheet with that column rewritten
-    to the local path.
-
-    Some samplesheets (proteinfold's fasta, bulk-prediction's sequence) carry
-    a raw S3 URI to a separately-uploaded file. Globus stages the samplesheet
-    CSV to Gadi as-is, but the pipeline reads that column as a local file path,
-    not an S3 URI (unlike ProteinDJ, which takes its pdb path as a direct
-    pipeline param, never via a samplesheet) - so the referenced file must be
-    staged separately and the samplesheet corrected to point at where it lands.
-    """
+    """Validate the workflow's referenced input and prepare its samplesheet for the backend."""
     try:
         samplesheet_rows = await read_csv_from_s3(s3_input_key)
     except S3ConfigurationError as exc:
@@ -243,47 +231,32 @@ async def _stage_referenced_samplesheet_file(
         ) from exc
     if not samplesheet_rows:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Samplesheet at s3InputKey is empty.",
         )
     samplesheet_row = samplesheet_rows[0]
     source_uri = (samplesheet_row.get(field_name) or "").strip()
     if not source_uri:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"'{field_name}' is required in the samplesheet for {workflow_name}.",
         )
     source_key = s3_uri_to_key(source_uri)
     if not source_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid S3 URI for {field_name}.",
         )
-    if db_session.get(S3Object, source_key) is None:
-        db_session.add(S3Object(object_key=source_key, uri=source_uri))
-    staged_location = build_gadi_input_path(
-        run_id,
-        workflow_name,
-        os.path.basename(source_key),
-        globus_settings=globus_settings,
-    )
-    db_session.add(
-        RunInput(
-            run_id=run_id,
-            s3_object_id=source_key,
-            data_transfer=DataTransfer(
-                workflow_run_id=run_id,
-                direction="input",
-                provider="globus",
-                source_location=source_uri,
-                destination_location=staged_location,
-                recursive=False,
-            ),
-        )
-    )
-    samplesheet_row[field_name] = staged_location
     try:
-        csv_upload = await upload_csv_to_s3(samplesheet_row)
+        return await movement.prepare_samplesheet(
+            db_session,
+            run_id,
+            workflow_name,
+            s3_input_key,
+            [samplesheet_row],
+            field_name,
+            single_row=True,
+        )
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -294,7 +267,6 @@ async def _stage_referenced_samplesheet_file(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to re-upload corrected samplesheet: {exc}",
         ) from exc
-    return csv_upload.file_key
 
 
 async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> WispsInputInfo:
@@ -336,7 +308,7 @@ async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> Wi
         lengths.extend(await _read_referenced_fasta_lengths(row, f"row {row.get('id')}"))
     if not lengths:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Bulk-prediction samplesheet must reference at least one FASTA record.",
         )
     return WispsInputInfo(fasta_entry_lengths=lengths)
@@ -347,7 +319,7 @@ async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> lis
     fasta_key = s3_uri_to_key(row.get("sequence"))
     if not fasta_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid S3 URI in samplesheet 'sequence' for {label}.",
         )
     try:
@@ -366,7 +338,7 @@ async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> lis
         return get_fasta_entry_lengths(fasta_text)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid FASTA for {label}: {exc}",
         ) from exc
 
@@ -377,16 +349,9 @@ async def _stage_interaction_screening_fastas(
     s3_input_key: str,
     run_id: UUID,
     workflow_name: str,
-    globus_settings: GlobusSettings,
+    movement: DataMovement,
 ) -> str:
-    """Stage the query and target FASTAs referenced by the interaction-screening
-    samplesheet to Gadi via Globus, and return the s3InputKey of a corrected
-    samplesheet whose ``sequence`` column holds the Gadi-local paths.
-
-    Multi-row counterpart of _stage_referenced_samplesheet_file: the samplesheet
-    has one row per group (g1=query, g2=target), each pointing at its own
-    multi-FASTA, which the pipeline reads directly - no prerun split.
-    """
+    """Validate WISPS groups and prepare their FASTAs without changing native samplesheets."""
     try:
         samplesheet_rows = await read_csv_from_s3(s3_input_key)
     except S3ConfigurationError as exc:
@@ -401,7 +366,7 @@ async def _stage_interaction_screening_fastas(
         ) from exc
     if sorted(row.get("group") or "" for row in samplesheet_rows) != ["g1", "g2"]:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Interaction-screening samplesheet must have exactly one g1 and one g2 row.",
         )
     for row in samplesheet_rows:
@@ -409,34 +374,18 @@ async def _stage_interaction_screening_fastas(
         source_key = s3_uri_to_key(source_uri)
         if not source_uri.startswith("s3://") or not source_key:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid S3 URI in samplesheet 'sequence' for group {row['group']}.",
             )
-        if db_session.get(S3Object, source_key) is None:
-            db_session.add(S3Object(object_key=source_key, uri=source_uri))
-        staged_location = build_gadi_input_path(
+    try:
+        return await movement.prepare_samplesheet(
+            db_session,
             run_id,
             workflow_name,
-            os.path.basename(source_key),
-            globus_settings=globus_settings,
+            s3_input_key,
+            samplesheet_rows,
+            "sequence",
         )
-        db_session.add(
-            RunInput(
-                run_id=run_id,
-                s3_object_id=source_key,
-                data_transfer=DataTransfer(
-                    workflow_run_id=run_id,
-                    direction="input",
-                    provider="globus",
-                    source_location=source_uri,
-                    destination_location=staged_location,
-                    recursive=False,
-                ),
-            )
-        )
-        row["sequence"] = staged_location
-    try:
-        csv_upload = await upload_samplesheet_rows_to_s3(samplesheet_rows)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -447,7 +396,6 @@ async def _stage_interaction_screening_fastas(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to re-upload corrected samplesheet: {exc}",
         ) from exc
-    return csv_upload.file_key
 
 
 @router.post("/me/sync")
@@ -487,7 +435,7 @@ async def launch_workflow(
     s3_input_key = payload.s3InputKey.strip()
     if not s3_input_key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="s3InputKey is required and must not be empty.",
         )
 
@@ -500,7 +448,7 @@ async def launch_workflow(
     selected_tool = payload.launch.tool or payload.formData.tool
     if not selected_tool:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No tool selected. Provide 'tool' in formData before submitting.",
         )
 
@@ -541,14 +489,26 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing default_revision in workflows table.",
         )
 
+    selection_settings = BackendSelectionSettings.current_settings(db_session)
+    backend = compute_backends.get_next_backend_for_launch(db_session, selection_settings, workflow)
     try:
-        ensure_repo_staging_requested(db_session, workflow, settings=settings)
+        launch_config = resolve_backend_launch_config(db_session, backend, workflow)
+        movement = DataMovement(launch_config.data_transfer, settings, launch_config.globus)
+    except (ValueError, GlobusConfigurationError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Invalid launch configuration for backend '{backend.name}'.",
+        ) from exc
+
+    try:
+        repository = prepare_repository(db_session, workflow, backend=backend, settings=settings)
     except RepoStagingError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve workflow repo: {exc}",
         ) from exc
-    pipeline_url = workflow.repo_url
+    pipeline_url = repository.repo_url or workflow.repo_url
+    repository_revision = repository.revision or workflow.default_revision
 
     user = db_session.execute(
         select(AppUser.email).where(AppUser.id == current_user_id)
@@ -586,7 +546,7 @@ async def launch_workflow(
             run_credit_cost = None
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     if run_credit_cost is not None:
@@ -596,13 +556,6 @@ async def launch_workflow(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="Insufficient credits to launch this workflow.",
             )
-
-    backend = ComputeBackend.get_by_name(db_session, ComputeBackendName.GADI)
-    if backend is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Gadi compute backend is not configured.",
-        )
 
     run_id = uuid4()
     workflow_name = workflow.name.lower()
@@ -622,7 +575,7 @@ async def launch_workflow(
         sample_id=sample_id,
         run_name=payload.launch.runName,
         submitted_form_data=dict(payload.formData) if payload.formData else None,
-        work_dir=f"{settings.seqera.work_dir}/{run_id}",
+        work_dir=f"{launch_config.base_work_dir.rstrip('/')}/{run_id}",
         launch_ip=launch_ip,
         submission_timestamp=submission_timestamp,
         tool=selected_tool,
@@ -632,14 +585,6 @@ async def launch_workflow(
     db_session.add(workflow_run)
     if final_design_count is not None:
         db_session.add(RunMetric(run_id=run_id, final_design_count=final_design_count))
-
-    # All workflows require config_path. Validate before the try block
-    # so that HTTPException is not swallowed by the generic except Exception handler.
-    if not workflow.config_path:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
-        )
 
     wisps_form_data: WispsFormData | InteractionScreeningFormData | None = None
     if workflow_name in ("interaction-screening", "bulk-prediction"):
@@ -656,7 +601,7 @@ async def launch_workflow(
                 "formData",
             )
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"'{missing}' is required in formData for {workflow_name}.",
             ) from exc
 
@@ -675,7 +620,7 @@ async def launch_workflow(
             field_name="fasta",
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            movement=movement,
         )
     elif workflow_name == "interaction-screening":
         s3_input_key = await _stage_interaction_screening_fastas(
@@ -683,7 +628,7 @@ async def launch_workflow(
             s3_input_key=s3_input_key,
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            movement=movement,
         )
     elif workflow_name == "bulk-prediction":
         s3_input_key = await _stage_referenced_samplesheet_file(
@@ -692,7 +637,7 @@ async def launch_workflow(
             field_name="sequence",
             run_id=run_id,
             workflow_name=workflow_name,
-            globus_settings=settings.globus,
+            movement=movement,
         )
 
     staged_input_location: str | None = None
@@ -705,29 +650,12 @@ async def launch_workflow(
         # "s3InputKey" here too would both double-prefix the URI (it's already
         # a full s3:// URI, not a bare key) and create a second, unused
         # DataTransfer for the same file.
-        s3_bucket = settings.aws.s3_bucket
-        s3_input_uri = f"s3://{s3_bucket}/{s3_input_key}"
-        if db_session.get(S3Object, s3_input_key) is None:
-            db_session.add(S3Object(object_key=s3_input_key, uri=s3_input_uri))
-        staged_input_location = build_gadi_input_path(
+        staged_input_location = movement.prepare_input(
+            db_session,
             run_id,
             workflow_name,
-            os.path.basename(s3_input_key),
-            globus_settings=settings.globus,
+            s3_input_key,
         )
-        input_transfer = DataTransfer(
-            workflow_run_id=run_id,
-            direction="input",
-            provider="globus",
-            source_location=s3_input_uri,
-            destination_location=staged_input_location,
-            recursive=False,
-        )
-        db_session.add(input_transfer)
-        db_session.add(
-            RunInput(run_id=run_id, s3_object_id=s3_input_key, data_transfer=input_transfer)
-        )
-        db_session.flush()
 
     try:
         queued_job: QueuedJob
@@ -744,8 +672,10 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                config_path=workflow.config_path,
-                revision=workflow.default_revision,
+                backend=backend,
+                launch_config=launch_config,
+                repository=repository,
+                revision=repository_revision,
                 output_id=str(run_id),
                 mode=tool_algo,
                 form_data=payload.formData,
@@ -763,8 +693,10 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                config_path=workflow.config_path,
-                revision=workflow.default_revision,
+                backend=backend,
+                launch_config=launch_config,
+                repository=repository,
+                revision=repository_revision,
                 output_id=str(run_id),
                 form_data=payload.formData,
                 user_details=user_details,
@@ -779,8 +711,10 @@ async def launch_workflow(
                 db_session=db_session,
                 workflow_run=workflow_run,
                 pipeline=pipeline_url,
-                revision=workflow.default_revision,
-                config_path=workflow.config_path,
+                revision=repository_revision,
+                backend=backend,
+                launch_config=launch_config,
+                repository=repository,
                 form_data=wisps_form_data,
                 output_id=str(run_id),
                 user_details=user_details,
@@ -792,11 +726,6 @@ async def launch_workflow(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"No executor configured for workflow '{workflow.name}'.",
             )
-
-        # Hold the job out of submit_pending_jobs until Globus data staging
-        # completes (app/services/globus_transfer.py flips this to "pending").
-        queued_job.status = "staging"
-        db_session.add(queued_job)
 
         # Deduct the run's credit cost now that the job is accepted into the queue. Atomic and
         # guarded (credit >= cost) so the balance can't go negative; committed

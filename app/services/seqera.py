@@ -48,7 +48,7 @@ async def post_seqera_launch(
     """Post a workflow launch payload to Seqera and return the launch result."""
     settings = settings or get_settings()
     seqera_client = SeqeraClient(settings=settings)
-    workspace_id = settings.seqera.work_space
+    workspace_id = payload["launch"]["workspaceId"]
     path = f"/workflow/launch?workspaceId={workspace_id}"
     response = await seqera_client.post(path, payload)
 

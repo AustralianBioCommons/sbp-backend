@@ -6,8 +6,10 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from ..schemas.workflows.shared import WorkflowUserDetails
 
-def _validate_config_path(path_or_url: str) -> None:
+
+def validate_config_path(path_or_url: str) -> None:
     if not path_or_url or not path_or_url.strip():
         raise ValueError("config_path must not be empty")
 
@@ -28,7 +30,7 @@ def _validate_config_path(path_or_url: str) -> None:
 
 def fetch_workflow_config(path_or_url: str) -> str:
     """Return the text content of a workflow config from a local path or URL."""
-    _validate_config_path(path_or_url)
+    validate_config_path(path_or_url)
 
     if path_or_url.startswith(("http://", "https://")):
         response = httpx.get(path_or_url, timeout=30, follow_redirects=True)
@@ -37,3 +39,22 @@ def fetch_workflow_config(path_or_url: str) -> str:
 
     with open(path_or_url) as f:
         return f.read()
+
+
+def render_workflow_config(
+    config_file_path: str,
+    *,
+    user_details: WorkflowUserDetails,
+    gadi_project: str | None = None,
+    pbs_enabled: bool = True,
+) -> str:
+    """Load workflow config and append PBS project/account options when enabled."""
+    base = fetch_workflow_config(config_file_path)
+    if not pbs_enabled:
+        return base
+
+    cluster_opts = (
+        f"-P {gadi_project} " if gadi_project else ""
+    ) + f"-A {user_details.get_encoded_account_details()}"
+    override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
+    return base + override

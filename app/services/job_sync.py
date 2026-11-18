@@ -21,6 +21,7 @@ from ..schemas.workflows.shared import (
     UIStatus,
     map_pipeline_status_to_ui,
 )
+from .data_movement import uses_native_data
 from .job_utils import ensure_completed_run_score, extract_pipeline_status, sync_service_usage
 from .results_utils import (
     get_output_spec,
@@ -84,7 +85,11 @@ def get_runs_requiring_sync(db: Session, *, limit: int = 100) -> list[WorkflowRu
     """
     stmt = (
         select(WorkflowRun)
-        .options(joinedload(WorkflowRun.workflow), joinedload(WorkflowRun.metrics))
+        .options(
+            joinedload(WorkflowRun.workflow),
+            joinedload(WorkflowRun.metrics),
+            joinedload(WorkflowRun.backend),
+        )
         .where(
             WorkflowRun.seqera_run_id.is_not(None),
             or_(
@@ -183,7 +188,10 @@ async def sync_workflow_run(
     status = _normalize_status(run.seqera_final_status)
     if force or status not in TERMINAL_SEQERA_STATUSES:
         if describe_func is describe_workflow:
-            payload = await describe_workflow(run.seqera_run_id, settings=settings)
+            backend = run.get_backend()
+            payload = await describe_workflow(
+                run.seqera_run_id, workspace_id=backend.seqera_workspace_id, settings=settings
+            )
         else:
             payload = await describe_func(run.seqera_run_id)
         status = _normalize_status(extract_pipeline_status(payload)) or PipelineStatus.UNKNOWN.value
@@ -275,6 +283,9 @@ def _ensure_completed_run_output_transfers(
     *,
     settings: Settings | None = None,
 ) -> OutputTransferState:
+    if uses_native_data(run):
+        return OutputTransferState(ready=True)
+
     try:
         spec = get_output_spec(run)
     except ValueError as exc:
@@ -333,10 +344,13 @@ async def finalize_completed_workflow_run(
     outputs_synced = await _sync_completed_run_results(
         db,
         run,
-        suppress_s3_errors=suppress_s3_errors,
+        suppress_s3_errors=False if uses_native_data(run) else suppress_s3_errors,
         settings=settings,
         force=force,
     )
+    if uses_native_data(run) and run_has_missing_required_categories(db, run):
+        return outputs_synced
+
     run.sync_completed_at = datetime.now(tz=UTC)
     db.add(run)
     db.commit()
@@ -377,7 +391,7 @@ async def force_resync_run_outputs(
     submit a new transfer from, so a spec change can never be picked up for
     this run again.
     """
-    if check_any_output_transfer_cleaned_up(db, run):
+    if not uses_native_data(run) and check_any_output_transfer_cleaned_up(db, run):
         return ForceResyncOutcome(ready=False, outputs_synced=0, blocked=True)
 
     output_transfer_state = _ensure_completed_run_output_transfers(db, run, settings=settings)
@@ -391,6 +405,11 @@ async def force_resync_run_outputs(
         suppress_s3_errors=suppress_s3_errors,
         settings=settings,
     )
+
+    if uses_native_data(run):
+        return ForceResyncOutcome(
+            ready=not run_has_missing_required_categories(db, run), outputs_synced=outputs_synced
+        )
 
     if run_has_missing_required_categories(db, run) and reset_completed_output_transfers(db, run):
         # Deliberately does NOT clear run.sync_completed_at: every results

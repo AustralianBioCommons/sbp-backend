@@ -10,6 +10,7 @@ from alembic.operations import Operations
 from alembic.util import load_python_file
 
 from app.db.models import WorkflowRun
+from app.db.models.backends import BackendSelectionSettings
 from app.schemas.backend import ComputeBackendName
 from tests.datagen import (
     AppUserFactory,
@@ -17,6 +18,25 @@ from tests.datagen import (
     WorkflowFactory,
     WorkflowRunFactory,
 )
+
+
+def test_backend_selection_upgrade_seeds_random_settings(test_db):
+    """
+    Test the migration that creates BackendSelectionSettings creates an initial entry
+    """
+    connection = test_db.connection()
+    BackendSelectionSettings.__table__.drop(connection)
+    migration = load_python_file(
+        str(Path(__file__).resolve().parents[2] / "alembic" / "versions"),
+        "20261116_095036_backend_selection_model_965cf3c5818c.py",
+    )
+
+    with Operations.context(MigrationContext.configure(connection)):
+        migration.upgrade()
+
+    settings = BackendSelectionSettings.current_settings(test_db)
+    assert settings is not None
+    assert settings.selection_method == "random"
 
 
 def test_run_backend_link_upgrade_backfills_existing_runs(

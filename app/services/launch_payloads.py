@@ -50,20 +50,21 @@ async def send_queued_launch(
 def get_executor_script(
     *,
     prerun_script_path: str | None,
-    repo_gadi_path: str | None,
+    repo_checkout_path: str | None,
     repo_url: str,
     module_loads: list[str] | None = None,
+    offline: bool = True,
 ) -> str:
     """Build a pre-run script from Nextflow env vars, module loads, and a script body.
 
     NXF_OFFLINE=true avoids network calls Gadi compute nodes can't make.
-    NXF_ASSETS is two levels above the checkout (repo_gadi_path is
+    NXF_ASSETS is two levels above the checkout (repo_checkout_path is
     .../<commit_sha>/<owner>/<repo>) so Nextflow's own <owner>/<repo>
     resolution finds the pre-staged checkout instead of fetching it.
     """
-    lines = ["export NXF_OFFLINE=true"]
-    if repo_gadi_path:
-        bare_repo_path = PurePosixPath(repo_gadi_path)
+    lines = ["export NXF_OFFLINE=true"] if offline else []
+    if offline and repo_checkout_path:
+        bare_repo_path = PurePosixPath(repo_checkout_path)
         nxf_assets_path = f"{bare_repo_path.parent.parent}/"
         lines.append(f"export NXF_ASSETS={nxf_assets_path}")
         # S3/Globus staging drops the execute bit, so the checkout's bin/
