@@ -138,10 +138,12 @@ class RepositoryPreparation:
 
 
 def get_repository_globus_settings(backend: ComputeBackend) -> GlobusSettings:
-    globus = backend.get_settings().globus
-    if globus is None:
-        raise RepoStagingError(f"Backend '{backend.name}' has no repository Globus settings")
-    return globus
+    try:
+        return backend.get_globus_settings()
+    except ValueError as exc:
+        raise RepoStagingError(
+            f"Backend '{backend.name}' has invalid repository Globus settings"
+        ) from exc
 
 
 def prepare_repository(

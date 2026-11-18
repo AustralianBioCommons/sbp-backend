@@ -34,7 +34,9 @@ from tests.datagen import (
     DataTransferFactory,
     QueuedJobFactory,
     WorkflowFactory,
-    WorkflowRunFactory,
+)
+from tests.datagen import (
+    WorkflowRunWithGadiFactory as WorkflowRunFactory,
 )
 
 
@@ -335,10 +337,10 @@ def test_gadi_pbs_jobs_local_path_is_under_output_dir(globus_settings):
     assert path == "/test/output/_system-status/gadi-pbs-jobs.json"
 
 
-def test_sync_gadi_pbs_jobs_submits_transfer(mock_transfer_client, mock_settings):
+def test_sync_gadi_pbs_jobs_submits_transfer(mock_transfer_client, mock_settings, globus_settings):
     mock_transfer_client.submit_transfer.return_value = {"task_id": "task-1"}
 
-    sync_gadi_pbs_jobs(settings=mock_settings)
+    sync_gadi_pbs_jobs(settings=mock_settings, globus_settings=globus_settings)
 
     submitted = mock_transfer_client.submit_transfer.call_args[0][0]
     assert submitted["source_endpoint"] == "test-gadi-collection-id"
@@ -347,13 +349,15 @@ def test_sync_gadi_pbs_jobs_submits_transfer(mock_transfer_client, mock_settings
     assert submitted["DATA"][0]["destination_path"] == "/system-status/gadi-pbs-jobs.json"
 
 
-def test_sync_gadi_pbs_jobs_swallows_api_error(mock_transfer_client, mock_settings):
+def test_sync_gadi_pbs_jobs_swallows_api_error(
+    mock_transfer_client, mock_settings, globus_settings
+):
     """A failed submission must not raise - the next scheduled tick just retries."""
     mock_transfer_client.submit_transfer.side_effect = _globus_api_error(
         400, {"code": "Error", "message": "boom"}
     )
 
-    sync_gadi_pbs_jobs(settings=mock_settings)  # must not raise
+    sync_gadi_pbs_jobs(settings=mock_settings, globus_settings=globus_settings)  # must not raise
 
 
 def test_reset_failed_output_transfers_clears_retry_state(test_db, persistent_models):

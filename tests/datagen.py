@@ -190,7 +190,7 @@ class WorkflowRunWithGadiFactory(WorkflowRunFactory):
             name=ComputeBackendName.GADI,
             enabled=True,
             service_usage_enabled=True,
-            env_prefix="",
+            env_prefix="GADI_",
         )
 
 
@@ -241,6 +241,6 @@ def build_backend_launch_kwargs(
             project_id=backend.project_id,
             repository_transfer=backend.repository_transfer,
             data_transfer=backend.data_transfer,
-            globus=settings.globus,
+            globus=backend.get_globus_settings(),
         ),
     }

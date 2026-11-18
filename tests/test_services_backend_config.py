@@ -28,8 +28,8 @@ from tests.datagen import (
 
 
 @pytest.fixture
-def backend_context(test_db, persistent_models, mock_settings, monkeypatch):
-    for field, value in mock_settings.globus.model_dump().items():
+def backend_context(test_db, persistent_models, mock_globus_settings, monkeypatch):
+    for field, value in mock_globus_settings.model_dump().items():
         monkeypatch.setenv(f"TEST_GLOBUS_{field.upper()}", str(value))
     backend = ComputeBackendFactory.create_sync(
         name=ComputeBackendName.GADI,

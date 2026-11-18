@@ -35,9 +35,9 @@ WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
 
 
 @pytest.fixture(autouse=True)
-def backend_selection_settings(persistent_models, monkeypatch, mock_settings):
+def backend_selection_settings(persistent_models, monkeypatch, mock_globus_settings):
     for prefix in ("GADI_", "SETONIX_"):
-        for field, value in mock_settings.globus.model_dump().items():
+        for field, value in mock_globus_settings.model_dump().items():
             monkeypatch.setenv(f"{prefix}GLOBUS_{field.upper()}", str(value))
     return BackendSelectionSettingsFactory.create_sync(
         selection_method=BackendSelectionMethod.RANDOM,

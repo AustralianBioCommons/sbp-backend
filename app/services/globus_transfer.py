@@ -45,10 +45,9 @@ def build_gadi_input_path(
     workflow_name: str,
     filename: str,
     *,
-    globus_settings: GlobusSettings | None = None,
+    globus_settings: GlobusSettings,
 ) -> str:
     """Build the Gadi-local destination path for a staged input file."""
-    globus_settings = globus_settings or get_settings().globus
     return f"{globus_settings.input_dir}/{workflow_name}/{run_id}/{sanitize_filename(filename)}"
 
 
@@ -57,10 +56,9 @@ def build_gadi_output_path(
     workflow_name: str,
     filename: str | None = None,
     *,
-    globus_settings: GlobusSettings | None = None,
+    globus_settings: GlobusSettings,
 ) -> str:
     """Build the Gadi-local output directory or child path for a workflow run."""
-    globus_settings = globus_settings or get_settings().globus
     run_output_dir = f"{globus_settings.output_dir}/{workflow_name}/{run_id}"
     if filename is None:
         return run_output_dir
@@ -81,17 +79,14 @@ def _s3_relative_path(source_location: str) -> str:
     return f"/{key}"
 
 
-def _gadi_relative_path(
-    destination_location: str, *, globus_settings: GlobusSettings | None = None
-) -> str:
+def _gadi_relative_path(destination_location: str, *, globus_settings: GlobusSettings) -> str:
     """Path relative to the Gadi Globus collection root for a real absolute Gadi path.
 
-    The collection's root maps to GLOBUS_GADI_COLLECTION_ROOT on the real filesystem, not
+    The backend collection's root maps to its configured collection_root, not
     "/" (confirmed in production: sending the full absolute path unchanged
     double-nests it under the collection root and the destination never appears at
     the expected real path).
     """
-    globus_settings = globus_settings or get_settings().globus
     collection_root = globus_settings.collection_root
     if not destination_location.startswith(collection_root + "/"):
         raise GlobusTransferError(
@@ -102,7 +97,7 @@ def _gadi_relative_path(
     return destination_location[len(collection_root) :]
 
 
-def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> str:
+def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings) -> str:
     """Absolute Gadi path that the Gadi-side PBS jobs push script writes to
     (runs under the yz52_workflow service account, outside this repo).
 
@@ -110,11 +105,12 @@ def gadi_pbs_jobs_local_path(globus_settings: GlobusSettings | None = None) -> s
     Globus setting - this is just a filesystem location, not a credential, so
     another required env var per environment isn't worth it.
     """
-    globus_settings = globus_settings or get_settings().globus
     return f"{globus_settings.output_dir}/_system-status/gadi-pbs-jobs.json"
 
 
-def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
+def sync_gadi_pbs_jobs(
+    *, globus_settings: GlobusSettings, settings: Settings | None = None
+) -> None:
     """Submit a Globus transfer of the Gadi-local sbp_service jobs file into S3.
 
     Fire-and-forget by design: no DataTransfer row, no polling/retry, unlike
@@ -124,7 +120,6 @@ def sync_gadi_pbs_jobs(settings: Settings | None = None) -> None:
     so there is nothing worth resuming.
     """
     settings = settings or get_settings()
-    globus_settings = settings.globus
     transfer_client = get_transfer_client(globus_settings)
 
     source_path = _gadi_relative_path(
@@ -472,7 +467,6 @@ def sync_data_cleanups(
     db: Session,
     *,
     limit: int = 100,
-    globus_settings: GlobusSettings | None = None,
 ) -> DataTransferSyncResult:
     """Submit pending and poll in-progress Gadi cleanup deletes for one batch."""
     stmt = (
@@ -490,7 +484,7 @@ def sync_data_cleanups(
     submitted = completed = failed = errored = 0
     for data_transfer in transfers:
         try:
-            transfer_settings = get_run_globus_settings(data_transfer.workflow_run, globus_settings)
+            transfer_settings = get_run_globus_settings(data_transfer.workflow_run)
             if data_transfer.cleanup_status == "pending":
                 submit_pending_cleanup(db, data_transfer, globus_settings=transfer_settings)
                 if data_transfer.cleanup_status == "in_progress":
@@ -550,7 +544,6 @@ def sync_data_transfers(
     db: Session,
     *,
     limit: int = 100,
-    globus_settings: GlobusSettings | None = None,
 ) -> DataTransferSyncResult:
     """Submit pending and poll in-progress Globus data transfers for one batch."""
     stmt = (
@@ -567,7 +560,7 @@ def sync_data_transfers(
     submitted = completed = failed = errored = 0
     for data_transfer in transfers:
         try:
-            transfer_settings = get_run_globus_settings(data_transfer.workflow_run, globus_settings)
+            transfer_settings = get_run_globus_settings(data_transfer.workflow_run)
             if data_transfer.status == "pending":
                 submit_pending_transfer(db, data_transfer, globus_settings=transfer_settings)
                 if data_transfer.status == "in_progress":

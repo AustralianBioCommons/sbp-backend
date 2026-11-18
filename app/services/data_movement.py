@@ -42,7 +42,7 @@ class DataMovement:
         settings = settings or get_settings()
         if uses_native_data(run):
             return cls(DataTransferMode.NATIVE, settings)
-        return cls(DataTransferMode.GLOBUS, settings, get_run_globus_settings(run, settings.globus))
+        return cls(DataTransferMode.GLOBUS, settings, get_run_globus_settings(run))
 
     def require_globus(self) -> GlobusSettings:
         if self.globus is None:

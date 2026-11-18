@@ -179,26 +179,40 @@ def test_refresh_seqera_health_status_refreshes_the_cache(test_db, monkeypatch):
     assert len(calls) == 1
 
 
-def test_refresh_gadi_pbs_jobs_dry_run_does_not_sync(monkeypatch):
+def test_refresh_gadi_pbs_jobs_dry_run_does_not_sync(monkeypatch, test_db):
     def _boom(**_kwargs):
         raise AssertionError("sync_gadi_pbs_jobs should not run during a dry run")
 
     monkeypatch.setattr(scheduler_jobs.globus_transfer, "sync_gadi_pbs_jobs", _boom)
 
-    scheduler_jobs.refresh_gadi_pbs_jobs(dry_run=True)
+    scheduler_jobs.refresh_gadi_pbs_jobs(dry_run=True, db_session=test_db)
 
 
-def test_refresh_gadi_pbs_jobs_submits_transfer(monkeypatch):
+def test_refresh_gadi_pbs_jobs_submits_transfer(monkeypatch, test_db, default_backend):
     calls = []
     monkeypatch.setattr(
         scheduler_jobs.globus_transfer,
         "sync_gadi_pbs_jobs",
-        lambda **kwargs: calls.append(kwargs.get("settings")),
+        lambda **kwargs: calls.append(kwargs["globus_settings"]),
     )
 
-    scheduler_jobs.refresh_gadi_pbs_jobs()
+    scheduler_jobs.refresh_gadi_pbs_jobs(db_session=test_db)
 
     assert len(calls) == 1
+    assert calls[0] == default_backend.get_globus_settings()
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_refresh_gadi_pbs_jobs_skips_absent_or_disabled_backend(
+    test_db, persistent_models, mocker, present
+):
+    from tests.datagen import ComputeBackendFactory
+
+    if present:
+        ComputeBackendFactory.create_sync(name="gadi", enabled=False, env_prefix="UNCONFIGURED_")
+    sync = mocker.patch.object(scheduler_jobs.globus_transfer, "sync_gadi_pbs_jobs")
+    scheduler_jobs.refresh_gadi_pbs_jobs(db_session=test_db)
+    sync.assert_not_called()
 
 
 def test_launch_job_skips_when_seqera_unavailable(test_db, persistent_models, monkeypatch):

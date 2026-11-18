@@ -8,7 +8,9 @@ from sqlalchemy import func, select
 from app.db.models.core import DataTransfer, RunInput, RunOutput
 from app.schemas.backend import ComputeBackendName, DataTransferMode, RepositoryTransferMode
 from app.services import globus_transfer, job_sync
+from app.services.compute_backends import get_run_globus_settings
 from app.services.data_movement import DataMovement
+from app.services.globus_errors import GlobusConfigurationError
 from app.services.s3 import S3ServiceError, S3UploadResult
 from tests.datagen import (
     AppUserFactory,
@@ -17,6 +19,36 @@ from tests.datagen import (
     WorkflowFactory,
     WorkflowRunFactory,
 )
+
+
+@pytest.mark.parametrize("backend_state", ["missing", "unconfigured"])
+def test_globus_operations_reject_missing_backend_settings_without_global_fallback(
+    test_db, persistent_models, mock_globus_settings, monkeypatch, mocker, backend_state
+):
+    for key, value in mock_globus_settings.model_dump().items():
+        monkeypatch.setenv(f"GLOBUS_{key.upper()}", str(value))
+    backend = (
+        ComputeBackendFactory.create_sync(name="gadi", env_prefix="UNCONFIGURED_")
+        if backend_state == "unconfigured"
+        else None
+    )
+    run = WorkflowRunFactory.create_sync(backend=backend, owner=AppUserFactory.create_sync())
+    with pytest.raises(GlobusConfigurationError, match="assigned|Invalid Globus settings"):
+        get_run_globus_settings(run)
+    transfer = DataTransferFactory.create_sync(
+        workflow_run=run,
+        provider="globus",
+        direction="input",
+        status="in_progress",
+        transfer_id="existing-task",
+    )
+    client = mocker.patch("app.services.globus_transfer.get_transfer_client")
+    result = globus_transfer.sync_data_transfers(test_db)
+    assert result.checked == result.errored == 1
+    client.assert_not_called()
+    test_db.refresh(transfer)
+    assert transfer.transfer_id == "existing-task"
+    assert transfer.status == "in_progress"
 
 
 @pytest.fixture
@@ -45,6 +77,7 @@ async def test_inputs_and_samplesheets_follow_data_mode(
     test_db,
     movement_run,
     mock_settings,
+    mock_globus_settings,
     mocker,
     mode,
     repo_mode,
@@ -53,8 +86,9 @@ async def test_inputs_and_samplesheets_follow_data_mode(
     run.backend.data_transfer = mode
     run.backend.repository_transfer = repo_mode
     # Supply backend settings only for managed movement; native inputs never load them.
-    settings_loader = mocker.patch.object(run.backend, "get_settings")
-    settings_loader.return_value.globus = mock_settings.globus
+    settings_loader = mocker.patch.object(
+        run.backend, "get_globus_settings", return_value=mock_globus_settings
+    )
     movement = DataMovement.for_run(run, mock_settings)
     source = "s3://test-s3-bucket/inputs/query.fa"
     rows = [{"sequence": source, "group": "g1"}, {"sequence": source, "group": "g2"}]
@@ -155,6 +189,7 @@ async def test_native_force_resync_only_reindexes_s3(test_db, movement_run, mock
     assert test_db.scalar(select(func.count()).select_from(DataTransfer)) == 0
 
 
+@pytest.mark.parametrize("native_now", [False, True])
 @pytest.mark.parametrize(
     "phase",
     [
@@ -169,16 +204,17 @@ async def test_native_force_resync_only_reindexes_s3(test_db, movement_run, mock
 def test_workers_use_each_transfers_backend_settings(
     test_db,
     persistent_models,
-    mock_settings,
+    mock_globus_settings,
     monkeypatch,
     mocker,
     phase,
+    native_now,
 ):
     clients = {}
     transfers = []
     for name in ComputeBackendName:
         prefix = f"MOVE_{name.value.upper()}_"
-        values = mock_settings.globus.model_dump() | {
+        values = mock_globus_settings.model_dump() | {
             "client_id": f"client-{name.value}",
             "backend_collection_id": f"collection-{name.value}",
             "collection_root": f"/{name.value}",
@@ -187,7 +223,12 @@ def test_workers_use_each_transfers_backend_settings(
         }
         for key, value in values.items():
             monkeypatch.setenv(f"{prefix}GLOBUS_{key.upper()}", str(value))
-        backend = ComputeBackendFactory.create_sync(name=name, env_prefix=prefix)
+        backend = ComputeBackendFactory.create_sync(
+            name=name,
+            env_prefix=prefix,
+            repository_transfer="native" if native_now else "globus",
+            data_transfer="native" if native_now else "globus",
+        )
         run = WorkflowRunFactory.create_sync(
             backend=backend, owner=AppUserFactory.create_sync(), seqera_final_status="SUCCEEDED"
         )

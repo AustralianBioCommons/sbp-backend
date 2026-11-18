@@ -83,8 +83,8 @@ def _make_local_git_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, st
 
 
 @pytest.fixture
-def repo_status_factory(default_backend, monkeypatch, mock_settings):
-    for field, value in mock_settings.globus.model_dump().items():
+def repo_status_factory(default_backend, monkeypatch, mock_globus_settings):
+    for field, value in mock_globus_settings.model_dump().items():
         monkeypatch.setenv(f"GADI_GLOBUS_{field.upper()}", str(value))
 
     def create_repo_status(
@@ -557,11 +557,16 @@ def test_poll_repo_staging_no_transfer_id_raises(test_db, persistent_models, rep
         poll_repo_staging(test_db, workflow)
 
 
+@pytest.mark.parametrize("native_now", [False, True])
 def test_poll_repo_staging_succeeded_marks_completed_and_promotes_queued_jobs(
-    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory
+    test_db, persistent_models, mock_transfer_client, mock_settings, repo_status_factory, native_now
 ):
     mock_transfer_client.get_task.return_value = {"status": "SUCCEEDED"}
     workflow = repo_status_factory(transfer_id="task-1", status="in_progress")
+    if native_now:
+        workflow.compute_backend.repository_transfer = "native"
+        workflow.compute_backend.data_transfer = "native"
+        test_db.commit()
     QueuedJobFactory.create_sync(workflow=workflow.workflow, status="staging")
 
     poll_repo_staging(test_db, workflow, settings=mock_settings)
