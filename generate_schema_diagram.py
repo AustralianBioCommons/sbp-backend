@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Generate database schema visualization from SQLAlchemy models.
 
-This script uses sqlalchemy_data_model_visualizer to create an entity-relationship
+This script uses tools.model_visualizer to create an entity-relationship
 diagram from the SQLAlchemy models. The visualization is always up-to-date with
 the actual database schema defined in the models.
 
 Usage:
-    uv run --extra dev python generate_schema_diagram.py
+    uv run python generate_schema_diagram.py
 
 Output:
     docs/schema_diagram.svg - Entity-relationship diagram showing all tables,
@@ -20,30 +20,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from sqlalchemy_data_model_visualizer import generate_data_model_diagram
+    from tools.model_visualizer import generate_data_model_diagram
 except ModuleNotFoundError as exc:
-    if exc.name != "sqlalchemy_data_model_visualizer":
+    if exc.name != "graphviz":
         raise
     print(
-        "Missing dev dependency 'sqlalchemy_data_model_visualizer'. "
-        "Run this script with: uv run --extra dev python generate_schema_diagram.py",
+        "Missing dev dependency 'graphviz'. "
+        "Run this script with: uv run python generate_schema_diagram.py",
         file=sys.stderr,
     )
     raise SystemExit(1) from exc
 
-# Import all models to ensure they're registered with Base
-from app.db.models.core import (
-    AppUser,
-    DataTransfer,
-    RunInput,
-    RunMetric,
-    RunOutput,
-    S3Object,
-    Workflow,
-    WorkflowRun,
-)
-from app.db.models.job_queue import QueuedJob
-from app.db.models.system_status import SystemStatusCache, SystemStatusIncident
+# Import the models package to register every mapped model with Base.
+from app.db import Base, models  # noqa: F401
 
 
 def main():
@@ -55,20 +44,9 @@ def main():
 
     print("Generating database schema diagram...")
 
-    # Collect all models
-    models = [
-        AppUser,
-        Workflow,
-        WorkflowRun,
-        S3Object,
-        RunInput,
-        RunOutput,
-        RunMetric,
-        DataTransfer,
-        QueuedJob,
-        SystemStatusCache,
-        SystemStatusIncident,
-    ]
+    models = sorted(
+        (mapper.class_ for mapper in Base.registry.mappers), key=lambda model: model.__tablename__
+    )
 
     print(f"Models found: {len(models)} tables")
     for model in models:
@@ -80,11 +58,12 @@ def main():
     print(f"\n✓ Schema diagram generated: {output_file}.svg")
     print("\nThe diagram shows:")
     print("  • All tables with their columns and data types")
+    print("  • Models grouped by their Python module")
     print("  • Primary keys (PK) and foreign keys (FK)")
     print("  • Relationships between tables")
     print("  • Unique constraints")
     print("\nTo regenerate this diagram after model changes:")
-    print("  uv run --extra dev python generate_schema_diagram.py")
+    print("  uv run python generate_schema_diagram.py")
 
 
 if __name__ == "__main__":
