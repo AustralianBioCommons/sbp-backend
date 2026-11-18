@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette import status
 
-from ..config import GlobusSettings, get_settings
+from ..config import GlobusSettings
 from ..db.models import BackendWorkflowSettings, ComputeBackend, Workflow, WorkflowRun
 from ..db.models.backends import BackendSelectionSettings
 from ..schemas.backend import BackendLaunchConfig
@@ -157,19 +157,13 @@ def validate_backend_launch_config(
         raise WorkflowLaunchError("Backend configuration does not match the workflow run")
 
 
-def get_run_globus_settings(
-    run: WorkflowRun | None,
-    fallback: GlobusSettings | None = None,
-) -> GlobusSettings:
-    """Resolve a transfer's backend credentials, retaining the legacy fallback for unassigned runs."""
+def get_run_globus_settings(run: WorkflowRun | None) -> GlobusSettings:
+    """Resolve credentials from the transfer's assigned backend."""
     if run is None or run.backend is None:
-        return fallback or get_settings().globus
+        raise GlobusConfigurationError("Globus operations require an assigned compute backend")
     try:
-        globus = run.backend.get_settings().globus
+        return run.backend.get_globus_settings()
     except ValueError as exc:
         raise GlobusConfigurationError(
             f"Invalid Globus settings for backend '{run.backend.name}'"
         ) from exc
-    if globus is None:
-        raise GlobusConfigurationError(f"Backend '{run.backend.name}' has no Globus settings")
-    return globus
