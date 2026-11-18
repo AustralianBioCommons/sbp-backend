@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from ...config import ComputeBackendSettings
+from ...config import ComputeBackendSettings, GlobusSettings
 from ...schemas.backend import (
     BackendSelectionMethod,
     ComputeBackendName,
@@ -105,6 +105,10 @@ class ComputeBackend(Base):
             globus_enabled=use_globus,
             env_file=env_file,
         )
+
+    def get_globus_settings(self, env_file: str | None = ".env") -> GlobusSettings:
+        """Load credentials for a Globus operation independently of current transfer modes."""
+        return GlobusSettings(_env_prefix=f"{self.env_prefix}GLOBUS_", _env_file=env_file)
 
 
 class BackendWorkflowSettings(Base):
