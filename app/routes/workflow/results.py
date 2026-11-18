@@ -115,7 +115,12 @@ async def get_result_logs(
         )
 
     try:
-        payload = await get_workflow_logs_raw(owned_run.seqera_run_id, settings=settings)
+        backend = owned_run.get_backend_or_raise()
+        payload = await get_workflow_logs_raw(
+            owned_run.seqera_run_id,
+            workspace_id=backend.seqera_workspace_id,
+            settings=settings,
+        )
     except SeqeraAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

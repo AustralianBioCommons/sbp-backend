@@ -85,7 +85,11 @@ def get_runs_requiring_sync(db: Session, *, limit: int = 100) -> list[WorkflowRu
     """
     stmt = (
         select(WorkflowRun)
-        .options(joinedload(WorkflowRun.workflow), joinedload(WorkflowRun.metrics))
+        .options(
+            joinedload(WorkflowRun.workflow),
+            joinedload(WorkflowRun.metrics),
+            joinedload(WorkflowRun.backend),
+        )
         .where(
             WorkflowRun.seqera_run_id.is_not(None),
             or_(
@@ -184,7 +188,10 @@ async def sync_workflow_run(
     status = _normalize_status(run.seqera_final_status)
     if force or status not in TERMINAL_SEQERA_STATUSES:
         if describe_func is describe_workflow:
-            payload = await describe_workflow(run.seqera_run_id, settings=settings)
+            backend = run.get_backend()
+            payload = await describe_workflow(
+                run.seqera_run_id, workspace_id=backend.seqera_workspace_id, settings=settings
+            )
         else:
             payload = await describe_func(run.seqera_run_id)
         status = _normalize_status(extract_pipeline_status(payload)) or PipelineStatus.UNKNOWN.value

@@ -87,6 +87,7 @@ def get_user_job_list_rows_select(user_id: UUID) -> Select[tuple[WorkflowRun, Jo
         .options(
             joinedload(WorkflowRun.workflow),
             joinedload(WorkflowRun.metrics),
+            joinedload(WorkflowRun.backend),
         )
         .where(WorkflowRun.owner_user_id == user_id)
     )
@@ -378,6 +379,9 @@ async def sync_service_usage(
     force: bool = False,
 ) -> float | None:
     if ui_status != "Completed":
+        return None
+    backend = run.get_backend()
+    if not backend.service_usage_enabled:
         return None
     if not force and run.service_usage is not None:
         return run.service_usage

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID as PyUUID
 from uuid import uuid4
 
+from fastapi import HTTPException, status
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -166,6 +167,21 @@ class WorkflowRun(Base):
     outputs: Mapped[list[RunOutput]] = relationship(back_populates="run")
     data_transfers: Mapped[list[DataTransfer]] = relationship(back_populates="workflow_run")
     queued_jobs: Mapped[list[QueuedJob]] = relationship(back_populates="workflow_run")
+
+    def get_backend(self) -> ComputeBackend:
+        """Return the assigned backend, raising if the run has no backend."""
+        if self.backend is None:
+            raise ValueError(f"Workflow run {self.id} has no assigned compute backend")
+        return self.backend
+
+    def get_backend_or_raise(self) -> ComputeBackend:
+        """Return the assigned backend or raise HTTP 500 for an invalid run."""
+        try:
+            return self.get_backend()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
 
     def get_queued_job(self, session: Session):
         """Get the latest queued job for this workflow run."""
