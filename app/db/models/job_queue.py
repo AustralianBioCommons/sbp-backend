@@ -177,6 +177,35 @@ class QueuedJob(Base):
         for job in jobs:
             job.repository_ready = True
 
+    @classmethod
+    def record_repository_failure(
+        cls,
+        session: Session,
+        backend_id: PyUUID,
+        workflow_id: PyUUID,
+        location: str,
+        message: str | None,
+    ) -> None:
+        """Settle jobs waiting on a failed checkout before its state is replaced."""
+        from .core import WorkflowRun
+
+        jobs = session.scalars(
+            select(cls)
+            .join(WorkflowRun, cls.workflow_run_id == WorkflowRun.id)
+            .where(
+                WorkflowRun.backend_id == backend_id,
+                WorkflowRun.workflow_id == workflow_id,
+                cls.repository_transfer == RepositoryTransferMode.GLOBUS,
+                cls.repository_location == location,
+                cls.repository_ready.is_(False),
+                cls.status == "staging",
+            )
+        )
+        for job in jobs:
+            job.status = "failed"
+            job.error = f"Workflow repo staging failed: {message}"
+            job.next_attempt_at = None
+
     def cancel_pending_job(self, session: Session, commit: bool = False) -> None:
         self.status = "cancelled"
         self.next_attempt_at = None

@@ -838,6 +838,117 @@ def test_old_checkout_remains_ready_while_inputs_wait_and_cache_refreshes(
     assert job.repository_location == old_location
 
 
+@pytest.mark.parametrize("replace_checkout", [False, True])
+def test_failed_checkout_replacement_settles_jobs_while_inputs_wait(
+    test_db, repo_status_factory, replace_checkout
+):
+    from app.services.job_queue import promote_ready_job
+    from tests.datagen import AppUserFactory, DataTransferFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="failed", error_message="original checkout failed")
+    old_location = repo.location
+    run = WorkflowRunFactory.create_sync(
+        workflow=repo.workflow, backend=repo.compute_backend, owner=AppUserFactory.create_sync()
+    )
+    job = QueuedJobFactory.create_sync(
+        workflow=repo.workflow,
+        workflow_run=run,
+        status="staging",
+        repository_transfer="globus",
+        repository_location=old_location,
+        repository_ready=False,
+        next_attempt_at=repo.created_at,
+        error=None,
+    )
+    transfer = DataTransferFactory.create_sync(
+        workflow_run=run, direction="input", status="pending"
+    )
+    promote_ready_job(test_db, job)
+    assert job.status == "staging"
+
+    WorkflowRepoStatus.request_staging(
+        test_db,
+        repo.compute_backend,
+        repo.workflow,
+        location="/new/checkout" if replace_checkout else old_location,
+        commit_sha="new-commit" if replace_checkout else repo.staged_commit_sha,
+    )
+    test_db.commit()
+    test_db.refresh(job)
+    assert repo.status == "pending"
+    assert repo.error_message is None
+    assert job.status == ("failed" if replace_checkout else "staging")
+    if replace_checkout:
+        assert job.error == "Workflow repo staging failed: original checkout failed"
+        assert job.next_attempt_at is None
+    else:
+        assert job.error is None
+        assert job.next_attempt_at is not None
+
+    repo.mark_completed(test_db)
+    transfer.status = "completed"
+    test_db.commit()
+    promote_ready_job(test_db, job)
+    assert job.status == ("failed" if replace_checkout else "pending")
+    assert job.repository_location == old_location
+
+
+@pytest.mark.parametrize(
+    "unaffected",
+    [
+        "backend",
+        "workflow",
+        "location",
+        "ready",
+        "native",
+        "pending",
+        "launching",
+        "submitted",
+        "failed",
+        "cancelled",
+    ],
+)
+def test_failed_checkout_replacement_leaves_other_jobs_unchanged(
+    test_db, repo_status_factory, unaffected
+):
+    from tests.datagen import AppUserFactory, ComputeBackendFactory, WorkflowRunFactory
+
+    repo = repo_status_factory(status="failed", error_message="original checkout failed")
+    backend = (
+        ComputeBackendFactory.create_sync(name="setonix")
+        if unaffected == "backend"
+        else repo.compute_backend
+    )
+    workflow = WorkflowFactory.create_sync() if unaffected == "workflow" else repo.workflow
+    run = WorkflowRunFactory.create_sync(
+        workflow=workflow, backend=backend, owner=AppUserFactory.create_sync()
+    )
+    status = (
+        unaffected
+        if unaffected in {"pending", "launching", "submitted", "failed", "cancelled"}
+        else "staging"
+    )
+    job = QueuedJobFactory.create_sync(
+        workflow=workflow,
+        workflow_run=run,
+        status=status,
+        repository_transfer="native" if unaffected == "native" else "globus",
+        repository_location="/other/checkout" if unaffected == "location" else repo.location,
+        repository_ready=unaffected == "ready",
+        next_attempt_at=repo.created_at,
+        error="existing diagnostic",
+    )
+    next_attempt_at = job.next_attempt_at
+    WorkflowRepoStatus.request_staging(
+        test_db, repo.compute_backend, repo.workflow, location="/new/checkout", commit_sha="new"
+    )
+    test_db.commit()
+    test_db.refresh(job)
+    assert job.status == status
+    assert job.error == "existing diagnostic"
+    assert job.next_attempt_at == next_attempt_at
+
+
 @pytest.mark.parametrize("status", ["completed", "failed"])
 def test_different_checkout_does_not_satisfy_or_fail_repository_gate(
     test_db,

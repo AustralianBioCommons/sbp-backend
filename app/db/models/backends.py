@@ -227,6 +227,8 @@ class WorkflowRepoStatus(Base):
             raise ValueError("Repository staging is already active for a different checkout")
         if repo.status == RepositoryStatus.COMPLETED:
             repo.record_waiting_jobs_ready(session)
+        elif repo.status == RepositoryStatus.FAILED and repo.location != location:
+            repo.record_waiting_jobs_failed(session)
         repo.location = location
         repo.staged_commit_sha = commit_sha
         repo.status = RepositoryStatus.PENDING
@@ -257,6 +259,13 @@ class WorkflowRepoStatus(Base):
 
         QueuedJob.record_repository_completion(
             session, self.compute_backend_id, self.workflow_id, self.location
+        )
+
+    def record_waiting_jobs_failed(self, session: Session) -> None:
+        from .job_queue import QueuedJob
+
+        QueuedJob.record_repository_failure(
+            session, self.compute_backend_id, self.workflow_id, self.location, self.error_message
         )
 
     def mark_completed(self, session: Session | None = None) -> None:
