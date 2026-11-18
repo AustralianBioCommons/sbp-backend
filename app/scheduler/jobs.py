@@ -138,7 +138,13 @@ def is_seqera_available(db_session: Session, settings: Settings | None = None) -
     return system_status.overall_status == "healthy"
 
 
-def refresh_gadi_pbs_jobs(dry_run: bool = False, *, settings: Settings | None = None) -> None:
+@with_scheduler_db_session
+def refresh_gadi_pbs_jobs(
+    dry_run: bool = False,
+    *,
+    settings: Settings | None = None,
+    db_session: Session | None = None,
+) -> None:
     """Push the latest Gadi-side sbp_service jobs snapshot into S3 via Globus.
 
     See services/globus_transfer.sync_gadi_pbs_jobs - fire-and-forget,
@@ -147,8 +153,15 @@ def refresh_gadi_pbs_jobs(dry_run: bool = False, *, settings: Settings | None = 
     if dry_run:
         logger.info("Dry run - not submitting Gadi PBS jobs transfer")
         return
+    db_session = require_scheduler_db_session(db_session)
+    backend = ComputeBackend.get_by_name(db_session, ComputeBackendName.GADI)
+    if backend is None or not backend.enabled:
+        logger.info("Skipping PBS snapshot refresh: Gadi is absent or disabled.")
+        return
     settings = settings or get_settings()
-    globus_transfer.sync_gadi_pbs_jobs(settings=settings)
+    globus_transfer.sync_gadi_pbs_jobs(
+        globus_settings=backend.get_globus_settings(), settings=settings
+    )
     logger.info("Submitted Gadi PBS jobs transfer to Globus.")
 
 
