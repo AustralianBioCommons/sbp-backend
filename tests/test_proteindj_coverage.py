@@ -28,7 +28,7 @@ from tests.datagen import (
     AppUserFactory,
     QueuedJobFactory,
     WorkflowFactory,
-    WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
     build_backend_launch_kwargs,
 )
 
@@ -63,7 +63,7 @@ def _queued_proteindj_job(
         name="de-novo-design",
         repo_url="https://github.com/org/proteindj",
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
         "computeEnvId": "ce_456",
         "runName": "test-run",
@@ -89,7 +89,7 @@ def _queued_proteindj_job(
 @contextmanager
 def _mock_proteindj_db_context():
     workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
-    workflow_run = WorkflowRunFactory.build(workflow=workflow)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -261,7 +261,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteindj-run")
     form_data = _form_data(
@@ -359,7 +359,7 @@ async def test_prepare_proteindj_workflow_bindcraft_tool_uses_bindcraft_denovo_m
     """The BindCraft toggle launches ProteinDJ with design_mode=bindcraft_denovo."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(tool="bindcraft", runName="queued-bindcraft-run")
     form_data = WorkflowFormData(
@@ -405,7 +405,7 @@ async def test_prepare_proteindj_workflow_appends_custom_params_text(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(paramsText="extra_param: value")
 
@@ -452,7 +452,7 @@ async def test_prepare_proteindj_workflow_forwards_prerun_script_path(
     workflow = WorkflowFactory.create_sync(
         name="de-novo-design", prerun_script_path="/some/prerun.sh"
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with (

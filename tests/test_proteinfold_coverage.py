@@ -30,7 +30,7 @@ from tests.datagen import (
     AppUserFactory,
     QueuedJobFactory,
     WorkflowFactory,
-    WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
     build_backend_launch_kwargs,
 )
 
@@ -54,7 +54,7 @@ def _queued_proteinfold_job(
         name="single-prediction",
         repo_url="https://github.com/nf-core/proteinfold",
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     launch_payload = {
         "computeEnvId": "ce_456",
         "runName": "test-run",
@@ -84,7 +84,7 @@ def _queued_proteinfold_job(
 @contextmanager
 def _mock_proteinfold_db_context():
     workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
-    workflow_run = WorkflowRunFactory.build(workflow=workflow)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch(
@@ -262,7 +262,7 @@ async def test_prepare_proteinfold_workflow_writes_expected_queued_job(
 ):
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = _make_launch_form(runName="queued-proteinfold-run")
     form_data = _form_data(colabfold_num_recycles=3, colabfold_use_templates=True)
@@ -339,7 +339,7 @@ async def test_prepare_proteinfold_workflow_forwards_prerun_script_path(
     """prerun_script_path is forwarded to get_executor_script at prepare time."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(prerun_script_path="/some/prerun.sh", ref_database=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with (
@@ -379,7 +379,7 @@ async def test_prepare_proteinfold_workflow_exports_pf_db_base_dir_from_ref_data
     workflow = WorkflowFactory.create_sync(
         ref_database="/scratch/mini_dbs", prerun_script_path=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with patch(
@@ -410,7 +410,7 @@ async def test_prepare_proteinfold_workflow_without_ref_database_omits_pf_db_bas
     """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = _make_launch_form()
 
     with patch(

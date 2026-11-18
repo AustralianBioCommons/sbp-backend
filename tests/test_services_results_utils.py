@@ -63,6 +63,7 @@ from tests.datagen import (
     S3ObjectFactory,
     WorkflowFactory,
     WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
 )
 
 
@@ -236,7 +237,13 @@ def test_build_s3_uri_uses_bucket_when_configured(mock_settings):
 
 
 def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_settings):
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+    run = WorkflowRunWithGadiFactory.build(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        sample_id="sampleZ",
+        tool=None,
+        submitted_form_data=None,
+    )
 
     spec = WorkflowResultsSpec(
         kind="de-novo-design",
@@ -276,7 +283,13 @@ def test_workflow_results_spec_get_transfer_items_maps_output_prefixes(mock_sett
 def test_builtin_specs_get_transfer_prefixes_excludes_run_root_but_keeps_usage_report(
     mock_settings,
 ):
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+    run = WorkflowRunWithGadiFactory.build(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        sample_id="T1024",
+        tool=None,
+        submitted_form_data=None,
+    )
 
     bindcraft_spec = WORKFLOW_OUTPUT_SPECS["de-novo-design"]["bindcraft"]
     boltz_spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
@@ -390,7 +403,7 @@ def test_workflow_results_spec_create_output_transfers_is_idempotent(
     test_db, persistent_models, mock_settings
 ):
     user = AppUserFactory.create_sync()
-    run = WorkflowRunFactory.create_sync(owner=user, sample_id="T1024")
+    run = WorkflowRunWithGadiFactory.create_sync(owner=user, sample_id="T1024")
     spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["boltz"]
     existing_transfer = DataTransfer(
         workflow_run_id=run.id,
@@ -436,7 +449,7 @@ def test_colabfold_create_output_transfers_creates_expected_rows(
     test_db, persistent_models, mock_settings
 ):
     user = AppUserFactory.create_sync()
-    run = WorkflowRunFactory.create_sync(owner=user, sample_id="T1024")
+    run = WorkflowRunWithGadiFactory.create_sync(owner=user, sample_id="T1024")
     spec = WORKFLOW_OUTPUT_SPECS["single-prediction"]["colabfold"]
 
     result = spec.create_output_transfers(test_db, run, settings=mock_settings)
@@ -563,7 +576,7 @@ def test_reset_completed_output_transfers_resets_only_completed_globus_rows(
 
 
 def test_rfdiffusion_helpers_classify_keys_and_build_prefixes():
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
+    run = WorkflowRunFactory.build(id=uuid4(), owner_user_id=uuid4(), sample_id="sampleZ")
 
     assert classify_rfdiffusion_output_key(" ") is None
     assert classify_rfdiffusion_output_key("folder/") is None
@@ -1084,7 +1097,7 @@ async def test_workflow_results_spec_get_service_units_uses_usage_report_key(
 
 
 def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+    run = WorkflowRunFactory.build(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
     assert classify_boltz_proteinfold_output(" ") is None
     assert classify_boltz_proteinfold_output("folder/") is None
@@ -1150,7 +1163,7 @@ def test_boltz_proteinfold_helpers_classify_keys_and_build_prefixes():
 
 
 def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+    run = WorkflowRunFactory.build(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
     # With sample_id, paths use the sample_id name
     assert classify_alphafold2_proteinfold_output(
@@ -1206,7 +1219,7 @@ def test_alphafold2_proteinfold_helpers_classify_keys_and_build_prefixes():
 
 
 def test_colabfold_proteinfold_helpers_classify_keys_and_build_prefixes():
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
+    run = WorkflowRunFactory.build(id=uuid4(), owner_user_id=uuid4(), sample_id="T1024")
 
     # With sample_id, paths use the sample_id name
     assert classify_colabfold_proteinfold_output(
@@ -1717,7 +1730,13 @@ async def test_get_run_service_usage():
 
 
 def test_build_wisps_output_listing_prefixes():
-    run = WorkflowRun(id=uuid4(), owner_user_id=uuid4(), sample_id="sample1")
+    run = WorkflowRunFactory.build(
+        id=uuid4(),
+        owner_user_id=uuid4(),
+        sample_id="sample1",
+        tool=None,
+        submitted_form_data=None,
+    )
     prefixes = build_wisps_output_listing_prefixes(run)
     assert len(prefixes) == 9
     assert f"{run.id}/" in prefixes
@@ -1758,7 +1777,7 @@ async def test_sync_workflow_outputs_links_files_to_globus_folder_transfer(
 ):
     """Files delivered by a recursive Globus folder transfer link back to it
     instead of each getting their own bookkeeping DataTransfer row."""
-    run = WorkflowRunFactory.create_sync(
+    run = WorkflowRunWithGadiFactory.create_sync(
         workflow=Workflow(
             name="interaction-screening",
             repo_url="https://github.com/test/interaction-screening",

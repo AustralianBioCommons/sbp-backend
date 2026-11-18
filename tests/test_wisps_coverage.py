@@ -34,7 +34,7 @@ from tests.datagen import (
     AppUserFactory,
     QueuedJobFactory,
     WorkflowFactory,
-    WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
     build_backend_launch_kwargs,
 )
 
@@ -68,7 +68,7 @@ def _queued_wisps_job(
         name="interaction-screening",
         repo_url="https://github.com/test/repo",
     )
-    workflow_run = WorkflowRunFactory.create_sync(
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(
         workflow=workflow,
         owner=user,
         submitted_form_data={
@@ -106,7 +106,7 @@ def _mock_wisps_db_context():
     Very simple mocks for when DB is not the focus of the test.
     """
     workflow = WorkflowFactory.build(prerun_script_path=None, ref_database=None)
-    workflow_run = WorkflowRunFactory.build(workflow=workflow)
+    workflow_run = WorkflowRunWithGadiFactory.build(workflow=workflow)
     db_session = Mock(name="db_session")
     queued_job = Mock(name="queued_job")
     with patch("app.services.wisps_executor.QueuedJob", return_value=queued_job) as queued_job_cls:
@@ -244,7 +244,7 @@ async def test_prepare_wisps_workflow_writes_expected_queued_job(
     workflow = WorkflowFactory.create_sync(
         name="interaction-screening", prerun_script_path=None, ref_database=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
 
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="queued-run")
     form_data = InteractionScreeningFormData(
@@ -323,7 +323,7 @@ async def test_prepare_wisps_workflow_interaction_screening_ignores_prerun_scrip
         prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
         ref_database=None,
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form = WorkflowLaunchForm(workflow="interaction-screening", tool="boltz", runName="is-run")
     form_data = InteractionScreeningFormData(
         workflow="interaction-screening",
@@ -384,7 +384,7 @@ async def test_prepare_wisps_workflow_bulk_skips_prerun_script(
         prerun_script_path="https://raw.githubusercontent.com/org/repo/main/wisps_prerun.sh",
         ref_database=None,
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (
@@ -426,7 +426,7 @@ async def test_prepare_wisps_workflow_exports_pf_db_base_dir_from_ref_database(
     workflow = WorkflowFactory.create_sync(
         ref_database="/scratch/mini_dbs", prerun_script_path=None
     )
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (
@@ -460,7 +460,7 @@ async def test_prepare_wisps_workflow_without_ref_database_omits_pf_db_base_dir(
     """When the workflow has no ref_database, PF_DB_BASE_DIR isn't exported."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(ref_database=None, prerun_script_path=None)
-    workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
+    workflow_run = WorkflowRunWithGadiFactory.create_sync(workflow=workflow, owner=user)
     form, form_data = _wisps_form_and_data()
 
     with (

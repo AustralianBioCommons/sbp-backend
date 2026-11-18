@@ -4,6 +4,7 @@ import uuid
 from faker import Faker
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
+from polyfactory.fields import Ignore
 
 from app.config import Settings
 from app.db.models.backends import (
@@ -133,7 +134,7 @@ class UserJobListRowFactory(DataclassFactory[UserJobListRow]):
         tool = kwargs.pop("tool", "Unknown")
 
         if run is None:
-            run = WorkflowRunFactory.build(
+            run = WorkflowRunWithGadiFactory.build(
                 seqera_run_id=seqera_run_id,
                 binder_name=binder_name,
                 run_name=run_name,
@@ -168,6 +169,31 @@ class ComputeBackendFactory(SQLAlchemyFactory[ComputeBackend]):
     data_transfer = DataTransferMode.GLOBUS
 
 
+class WorkflowRunWithGadiFactory(WorkflowRunFactory):
+    __set_relationships__ = True
+    owner = Ignore()
+    workflow = Ignore()
+    metrics = Ignore()
+    inputs = Ignore()
+    outputs = Ignore()
+    data_transfers = Ignore()
+    queued_jobs = Ignore()
+
+    @classmethod
+    def backend(cls) -> ComputeBackend:
+        session = cls.__session__
+        if session is not None:
+            existing = ComputeBackend.get_by_name(session, ComputeBackendName.GADI)
+            if existing is not None:
+                return existing
+        return ComputeBackendFactory.build(
+            name=ComputeBackendName.GADI,
+            enabled=True,
+            service_usage_enabled=True,
+            env_prefix="",
+        )
+
+
 class BackendSelectionSettingsFactory(SQLAlchemyFactory[BackendSelectionSettings]):
     __check_model__ = False
     __set_relationships__ = False
@@ -192,14 +218,10 @@ def build_backend_launch_kwargs(
     workflow_run: WorkflowRun, settings: Settings, config_path: str
 ) -> dict:
     """Build explicit backend inputs for executor tests, independently of environment loading."""
-    backend = ComputeBackendFactory.build(
-        name=ComputeBackendName.GADI,
-        enabled=True,
-        seqera_workspace_id=settings.seqera.work_space,
-        seqera_compute_env_id=settings.seqera.compute_id,
-        base_work_dir=settings.seqera.work_dir,
-    )
-    workflow_run.backend = backend
+    backend = workflow_run.get_backend()
+    backend.seqera_workspace_id = settings.seqera.work_space
+    backend.seqera_compute_env_id = settings.seqera.compute_id
+    backend.base_work_dir = settings.seqera.work_dir
     workflow_run.backend_id = backend.id
     workflow_run.workflow_id = workflow_run.workflow.id
     return {

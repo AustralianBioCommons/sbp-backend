@@ -187,6 +187,7 @@ def persistent_models(test_db):
         datagen.AppUserFactory,
         datagen.WorkflowFactory,
         datagen.WorkflowRunFactory,
+        datagen.WorkflowRunWithGadiFactory,
         datagen.RunInputFactory,
         datagen.RunOutputFactory,
         datagen.S3ObjectFactory,

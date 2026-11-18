@@ -101,15 +101,18 @@ async def test_get_queue_status_capacity_floors_at_zero_when_over_cap():
 @pytest.mark.anyio
 async def test_post_seqera_launch_success():
     with respx.mock:
-        respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
+        route = respx.post(url__regex=r"https://api\.seqera\.test/workflow/launch.*").mock(
             return_value=httpx.Response(
                 200, json={"workflowId": "wf_abc123", "status": "submitted"}
             )
         )
-        result = await post_seqera_launch({"launch": {}}, workflow_label="Workflow")
+        result = await post_seqera_launch(
+            {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+        )
 
     assert result.workflow_id == "wf_abc123"
     assert result.status == "submitted"
+    assert route.calls[0].request.url.params["workspaceId"] == "selected-workspace"
 
 
 @pytest.mark.anyio
@@ -121,7 +124,9 @@ async def test_post_seqera_launch_nested_workflow_id():
                 200, json={"data": {"workflowId": "wf_nested"}, "status": "running"}
             )
         )
-        result = await post_seqera_launch({}, workflow_label="Workflow")
+        result = await post_seqera_launch(
+            {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+        )
     assert result.workflow_id == "wf_nested"
 
 
@@ -132,7 +137,9 @@ async def test_post_seqera_launch_http_error():
             return_value=httpx.Response(401, text="Invalid token")
         )
         with pytest.raises(WorkflowExecutorError, match="401"):
-            await post_seqera_launch({}, workflow_label="Workflow")
+            await post_seqera_launch(
+                {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+            )
 
 
 @pytest.mark.anyio
@@ -142,4 +149,6 @@ async def test_post_seqera_launch_missing_workflow_id():
             return_value=httpx.Response(200, json={"status": "submitted"})
         )
         with pytest.raises(WorkflowExecutorError, match="workflowId"):
-            await post_seqera_launch({}, workflow_label="Workflow")
+            await post_seqera_launch(
+                {"launch": {"workspaceId": "selected-workspace"}}, workflow_label="Workflow"
+            )

@@ -20,6 +20,7 @@ from tests.datagen import (
     UserJobListRowFactory,
     WorkflowFactory,
     WorkflowRunFactory,
+    WorkflowRunWithGadiFactory,
 )
 
 
@@ -224,7 +225,7 @@ async def test_list_jobs_search_path_skips_4xx_inaccessible_run(mock_db, mock_us
     from app.services.seqera_errors import SeqeraAPIError
 
     visible = UserJobListRowFactory.build(
-        run=WorkflowRunFactory.build(
+        run=WorkflowRunWithGadiFactory.build(
             seqera_final_status="SUCCEEDED", binder_name=None, run_name=None
         ),
         run_id="visible",
@@ -232,7 +233,9 @@ async def test_list_jobs_search_path_skips_4xx_inaccessible_run(mock_db, mock_us
         workflow_type="Job Alpha",
     )
     inaccessible = UserJobListRowFactory.build(
-        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run=WorkflowRunWithGadiFactory.build(
+            seqera_final_status=None, binder_name=None, run_name=None
+        ),
         run_id="gone",
         seqera_run_id="wf-gone",
         workflow_type="Job Alpha",
@@ -266,17 +269,21 @@ async def test_list_jobs_live_only_status_filter_selects_matching_rows(mock_db, 
     """Filtering to a live-only status (In progress) uses the full-scan path and still
     filters out rows that resolve to a different live status (here, In queue)."""
     running = UserJobListRowFactory.build(
-        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run=WorkflowRunWithGadiFactory.build(
+            seqera_final_status=None, binder_name=None, run_name=None
+        ),
         run_id="running",
         seqera_run_id="wf-running",
     )
     queued = UserJobListRowFactory.build(
-        run=WorkflowRunFactory.build(seqera_final_status=None, binder_name=None, run_name=None),
+        run=WorkflowRunWithGadiFactory.build(
+            seqera_final_status=None, binder_name=None, run_name=None
+        ),
         run_id="queued",
         seqera_run_id="wf-queued",
     )
 
-    async def fake_describe(seqera_run_id, settings=None):
+    async def fake_describe(seqera_run_id, workspace_id=None, settings=None):
         if seqera_run_id == "wf-running":
             return {"workflow": {"status": "RUNNING"}}
         return {"workflow": {"status": "SUBMITTED"}}
@@ -752,7 +759,7 @@ async def test_list_jobs_displayed_submitted_at_matches_the_db_sort_key(test_db,
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="single-prediction")
     old_db_timestamp = datetime(2020, 1, 1, 0, 0, tzinfo=UTC)
-    run = WorkflowRunFactory.create_sync(
+    run = WorkflowRunWithGadiFactory.create_sync(
         workflow=workflow,
         owner=user,
         seqera_run_id="wf-diverges",
@@ -911,7 +918,7 @@ async def test_list_jobs_completed_filter_matches_unresolved_scored_row_via_db(
 
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="single-prediction")
-    run = WorkflowRunFactory.create_sync(
+    run = WorkflowRunWithGadiFactory.create_sync(
         workflow=workflow,
         owner=user,
         seqera_run_id="wf-ambiguous",
@@ -953,7 +960,7 @@ async def test_list_jobs_completed_filter_drops_scored_row_that_is_actually_stil
     it's actually still running, it must be dropped rather than misreported."""
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="single-prediction")
-    run = WorkflowRunFactory.create_sync(
+    run = WorkflowRunWithGadiFactory.create_sync(
         workflow=workflow,
         owner=user,
         seqera_run_id="wf-ambiguous",
@@ -1107,7 +1114,7 @@ async def test_get_job_details_success(mock_db, mock_user_id):
     final status means results haven't synced yet, so the job is In progress."""
     run_id = "wf-123"
     workflow = WorkflowFactory.build(name="BindCraft")
-    owned_run = WorkflowRunFactory.build(
+    owned_run = WorkflowRunWithGadiFactory.build(
         workflow=workflow,
         seqera_run_id="seqera-wf-123",
         seqera_final_status=None,
@@ -1202,7 +1209,7 @@ async def test_get_job_details_not_found(mock_db, mock_user_id):
 @pytest.mark.asyncio
 async def test_get_job_details_in_progress_no_score(mock_db, mock_user_id):
     """Test that in-progress jobs don't return a score."""
-    owned_run = WorkflowRunFactory.build(
+    owned_run = WorkflowRunWithGadiFactory.build(
         workflow=None,
         tool=None,
         submitted_form_data=None,
@@ -1268,7 +1275,7 @@ async def test_get_job_details_seqera_error(mock_db, mock_user_id):
     """Test handling of Seqera API error in job details."""
     from app.services.seqera_errors import SeqeraAPIError
 
-    owned_run = WorkflowRunFactory.build(
+    owned_run = WorkflowRunWithGadiFactory.build(
         seqera_run_id="seqera-wf-789",
         seqera_final_status=None,
     )
@@ -1297,7 +1304,7 @@ async def test_list_jobs_does_not_calculate_score_before_result_sync(
 ):
     """Completed compute does not trigger request-time S3 result discovery."""
     run_id = "run-score-test"
-    run = WorkflowRunFactory.build(
+    run = WorkflowRunWithGadiFactory.build(
         seqera_run_id="wf-score-test",
         seqera_final_status=None,
         sync_completed_at=None,
