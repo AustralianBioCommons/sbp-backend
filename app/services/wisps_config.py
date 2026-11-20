@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..schemas.workflows.shared import WorkflowUserDetails
+from .cluster_utils import COLABFOLD_PROCESS_OPTIONS, append_process_config
 from .workflow_config_fetcher import fetch_workflow_config
 
 WispsMode = Literal["g1-g2", "manual"]
@@ -42,13 +43,12 @@ def get_wisps_config_text(
     user_details: WorkflowUserDetails,
     gadi_project: str = "yz52",
 ) -> str:
-    """Read wisps config and append a process override block with runtime values.
-
-    Appending a process block with the
-    values embedded directly overrides the file's clusterOptions.
-    """
+    """Read WISPS config and append accounting and ColabFold process overrides."""
     base = fetch_workflow_config(config_file_path)
 
-    cluster_opts = f"-P {gadi_project} -A {user_details.get_encoded_account_details()}"
-    override = f'\nprocess {{\n    clusterOptions = "{cluster_opts}"\n}}\n'
-    return base + override
+    return append_process_config(
+        base,
+        user_details=user_details,
+        gadi_project=gadi_project,
+        process_options=COLABFOLD_PROCESS_OPTIONS,
+    )

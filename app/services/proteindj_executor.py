@@ -135,6 +135,7 @@ async def prepare_proteindj_workflow(  # pylint: disable=too-many-locals
         "configText": get_proteindj_config_text(
             config_path,
             user_details=user_details,
+            gadi_project=settings.seqera.gadi_project,
         ),
         "resume": False,
     }
