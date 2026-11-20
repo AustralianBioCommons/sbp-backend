@@ -245,14 +245,18 @@ def test_get_proteindj_config_profiles_contains_singularity():
 
 def test_get_proteindj_config_text_appends_process_block():
     with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
+        result = get_proteindj_config_text(
+            "/fake/proteindj.config", user_details=_USER_DETAILS, gadi_project="yz52"
+        )
     assert "process {" in result
     assert "clusterOptions" in result
 
 
 def test_get_proteindj_config_text_contains_encoded_email_and_encoded_ip():
     with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
+        result = get_proteindj_config_text(
+            "/fake/proteindj.config", user_details=_USER_DETAILS, gadi_project="yz52"
+        )
     assert "dXNlckBleC5jb20=" in result
     assert "MS4yLjMuNA==" in result
 
@@ -262,6 +266,7 @@ def test_get_proteindj_config_text_without_ip_uses_encoded_email_only():
         result = get_proteindj_config_text(
             "/fake/proteindj.config",
             user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
+            gadi_project="yz52",
         )
     assert "-A dXNlckBleC5jb20=" in result
     assert ":" not in result.split("clusterOptions = ")[1]
@@ -269,7 +274,9 @@ def test_get_proteindj_config_text_without_ip_uses_encoded_email_only():
 
 def test_get_proteindj_config_text_contains_base_config():
     with patch("builtins.open", mock_open(read_data="base_config")):
-        result = get_proteindj_config_text("/fake/proteindj.config", user_details=_USER_DETAILS)
+        result = get_proteindj_config_text(
+            "/fake/proteindj.config", user_details=_USER_DETAILS, gadi_project="yz52"
+        )
     assert "base_config" in result
 
 
@@ -300,6 +307,7 @@ def test_design_length_formats_min_max_range():
 async def test_prepare_proteindj_workflow_writes_expected_queued_job(
     test_db, persistent_models, seqera_env
 ):
+    seqera_env.seqera.gadi_project = "ab12"
     user = AppUserFactory.create_sync()
     workflow = WorkflowFactory.create_sync(name="de-novo-design", prerun_script_path=None)
     workflow_run = WorkflowRunFactory.create_sync(workflow=workflow, owner=user)
@@ -317,7 +325,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
         patch(
             "app.services.proteindj_executor.get_proteindj_config_text",
             return_value="config_text",
-        ),
+        ) as get_config,
         patch(
             "app.services.proteindj_executor.get_proteindj_config_profiles",
             return_value=["singularity"],
@@ -338,6 +346,7 @@ async def test_prepare_proteindj_workflow_writes_expected_queued_job(
             ),
         )
 
+    assert get_config.call_args.kwargs["gadi_project"] == "ab12"
     queued_job = test_db.scalar(
         select(QueuedJob).where(QueuedJob.workflow_run_id == workflow_run.id)
     )
