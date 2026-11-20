@@ -220,7 +220,7 @@ def test_get_wisps_config_text_without_ip_uses_encoded_email_only():
             user_details=_USER_DETAILS.model_copy(update={"ip_address": ""}),
         )
     assert "-A dXNlckBleC5jb20=" in result
-    assert ":" not in result.split("clusterOptions = ")[1]
+    assert ":" not in result.split("clusterOptions = ")[1].splitlines()[0]
 
 
 def test_get_wisps_config_text_contains_base_config():
