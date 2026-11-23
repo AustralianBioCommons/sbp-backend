@@ -304,7 +304,9 @@ async def read_s3_file_or_raise(file_key: str, settings: Settings | None = None)
         ) from exc
 
 
-async def read_csv_from_s3_or_raise(file_key: str, settings: Settings | None = None) -> list[dict[str, str]]:
+async def read_csv_from_s3_or_raise(
+    file_key: str, settings: Settings | None = None
+) -> list[dict[str, str]]:
     try:
         return await read_csv_from_s3(file_key, settings=settings)
     except S3ConfigurationError as exc:
@@ -317,7 +319,6 @@ async def read_csv_from_s3_or_raise(file_key: str, settings: Settings | None = N
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to read input from S3: {exc}",
         ) from exc
-
 
 
 async def validate_wisps_inputs(
