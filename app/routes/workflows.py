@@ -58,12 +58,12 @@ from ..services.credits import (
     list_workflow_credit_configs,
 )
 from ..services.datasets import (
-    get_fasta_entry_lengths,
     upload_bulk_prediction_samplesheet_to_s3,
     upload_csv_to_s3,
     upload_interaction_screening_samplesheet_to_s3,
     upload_samplesheet_rows_to_s3,
 )
+from ..services.fasta_validation import ProteinFastaValidator
 from ..services.globus_transfer import build_gadi_input_path
 from ..services.proteindj_executor import prepare_proteindj_workflow
 from ..services.proteinfold_executor import prepare_proteinfold_workflow
@@ -217,6 +217,8 @@ async def _stage_referenced_samplesheet_file(
     run_id: UUID,
     workflow_name: str,
     globus_settings: GlobusSettings,
+    settings: Settings,
+    samplesheet_rows: list[dict[str, str]] | None = None,
 ) -> str:
     """Stage a file referenced by a samplesheet column to Gadi via Globus, and
     return the s3InputKey of a corrected samplesheet with that column rewritten
@@ -229,18 +231,8 @@ async def _stage_referenced_samplesheet_file(
     pipeline param, never via a samplesheet) - so the referenced file must be
     staged separately and the samplesheet corrected to point at where it lands.
     """
-    try:
-        samplesheet_rows = await read_csv_from_s3(s3_input_key)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {exc}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
-        ) from exc
+    if samplesheet_rows is None:
+        samplesheet_rows = await read_csv_from_s3_or_raise(s3_input_key, settings=settings)
     if not samplesheet_rows:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -297,20 +289,9 @@ async def _stage_referenced_samplesheet_file(
     return csv_upload.file_key
 
 
-async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> WispsInputInfo:
-    """Derive the server-side, non-spoofable credit quantity for a WISPS launch
-    from the already-built samplesheet at s3_input_key (id/sequence[/group]/type
-    rows whose ``sequence`` is a multi-FASTA S3 URI), rather than trusting the
-    client-supplied fastaContent.
-
-    Returns (fasta_entry_lengths, None) for bulk-prediction, with combined
-    chain lengths for the FASTA records across every row's file, or
-    (None, (query_count, target_count)) for interaction-screening, where each
-    count is the number of FASTA records in the file its g1 (query) / g2
-    (target) row references.
-    """
+async def read_s3_file_or_raise(file_key: str, settings: Settings | None = None) -> str:
     try:
-        rows = await read_csv_from_s3(s3_input_key)
+        return await read_s3_file(file_key, settings=settings)
     except S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -319,65 +300,86 @@ async def _read_wisps_credit_inputs(s3_input_key: str, workflow_name: str) -> Wi
     except S3ServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
+            detail=f"Failed to read input from S3: {exc}",
         ) from exc
+
+
+async def read_csv_from_s3_or_raise(file_key: str, settings: Settings | None = None) -> list[dict[str, str]]:
+    try:
+        return await read_csv_from_s3(file_key, settings=settings)
+    except S3ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"S3 configuration error: {exc}",
+        ) from exc
+    except S3ServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read input from S3: {exc}",
+        ) from exc
+
+
+
+async def validate_wisps_inputs(
+    s3_input_key: str, workflow_name: str, settings: Settings
+) -> tuple[list[dict[str, str]], WispsInputInfo]:
+    """Validate the pipeline's S3 FASTAs once and derive credit inputs from the results."""
+    rows = await read_csv_from_s3_or_raise(s3_input_key, settings=settings)
     if workflow_name == "interaction-screening":
-        counts = {"g1": 0, "g2": 0}
-        for row in rows:
-            group = row.get("group")
-            if group not in counts:
-                continue
-            counts[group] += len(await _read_referenced_fasta_lengths(row, f"group {group}"))
-        return WispsInputInfo(
-            fasta_entry_lengths=None, query_count=counts["g1"], target_count=counts["g2"]
+        if sorted(row.get("group") or "" for row in rows) != ["g1", "g2"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Interaction-screening samplesheet must have exactly one g1 and one g2 row.",
+            )
+    elif len(rows) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Bulk-prediction samplesheet must have exactly one row.",
         )
-    lengths = []
+
+    # Check all references before fetching any FASTA contents.
     for row in rows:
-        lengths.extend(await _read_referenced_fasta_lengths(row, f"row {row.get('id')}"))
-    if not lengths:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Bulk-prediction samplesheet must reference at least one FASTA record.",
-        )
-    return WispsInputInfo(fasta_entry_lengths=lengths)
+        source_uri = (row.get("sequence") or "").strip()
+        if not source_uri.startswith("s3://") or not s3_uri_to_key(source_uri):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid S3 URI in samplesheet 'sequence'.",
+            )
 
+    lengths: list[int] = []
+    counts: dict[str, int] = {}
+    for row in rows:
+        label = f"group {row['group']}" if workflow_name == "interaction-screening" else "bulk"
+        fasta_key = cast(str, s3_uri_to_key(row["sequence"]))
+        fasta_text = await read_s3_file_or_raise(fasta_key, settings=settings)
+        try:
+            entries = ProteinFastaValidator.validate(
+                fasta_text, max_chains=26 if workflow_name == "bulk-prediction" else None
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid FASTA for {label}: {exc}",
+            ) from exc
+        lengths.extend(entry.sequence_length for entry in entries)
+        if workflow_name == "interaction-screening":
+            counts[row["group"]] = len(entries)
 
-async def _read_referenced_fasta_lengths(row: dict[str, str], label: str) -> list[int]:
-    """Read record lengths from the S3 FASTA a samplesheet's ``sequence`` references."""
-    fasta_key = s3_uri_to_key(row.get("sequence"))
-    if not fasta_key:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid S3 URI in samplesheet 'sequence' for {label}.",
-        )
-    try:
-        fasta_text = await read_s3_file(fasta_key)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {exc}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to read FASTA referenced by samplesheet: {exc}",
-        ) from exc
-    try:
-        return get_fasta_entry_lengths(fasta_text)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid FASTA for {label}: {exc}",
-        ) from exc
+    info = (
+        WispsInputInfo(query_count=counts["g1"], target_count=counts["g2"])
+        if workflow_name == "interaction-screening"
+        else WispsInputInfo(fasta_entry_lengths=lengths)
+    )
+    return rows, info
 
 
 async def _stage_interaction_screening_fastas(
     *,
     db_session: Session,
-    s3_input_key: str,
     run_id: UUID,
     workflow_name: str,
     globus_settings: GlobusSettings,
+    samplesheet_rows: list[dict[str, str]],
 ) -> str:
     """Stage the query and target FASTAs referenced by the interaction-screening
     samplesheet to Gadi via Globus, and return the s3InputKey of a corrected
@@ -387,31 +389,9 @@ async def _stage_interaction_screening_fastas(
     has one row per group (g1=query, g2=target), each pointing at its own
     multi-FASTA, which the pipeline reads directly - no prerun split.
     """
-    try:
-        samplesheet_rows = await read_csv_from_s3(s3_input_key)
-    except S3ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"S3 configuration error: {exc}",
-        ) from exc
-    except S3ServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to read samplesheet at s3InputKey: {exc}",
-        ) from exc
-    if sorted(row.get("group") or "" for row in samplesheet_rows) != ["g1", "g2"]:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Interaction-screening samplesheet must have exactly one g1 and one g2 row.",
-        )
     for row in samplesheet_rows:
-        source_uri = (row.get("sequence") or "").strip()
-        source_key = s3_uri_to_key(source_uri)
-        if not source_uri.startswith("s3://") or not source_key:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid S3 URI in samplesheet 'sequence' for group {row['group']}.",
-            )
+        source_uri = row["sequence"].strip()
+        source_key = cast(str, s3_uri_to_key(source_uri))
         if db_session.get(S3Object, source_key) is None:
             db_session.add(S3Object(object_key=source_key, uri=source_uri))
         staged_location = build_gadi_input_path(
@@ -563,17 +543,32 @@ async def launch_workflow(
         ip_address=_require_launch_var("ip_address", launch_ip or None),
     )
 
-    # Authoritative credit cost (server-side, non-spoofable). For bulk/interaction,
-    # quantity comes from the already-built WISPS samplesheet at s3_input_key, not
-    # the client-supplied fastaContent. Gated by the ENABLE_CREDITS flag so the
-    # feature can be rolled out independently.
-    if is_credits_enabled(settings) and requested_workflow in (
-        "interaction-screening",
-        "bulk-prediction",
-    ):
-        wisps_input_info = await _read_wisps_credit_inputs(s3_input_key, requested_workflow)
-    else:
-        wisps_input_info = None
+    wisps_form_data: WispsFormData | InteractionScreeningFormData | None = None
+    if requested_workflow in ("interaction-screening", "bulk-prediction"):
+        wisps_form_model = (
+            InteractionScreeningFormData
+            if requested_workflow == "interaction-screening"
+            else WispsFormData
+        )
+        try:
+            wisps_form_data = wisps_form_model.model_validate(payload.formData.model_dump())
+        except ValidationError as exc:
+            missing = next(
+                (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
+                "formData",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"'{missing}' is required in formData for {requested_workflow}.",
+            ) from exc
+
+    wisps_input_info = None
+    wisps_samplesheet_rows = None
+    if requested_workflow in ("interaction-screening", "bulk-prediction"):
+        wisps_samplesheet_rows, wisps_input_info = await validate_wisps_inputs(
+            s3_input_key, requested_workflow, settings=settings
+        )
+    # Credits reuse the validated S3 inputs, independently of whether charging is enabled.
     try:
         if is_credits_enabled(settings):
             run_credit_cost = launch_credit_cost(
@@ -641,25 +636,6 @@ async def launch_workflow(
             detail=f"Workflow '{workflow.name}' is missing config_path in workflows table.",
         )
 
-    wisps_form_data: WispsFormData | InteractionScreeningFormData | None = None
-    if workflow_name in ("interaction-screening", "bulk-prediction"):
-        wisps_form_model = (
-            InteractionScreeningFormData
-            if workflow_name == "interaction-screening"
-            else WispsFormData
-        )
-        try:
-            wisps_form_data = wisps_form_model.model_validate(payload.formData.model_dump())
-        except ValidationError as exc:
-            missing = next(
-                (str(e["loc"][-1]) for e in exc.errors() if e.get("loc")),
-                "formData",
-            )
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"'{missing}' is required in formData for {workflow_name}.",
-            ) from exc
-
     if workflow_name in ("single-prediction", "proteinfold"):
         _validate_single_prediction_form(payload.formData, selected_tool)
 
@@ -675,15 +651,16 @@ async def launch_workflow(
             field_name="fasta",
             run_id=run_id,
             workflow_name=workflow_name,
+            settings=settings,
             globus_settings=settings.globus,
         )
     elif workflow_name == "interaction-screening":
         s3_input_key = await _stage_interaction_screening_fastas(
             db_session=db_session,
-            s3_input_key=s3_input_key,
             run_id=run_id,
             workflow_name=workflow_name,
             globus_settings=settings.globus,
+            samplesheet_rows=cast(list[dict[str, str]], wisps_samplesheet_rows),
         )
     elif workflow_name == "bulk-prediction":
         s3_input_key = await _stage_referenced_samplesheet_file(
@@ -693,6 +670,8 @@ async def launch_workflow(
             run_id=run_id,
             workflow_name=workflow_name,
             globus_settings=settings.globus,
+            settings=settings,
+            samplesheet_rows=cast(list[dict[str, str]], wisps_samplesheet_rows),
         )
 
     staged_input_location: str | None = None
