@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import call, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,8 +16,10 @@ from app.db.models import ComputeBackend, QueuedJob
 from app.db.models.core import AppUser, DataTransfer, RunMetric, Workflow, WorkflowRun
 from app.routes.dependencies import get_current_user_id, get_db
 from app.schemas.backend import ComputeBackendName
-from app.services.s3 import S3UploadResult
+from app.services.fasta_validation import ProteinFastaValidator
+from app.services.s3 import S3ConfigurationError, S3ServiceError, S3UploadResult
 from app.services.seqera_errors import WorkflowLaunchError
+from tests.datagen import WorkflowFactory
 
 ROLES_CLAIM = "https://biocommons.org.au/roles"
 WORKFLOW_ROLE = "biocommons/group/sbp_workflow_execution"
@@ -1013,7 +1015,10 @@ def wisps_client(test_engine, default_backend):
     application.dependency_overrides[get_current_user_id] = lambda: user_id
     application.dependency_overrides[require_workflow_execution_role] = lambda: None
 
-    with TestClient(application) as c:
+    with (
+        patch("app.routes.workflows.read_s3_file", return_value=">protein\nMAGT\n"),
+        TestClient(application) as c,
+    ):
         yield c
 
 
@@ -1454,9 +1459,9 @@ def _add_bulk_prediction_workflow(test_engine):
         existing = db.scalar(select(Workflow).where(Workflow.name == "bulk-prediction"))
         if not existing:
             db.add(
-                Workflow(
-                    id=uuid4(),
+                WorkflowFactory.build(
                     name="bulk-prediction",
+                    tool=None,
                     description="WISPS bulk prediction workflow",
                     repo_url="https://github.com/test/wisps",
                     default_revision="main",
@@ -1500,11 +1505,14 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     mock_read_file,
     wisps_client: TestClient,
     test_engine,
+    mock_settings,
 ):
     """Bulk-prediction stages the one multi-FASTA its samplesheet row references
     and hands the pipeline a samplesheet pointing at the Gadi-local copy."""
     _add_bulk_prediction_workflow(test_engine)
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv)
+    mock_read_file.return_value = ">protein\nMAGT\n"
     payload = {
         "launch": {"workflow": "bulk-prediction", "tool": "boltz", "runName": "bulk-run"},
         "s3InputKey": "inputs/samplesheets/test.csv",
@@ -1514,7 +1522,10 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
-    mock_read_file.assert_not_called()  # Credits disabled: no FASTA pricing read.
+    mock_read_file.assert_awaited_once_with(
+        "input/20260101_120000_bulk-run_sequences.fasta", settings=mock_settings
+    )
+    mock_read_csv.assert_awaited_once_with(payload["s3InputKey"], settings=mock_settings)
     run_id = UUID(response.json()["runId"])
     call_kwargs = mock_prepare.call_args.kwargs
     assert call_kwargs["form_data"].fastaS3Uri == BULK_FASTA_URI
@@ -1544,12 +1555,12 @@ def test_launch_bulk_prediction_stages_single_multi_fasta(
         ("boltz", _fasta_with(5, "seq"), 5),
         (
             "boltz",
-            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "B" * 700 + "\n",
+            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "C" * 700 + "\n",
             5,
         ),
         (
             "colabfold",
-            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "B" * 700 + "\n",
+            ">short\n" + "A" * 800 + "\n>complex\n" + "A" * 800 + ":\n" + "C" * 700 + "\n",
             15,
         ),
     ],
@@ -1575,7 +1586,7 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     _mock_bulk_prediction_staging(mock_read_csv, mock_upload_csv)
-    mock_read_file.side_effect = lambda key: {
+    mock_read_file.side_effect = lambda key, *, settings: {
         "input/20260101_120000_bulk-run_sequences.fasta": fasta_text
     }[key]
     with Session(test_engine) as db:
@@ -1590,6 +1601,10 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    mock_read_file.assert_awaited_once_with(
+        "input/20260101_120000_bulk-run_sequences.fasta", settings=mock_settings
+    )
+    mock_read_csv.assert_awaited_once_with(payload["s3InputKey"], settings=mock_settings)
     run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
@@ -1602,7 +1617,7 @@ def test_launch_bulk_prediction_deducts_credits_when_enabled(
 @pytest.mark.parametrize(
     ("fasta_text", "balance", "expected_status"),
     [
-        (">complex\n" + "A" * 800 + ":" + "B" * 700, 3, 402),
+        (">complex\n" + "A" * 800 + ":" + "C" * 700, 3, 402),
         (">oversize\n" + "A" * 4001, 100, 422),
         (">empty\n", 100, 422),
         ("", 100, 422),
@@ -1702,7 +1717,7 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
         "input/20260101_120000_wisps-run_query.fasta": _fasta_with(3, "q"),
         "input/20260101_120000_wisps-run_target.fasta": _fasta_with(2, "t"),
     }
-    mock_read_file.side_effect = lambda key: fasta_by_key[key]
+    mock_read_file.side_effect = lambda key, *, settings: fasta_by_key[key]
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
         db.commit()
@@ -1719,6 +1734,9 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
     assert response.status_code == 201
+    assert mock_read_file.await_count == 2
+    mock_read_file.assert_has_awaits([call(key, settings=mock_settings) for key in fasta_by_key])
+    mock_read_csv.assert_awaited_once_with(payload["s3InputKey"], settings=mock_settings)
     run_id = UUID(response.json()["runId"])
     mock_prepare.assert_called_once()
     with Session(test_engine) as db:
@@ -1767,3 +1785,177 @@ def test_launch_interaction_screening_rejected_when_insufficient_credits(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
     assert credit == 0  # unchanged
+
+
+@pytest.mark.parametrize("credits_enabled", [False, True])
+@pytest.mark.parametrize("workflow_name", ["bulk-prediction", "interaction-screening"])
+@pytest.mark.parametrize("invalid_fasta", [">p\nAC1X", ">p\nACD::EF", ">empty\n", ""])
+def test_wisps_launch_validates_s3_fasta_independently_of_credits(
+    wisps_client, test_engine, mock_settings, credits_enabled, workflow_name, invalid_fasta
+):
+    _add_bulk_prediction_workflow(test_engine)
+    mock_settings.enable_credits = credits_enabled
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    rows = (
+        [{"id": "bulk", "sequence": BULK_FASTA_URI, "type": "protein"}]
+        if workflow_name == "bulk-prediction"
+        else [
+            {"sequence": IS_QUERY_URI, "group": "g1"},
+            {"sequence": IS_TARGET_URI, "group": "g2"},
+        ]
+    )
+    # Interaction screening validates both files, including invalid target entries.
+    with (
+        patch("app.routes.workflows.read_csv_from_s3", return_value=rows),
+        patch(
+            "app.routes.workflows.read_s3_file",
+            side_effect=(
+                [">valid\nACD", invalid_fasta]
+                if workflow_name == "interaction-screening"
+                else [invalid_fasta]
+            ),
+        ),
+        patch("app.routes.workflows.prepare_wisps_workflow") as prepare,
+        patch("app.routes.workflows.upload_csv_to_s3") as upload_csv,
+        patch("app.routes.workflows.upload_samplesheet_rows_to_s3") as upload_rows,
+    ):
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {"workflow": workflow_name, "tool": "boltz"},
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": {
+                    **(BULK_FORM_DATA if workflow_name == "bulk-prediction" else IS_FORM_DATA),
+                    "fastaContent": ">client_supplied\nACD",
+                },
+            },
+        )
+    assert response.status_code == 422, response.text
+    assert "Invalid FASTA" in response.json()["detail"]
+    prepare.assert_not_called()
+    upload_csv.assert_not_called()
+    upload_rows.assert_not_called()
+    with Session(test_engine) as db:
+        assert db.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+        assert db.scalar(select(func.count()).select_from(DataTransfer)) == 0
+
+
+@pytest.mark.parametrize("credits_enabled", [False, True])
+@pytest.mark.parametrize("n_chains", [26, 27])
+def test_bulk_launch_chain_limit(
+    wisps_client, test_engine, mock_settings, credits_enabled, n_chains
+):
+    _add_bulk_prediction_workflow(test_engine)
+    mock_settings.enable_credits = credits_enabled
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
+        db.commit()
+    # The limit applies independently to each entry, rather than to the whole file.
+    fasta = ">complex\n" + ":".join(["ACD"] * n_chains) + "\n>another\nACD"
+    with (
+        patch("app.routes.workflows.read_csv_from_s3") as read_csv,
+        patch("app.routes.workflows.upload_csv_to_s3") as upload_csv,
+        patch("app.routes.workflows.read_s3_file", return_value=fasta) as read_file,
+        patch(
+            "app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare
+        ) as prepare,
+        patch(
+            "app.routes.workflows.ProteinFastaValidator.validate",
+            wraps=ProteinFastaValidator.validate,
+        ) as validate,
+    ):
+        _mock_bulk_prediction_staging(read_csv, upload_csv)
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {"workflow": "bulk-prediction", "tool": "boltz"},
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": BULK_FORM_DATA,
+            },
+        )
+    read_file.assert_awaited_once()
+    read_csv.assert_awaited_once()
+    validate.assert_called_once_with(fasta, max_chains=26)
+    if n_chains == 27:
+        assert response.status_code == 422, response.text
+        assert "at most 26 chains" in response.json()["detail"]
+        prepare.assert_not_called()
+        upload_csv.assert_not_called()
+    else:
+        assert response.status_code == 201, response.text
+        prepare.assert_called_once()
+        with Session(test_engine) as db:
+            credit_cost = db.scalar(
+                select(WorkflowRun.credit_cost).where(
+                    WorkflowRun.id == UUID(response.json()["runId"])
+                )
+            )
+            assert credit_cost == (2 if credits_enabled else None)
+
+
+@pytest.mark.parametrize("credits_enabled", [False, True])
+def test_interaction_screening_validates_without_bulk_chain_limit(
+    wisps_client, test_engine, mock_settings, credits_enabled
+):
+    mock_settings.enable_credits = credits_enabled
+    wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
+    with Session(test_engine) as db:
+        db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=100))
+        db.commit()
+    fasta = ">complex\n" + ":".join(["ACD"] * 27)
+    with (
+        patch("app.routes.workflows.read_csv_from_s3") as read_csv,
+        patch("app.routes.workflows.upload_samplesheet_rows_to_s3") as upload_rows,
+        patch("app.routes.workflows.read_s3_file", return_value=fasta) as read_file,
+        patch(
+            "app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare
+        ),
+        patch(
+            "app.routes.workflows.ProteinFastaValidator.validate",
+            wraps=ProteinFastaValidator.validate,
+        ) as validate,
+    ):
+        _mock_interaction_screening_staging(read_csv, upload_rows)
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {"workflow": "interaction-screening", "tool": "boltz"},
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": IS_FORM_DATA,
+            },
+        )
+    assert response.status_code == 201, response.text
+    read_csv.assert_awaited_once()
+    assert read_file.await_count == 2
+    assert validate.call_count == 2
+    validate.assert_called_with(fasta, max_chains=None)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [(S3ConfigurationError("not configured"), 500), (S3ServiceError("unavailable"), 502)],
+)
+@pytest.mark.parametrize("failed_read", ["read_csv_from_s3", "read_s3_file"])
+def test_wisps_validation_preserves_s3_errors(wisps_client, error, expected_status, failed_read):
+    with (
+        patch(
+            "app.routes.workflows.read_csv_from_s3",
+            return_value=[
+                {"sequence": IS_QUERY_URI, "group": "g1"},
+                {"sequence": IS_TARGET_URI, "group": "g2"},
+            ],
+        ),
+        patch(f"app.routes.workflows.{failed_read}", side_effect=error),
+        patch("app.routes.workflows.prepare_wisps_workflow") as prepare,
+    ):
+        response = wisps_client.post(
+            "/api/workflows/launch",
+            json={
+                "launch": {"workflow": "interaction-screening", "tool": "boltz"},
+                "s3InputKey": "inputs/samplesheets/test.csv",
+                "formData": IS_FORM_DATA,
+            },
+        )
+    assert response.status_code == expected_status, response.text
+    prepare.assert_not_called()
