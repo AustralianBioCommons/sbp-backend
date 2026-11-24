@@ -348,7 +348,7 @@ async def validate_wisps_inputs(
             )
 
     lengths: list[int] = []
-    counts: dict[str, int] = {}
+    group_lengths: dict[str, list[int]] = {}
     for row in rows:
         label = f"group {row['group']}" if workflow_name == "interaction-screening" else "bulk"
         fasta_key = cast(str, s3_uri_to_key(row["sequence"]))
@@ -362,12 +362,14 @@ async def validate_wisps_inputs(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid FASTA for {label}: {exc}",
             ) from exc
-        lengths.extend(entry.sequence_length for entry in entries)
+        entry_lengths = [entry.sequence_length for entry in entries]
         if workflow_name == "interaction-screening":
-            counts[row["group"]] = len(entries)
+            group_lengths[row["group"]] = entry_lengths
+        else:
+            lengths.extend(entry_lengths)
 
     info = (
-        WispsInputInfo(query_count=counts["g1"], target_count=counts["g2"])
+        WispsInputInfo(query_lengths=group_lengths["g1"], target_lengths=group_lengths["g2"])
         if workflow_name == "interaction-screening"
         else WispsInputInfo(fasta_entry_lengths=lengths)
     )
