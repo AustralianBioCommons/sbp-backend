@@ -419,5 +419,5 @@ LIVE_ONLY_UI_STATUSES = frozenset({UIStatus.IN_QUEUE.value, UIStatus.IN_PROGRESS
 
 class WispsInputInfo(BaseModel):
     fasta_entry_lengths: list[int] | None = None
-    query_count: int | None = None
-    target_count: int | None = None
+    query_lengths: list[int] | None = None
+    target_lengths: list[int] | None = None

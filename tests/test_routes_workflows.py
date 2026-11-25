@@ -1338,8 +1338,22 @@ def test_get_workflow_credits_multipliers_match_spec(client: TestClient):
     ]
 
     screening = by_category["interaction-screening"]
-    assert screening["basis"] == CreditBasis.FASTA_PAIR_PRODUCT.value
-    assert screening["toolMultipliers"] == {"boltz": 1, "colabfold": 5}
+    assert screening["basis"] == CreditBasis.FASTA_SIZE_PER_PAIR.value
+    assert screening["toolMultipliers"] == {}
+    assert screening["toolSizeMultipliers"] == {
+        "boltz": [
+            {"minLength": 1, "maxLength": 1000, "multiplier": 1},
+            {"minLength": 1001, "maxLength": 2000, "multiplier": 3},
+            {"minLength": 2001, "maxLength": 3000, "multiplier": 5},
+            {"minLength": 3001, "maxLength": 4000, "multiplier": 9},
+        ],
+        "colabfold": [
+            {"minLength": 1, "maxLength": 1000, "multiplier": 3},
+            {"minLength": 1001, "maxLength": 2000, "multiplier": 10},
+            {"minLength": 2001, "maxLength": 3000, "multiplier": 20},
+            {"minLength": 3001, "maxLength": 4000, "multiplier": 50},
+        ],
+    }
 
 
 # ── Server-side credit deduction at launch ───────────────────────────────────
@@ -1693,6 +1707,7 @@ def test_upload_bulk_prediction_dataset_endpoint_rejects_sequences_payload(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize(("tool", "expected_cost"), [("boltz", 12), ("colabfold", 43)])
 @patch("app.routes.workflows.read_s3_file")
 @patch("app.routes.workflows.upload_samplesheet_rows_to_s3")
 @patch("app.routes.workflows.read_csv_from_s3")
@@ -1705,17 +1720,19 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     wisps_client: TestClient,
     test_engine,
     mock_settings,
+    tool,
+    expected_cost,
 ):
-    """With credits enabled, interaction-screening charges tool_multiplier ×
-    (query entries × target entries), counted from the FASTA records in the
-    files the samplesheet's g1/g2 rows reference, not the client-supplied
-    fastaContent."""
+    """Charge each pair's combined length using the samplesheet's S3 FASTAs."""
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     _mock_interaction_screening_staging(mock_read_csv, mock_upload_rows)
     fasta_by_key = {
-        "input/20260101_120000_wisps-run_query.fasta": _fasta_with(3, "q"),
-        "input/20260101_120000_wisps-run_target.fasta": _fasta_with(2, "t"),
+        "input/20260101_120000_wisps-run_query.fasta": ">q1\n" + "A" * 400 + "\n>q2\n" + "A" * 1200,
+        "input/20260101_120000_wisps-run_target.fasta": ">t1\n"
+        + "A" * 400
+        + "\n>t2\n"
+        + "A" * 1000,
     }
     mock_read_file.side_effect = lambda key, *, settings: fasta_by_key[key]
     with Session(test_engine) as db:
@@ -1725,7 +1742,7 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     payload = {
         "launch": {
             "workflow": "interaction-screening",
-            "tool": "boltz",
+            "tool": tool,
             "runName": "wisps-credit-run",
         },
         "s3InputKey": "inputs/samplesheets/test.csv",
@@ -1742,29 +1759,35 @@ def test_launch_interaction_screening_deducts_credits_when_enabled(
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
         credit_cost = db.scalar(select(WorkflowRun.credit_cost).where(WorkflowRun.id == run_id))
-    assert credit == 94  # 100 − (1 × 3 query × 2 target)
-    assert credit_cost == 6  # persisted on the run for admin display
+    assert credit == 100 - expected_cost
+    assert credit_cost == expected_cost
 
 
+@pytest.mark.parametrize(
+    ("fasta_text", "expected_status"),
+    [(_fasta_with(1, "s"), 402), (">s\n" + "A" * 2001, 422)],
+)
 @patch("app.routes.workflows.read_s3_file")
 @patch("app.routes.workflows.read_csv_from_s3")
 @patch("app.routes.workflows.prepare_wisps_workflow", side_effect=_queue_job_for_route_prepare)
-def test_launch_interaction_screening_rejected_when_insufficient_credits(
+def test_launch_interaction_screening_rejects_invalid_or_unaffordable_inputs(
     mock_prepare,
     mock_read_csv,
     mock_read_file,
     wisps_client: TestClient,
     test_engine,
     mock_settings,
+    fasta_text,
+    expected_status,
 ):
-    """With credits enabled, an unaffordable WISPS launch is rejected (402) and not queued."""
+    """Reject unsupported pair lengths or insufficient credits before queuing."""
     mock_settings.enable_credits = True
     wisps_client.app.dependency_overrides[get_settings] = lambda: mock_settings
     mock_read_csv.return_value = [
         {"id": "query", "sequence": IS_QUERY_URI, "group": "g1", "type": "protein"},
         {"id": "target", "sequence": IS_TARGET_URI, "group": "g2", "type": "protein"},
     ]
-    mock_read_file.return_value = _fasta_with(1, "s")
+    mock_read_file.return_value = fasta_text
     with Session(test_engine) as db:
         db.execute(update(AppUser).where(AppUser.id == TEST_USER_ID).values(credit=0))
         db.commit()
@@ -1780,10 +1803,13 @@ def test_launch_interaction_screening_rejected_when_insufficient_credits(
     }
     response = wisps_client.post("/api/workflows/launch", json=payload)
 
-    assert response.status_code == 402
+    assert response.status_code == expected_status
+    if expected_status == 422:
+        assert "4002 is unsupported" in response.json()["detail"]
     mock_prepare.assert_not_called()
     with Session(test_engine) as db:
         credit = db.scalar(select(AppUser.credit).where(AppUser.id == TEST_USER_ID))
+        assert db.scalar(select(func.count()).select_from(WorkflowRun)) == 0
     assert credit == 0  # unchanged
 
 

@@ -4,8 +4,8 @@ Single source of truth for the credit multipliers described in the SBP
 credit-calculation spec. The frontend fetches these multipliers (via the
 ``/credits`` endpoint) and computes a run's display cost locally; this module
 provides the authoritative cost calculation used for deduction at launch. A
-run's cost is ``tool_multiplier × quantity``, where the quantity is derived per
-the workflow's ``basis``.
+run's cost is derived per the workflow's ``basis``, with interaction screening
+summing tool-specific costs for the combined length of each query–target pair.
 
 These initial multipliers may be slightly adjusted for production — keep this
 module as the one place to edit them.
@@ -42,8 +42,7 @@ MONTHLY_CREDIT_REFRESH_ACTOR = "monthly credit refresh"
 class CreditBasis(StrEnum):
     """Which input quantity drives a workflow's credit cost.
 
-    The frontend computes ``credits = tool_multiplier * quantity``, where
-    ``quantity`` is derived per the basis below.
+    The frontend uses the basis to select a quantity or sum size-based costs.
     """
 
     # Number of final designs produced (de novo design).
@@ -52,8 +51,8 @@ class CreditBasis(StrEnum):
     CONSTANT = "constant"
     # Sum of size multipliers for each FASTA record (bulk prediction).
     FASTA_SIZE_PER_ENTRY = "fasta_size_per_entry"
-    # Product of the entry counts of the two FASTA inputs (interaction screening).
-    FASTA_PAIR_PRODUCT = "fasta_pair_product"
+    # Sum of tool-specific costs for each query–target pair's combined length.
+    FASTA_SIZE_PER_PAIR = "fasta_size_per_pair"
 
 
 class FastaSizeMultiplier(BaseModel):
@@ -67,27 +66,45 @@ class FastaSizeMultiplier(BaseModel):
     multiplier: int = Field(..., ge=1)
 
 
-FASTA_SIZE_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
+# Cost multipliers by size for bulk prediction
+BULK_PREDICTION_SIZE_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
     FastaSizeMultiplier(minLength=1, maxLength=1000, multiplier=1),
     FastaSizeMultiplier(minLength=1001, maxLength=1999, multiplier=4),
     FastaSizeMultiplier(minLength=2000, maxLength=2999, multiplier=10),
     FastaSizeMultiplier(minLength=3000, maxLength=4000, multiplier=16),
 )
 
+# Cost multipliers by size for interaction screening: different per tool
+BOLTZ_INTERACTION_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
+    FastaSizeMultiplier(minLength=1, maxLength=1000, multiplier=1),
+    FastaSizeMultiplier(minLength=1001, maxLength=2000, multiplier=3),
+    FastaSizeMultiplier(minLength=2001, maxLength=3000, multiplier=5),
+    FastaSizeMultiplier(minLength=3001, maxLength=4000, multiplier=9),
+)
+COLABFOLD_INTERACTION_MULTIPLIERS: tuple[FastaSizeMultiplier, ...] = (
+    FastaSizeMultiplier(minLength=1, maxLength=1000, multiplier=3),
+    FastaSizeMultiplier(minLength=1001, maxLength=2000, multiplier=10),
+    FastaSizeMultiplier(minLength=2001, maxLength=3000, multiplier=20),
+    FastaSizeMultiplier(minLength=3001, maxLength=4000, multiplier=50),
+)
+
 
 class WorkflowCreditConfig(BaseModel):
     """Credit-cost rules for a single workflow category.
 
-    The frontend computes a run's cost as ``tool_multiplier * quantity``, where
-    the tool multiplier is looked up in ``toolMultipliers`` and ``quantity`` is
-    derived per ``basis``.
+    basis describes which quantities are used in the cost calculation.
+    Interaction screening sums ``toolSizeMultipliers`` by combined pair length.
     """
 
     category: WorkflowName = Field(..., description="Workflow category slug, e.g. 'de-novo-design'")
     displayName: str = Field(..., description="Human-readable category name")
     basis: CreditBasis = Field(..., description="Which input quantity drives the cost")
     toolMultipliers: dict[WorkflowTool, int] = Field(
-        ..., description="Per-tool credit multiplier, keyed by tool id"
+        default_factory=dict, description="Per-tool credit multiplier, keyed by tool id"
+    )
+    toolSizeMultipliers: dict[WorkflowTool, tuple[FastaSizeMultiplier, ...]] = Field(
+        default_factory=dict,
+        description="Size range multipliers for combined pair lengths, per tool",
     )
     sizeMultipliers: tuple[FastaSizeMultiplier, ...] = Field(
         default=(),
@@ -121,13 +138,16 @@ _WORKFLOW_CREDIT_CONFIGS: tuple[WorkflowCreditConfig, ...] = (
         displayName="Bulk Prediction",
         basis=CreditBasis.FASTA_SIZE_PER_ENTRY,
         toolMultipliers={"boltz": 1, "colabfold": 3},
-        sizeMultipliers=FASTA_SIZE_MULTIPLIERS,
+        sizeMultipliers=BULK_PREDICTION_SIZE_MULTIPLIERS,
     ),
     WorkflowCreditConfig(
         category="interaction-screening",
         displayName="Interaction Screening",
-        basis=CreditBasis.FASTA_PAIR_PRODUCT,
-        toolMultipliers={"boltz": 1, "colabfold": 5},
+        basis=CreditBasis.FASTA_SIZE_PER_PAIR,
+        toolSizeMultipliers={
+            "boltz": BOLTZ_INTERACTION_MULTIPLIERS,
+            "colabfold": COLABFOLD_INTERACTION_MULTIPLIERS,
+        },
     ),
 )
 
@@ -166,14 +186,14 @@ def compute_cost(category: str, tool: str, quantity: int) -> int | None:
     return multiplier * max(0, quantity)
 
 
-def get_sequence_size_multiplier(length: int) -> int:
+def get_sequence_size_multiplier(length: int, bands: tuple[FastaSizeMultiplier, ...]) -> int:
     """Return the credit multiplier for a record's combined chain length."""
-    for band in FASTA_SIZE_MULTIPLIERS:
+    for band in bands:
         if band.minLength <= length <= band.maxLength:
             return band.multiplier
     raise ValueError(
         f"FASTA record length {length} is unsupported; expected "
-        f"{FASTA_SIZE_MULTIPLIERS[0].minLength}–{FASTA_SIZE_MULTIPLIERS[-1].maxLength} residues."
+        f"{bands[0].minLength}–{bands[-1].maxLength} residues."
     )
 
 
@@ -190,10 +210,10 @@ def launch_credit_cost(
     - single-prediction: constant (1).
     - de-novo-design: ``final_design_count`` (from the launch payload).
     - bulk-prediction: sum of size multipliers for ``fasta_entry_lengths``.
-    - interaction-screening: product of ``fasta_pair_counts`` (query, target
-      WISPS samplesheet row counts).
+    - interaction-screening: sum of tool-specific size costs for the combined
+      length of every query–target pair.
 
-    Raises ValueError for bulk records outside the supported size bands.
+    Raises ValueError for bulk records or pairs outside the supported size bands.
     Returns None when the category's quantity isn't available/valid, leaving
     the run uncosted (caller decides how to treat that, e.g. don't charge).
     """
@@ -208,15 +228,23 @@ def launch_credit_cost(
         if wisps_input_info is None or not wisps_input_info.fasta_entry_lengths:
             return None
         quantity = sum(
-            get_sequence_size_multiplier(length) for length in wisps_input_info.fasta_entry_lengths
+            get_sequence_size_multiplier(length, BULK_PREDICTION_SIZE_MULTIPLIERS)
+            for length in wisps_input_info.fasta_entry_lengths
         )
         return compute_cost(cat, tool, quantity)
     if cat == "interaction-screening":
         if wisps_input_info is None:
             return None
-        if wisps_input_info.query_count is None or wisps_input_info.target_count is None:
+        if not wisps_input_info.query_lengths or not wisps_input_info.target_lengths:
             return None
-        if wisps_input_info.query_count < 1 or wisps_input_info.target_count < 1:
+        bands = _CONFIGS_BY_CATEGORY["interaction-screening"].toolSizeMultipliers.get(
+            cast(WorkflowTool, tool.strip().lower())
+        )
+        if not bands:
             return None
-        return compute_cost(cat, tool, wisps_input_info.query_count * wisps_input_info.target_count)
+        return sum(
+            get_sequence_size_multiplier(query_length + target_length, bands)
+            for query_length in wisps_input_info.query_lengths
+            for target_length in wisps_input_info.target_lengths
+        )
     return None
